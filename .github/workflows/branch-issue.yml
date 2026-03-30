@@ -1,0 +1,181 @@
+name: Create issue for new branch
+
+on:
+  push:
+    branches:
+      - 'feat/**'
+      - 'fix/**'
+  workflow_dispatch:
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    if: github.event.created == true
+    permissions:
+      issues: write
+
+    steps:
+      - name: Parse branch name
+        id: parse
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          TYPE=$(echo "$BRANCH" | cut -d'/' -f1)
+          NUMBER=$(echo "$BRANCH" | cut -d'/' -f2)
+          echo "branch=$BRANCH"   >> "$GITHUB_OUTPUT"
+          echo "type=$TYPE"       >> "$GITHUB_OUTPUT"
+          echo "number=$NUMBER"   >> "$GITHUB_OUTPUT"
+
+      - name: Create tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch = '${{ steps.parse.outputs.branch }}';
+            const type   = '${{ steps.parse.outputs.type }}';
+            const number = parseInt('${{ steps.parse.outputs.number }}', 10);
+
+            const labelColor = type === 'feat' ? '0075ca' : 'e4e669';
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                name:  type,
+              });
+            } catch {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                name:  type,
+                color: labelColor,
+              });
+            }
+
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              labels: type,
+              state: 'all',
+              per_page: 100,
+            });
+            const regex = new RegExp(`^\\[${type}/(\\d+)\\]`);
+            let maxNumber = 0;
+            for (const issue of issues) {
+              const match = issue.title.match(regex);
+              if (match) maxNumber = Math.max(maxNumber, parseInt(match[1], 10));
+            }
+            const nextCorrect = maxNumber + 1;
+
+            let warningBlock = '';
+            if (number !== nextCorrect) {
+              warningBlock = [
+                '> [!WARNING]',
+                `> Branch \`${branch}\` uses number **${number}**, but the latest \`${type}\` branch is **${type}/${maxNumber}**.`,
+                `> The correct next number should be **${nextCorrect}**.`,
+                `> Please delete this branch and recreate it as \`${type}/${nextCorrect}\`.`,
+                '',
+              ].join('\n');
+            }
+
+            const { data: issue } = await github.rest.issues.create({
+              owner:  context.repo.owner,
+              repo:   context.repo.repo,
+              title:  `[${branch}] `,
+              labels: [type],
+              body:   [
+                warningBlock,
+                `## Tracking branch \`${branch}\``,
+                '',
+                `**Branch:** \`${branch}\``,
+                `**Type:** ${type === 'feat' ? 'Feature' : 'Bug fix'}`,
+                `**Created by:** @${{ github.actor }}`,
+                '',
+                '---',
+                '',
+                '### What does this branch do?',
+                '<!-- Fill in a short description of the goal of this branch -->',
+                '',
+                '### Notes',
+                '<!-- Anything relevant: design decisions, links, test results -->',
+                '',
+                '---',
+                `*This issue was opened automatically when branch \`${branch}\` was created.*`,
+                `*Close it by merging the PR with \`Closes #<issue-number>\` in the description.*`,
+              ].join('\n'),
+            });
+
+            console.log(`Issue #${issue.number} created: ${issue.html_url}`);
+
+            // If the initial push already included commits, fill the description immediately
+            const commits = context.payload.commits;
+            if (commits && commits.length > 0) {
+              const firstMessage = commits[0].message.trim();
+              const placeholder = '<!-- Fill in a short description of the goal of this branch -->';
+              const updatedBody = issue.body.replace(placeholder, firstMessage);
+              await github.rest.issues.update({
+                owner:        context.repo.owner,
+                repo:         context.repo.repo,
+                issue_number: issue.number,
+                body:         updatedBody,
+              });
+              console.log(`Issue description filled from initial push: "${firstMessage}"`);
+            }
+
+  update-issue-description:
+    runs-on: ubuntu-latest
+    if: github.event.created == false
+    permissions:
+      issues: write
+
+    steps:
+      - name: Parse branch name
+        id: parse
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          TYPE=$(echo "$BRANCH" | cut -d'/' -f1)
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "type=$TYPE"     >> "$GITHUB_OUTPUT"
+
+      - name: Fill issue description from first commit message
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const branch  = '${{ steps.parse.outputs.branch }}';
+            const type    = '${{ steps.parse.outputs.type }}';
+            const commits = context.payload.commits;
+
+            if (!commits || commits.length === 0) {
+              console.log('No commits in this push, skipping.');
+              return;
+            }
+
+            const firstMessage = commits[0].message.trim();
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner:    context.repo.owner,
+              repo:     context.repo.repo,
+              labels:   type,
+              state:    'open',
+              per_page: 50,
+            });
+
+            const branchIssue = issues.find(i => i.title.startsWith(`[${branch}]`));
+            if (!branchIssue) {
+              console.log('No open issue found for this branch, skipping.');
+              return;
+            }
+
+            const placeholder = '<!-- Fill in a short description of the goal of this branch -->';
+            if (!branchIssue.body.includes(placeholder)) {
+              console.log('Description already filled in, skipping.');
+              return;
+            }
+
+            const updatedBody = branchIssue.body.replace(placeholder, firstMessage);
+
+            await github.rest.issues.update({
+              owner:        context.repo.owner,
+              repo:         context.repo.repo,
+              issue_number: branchIssue.number,
+              body:         updatedBody,
+            });
+
+            console.log(`Issue #${branchIssue.number} updated with: "${firstMessage}"`);

@@ -1,8 +1,8 @@
 ![ISC Logo](http://iscracingteam.com/wp-content/uploads/2022/03/Picture5.jpg)
 
-# IFS08 - DV_AMI
+# IFS08 - CE_AMS
 
-Embedded firmware for the **Autonomous Mission Indicator (AMI)** of the IFS08, developed on STM32H7 with micro-ROS.
+Embedded firmware for the **Accumulator Management System (AMS)** of the IFS08, developed on STM32.
 
 ---
 
@@ -18,8 +18,8 @@ Embedded firmware for the **Autonomous Mission Indicator (AMI)** of the IFS08, d
    - Keep a copy of [GitHub's Git Cheat Sheet](https://services.github.com/kit/downloads/github-git-cheat-sheet.pdf) handy as a reference.
 
 3. Clone this repository to your machine:
-   - SSH: `git@github.com:isc-fs/IFS08-DV_AMI.git`
-   - HTTPS: `https://github.com/isc-fs/IFS08-DV_AMI.git`
+   - SSH: `git@github.com:isc-fs/IFS08-CE-AMS.git`
+   - HTTPS: `https://github.com/isc-fs/IFS08-CE-AMS.git`
 
 ---
 
@@ -150,4 +150,4 @@ When `dev` holds a set of validated changes that are ready for the car, a respon
 
 ---
 
-*ISC Racing Team — IFS08 Driverless*
+*ISC Racing Team — IFS08 Car Electronics*
