@@ -5,7 +5,6 @@ on:
     branches:
       - 'feat/**'
       - 'fix/**'
-  workflow_dispatch:
 
 jobs:
   open-issue:
@@ -17,8 +16,9 @@ jobs:
     steps:
       - name: Parse branch name
         id: parse
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
-          BRANCH="${{ github.ref_name }}"
           TYPE=$(echo "$BRANCH" | cut -d'/' -f1)
           NUMBER=$(echo "$BRANCH" | cut -d'/' -f2)
           echo "branch=$BRANCH"   >> "$GITHUB_OUTPUT"
@@ -27,11 +27,17 @@ jobs:
 
       - name: Create tracking issue
         uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ steps.parse.outputs.branch }}
+          TYPE: ${{ steps.parse.outputs.type }}
+          NUMBER: ${{ steps.parse.outputs.number }}
+          ACTOR: ${{ github.actor }}
         with:
           script: |
-            const branch = '${{ steps.parse.outputs.branch }}';
-            const type   = '${{ steps.parse.outputs.type }}';
-            const number = parseInt('${{ steps.parse.outputs.number }}', 10);
+            const branch = process.env.BRANCH;
+            const type   = process.env.TYPE;
+            const number = parseInt(process.env.NUMBER, 10);
+            const actor  = process.env.ACTOR;
 
             const labelColor = type === 'feat' ? '0075ca' : 'e4e669';
             try {
@@ -49,16 +55,18 @@ jobs:
               });
             }
 
-            const issues = await github.paginate(github.rest.issues.listForRepo, {
+            const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo:  context.repo.repo,
               labels: type,
               state: 'all',
+              sort: 'created',
+              direction: 'desc',
               per_page: 100,
             });
             const regex = new RegExp(`^\\[${type}/(\\d+)\\]`);
             let maxNumber = 0;
-            for (const issue of issues) {
+            for (const issue of issues.data) {
               const match = issue.title.match(regex);
               if (match) maxNumber = Math.max(maxNumber, parseInt(match[1], 10));
             }
@@ -67,18 +75,26 @@ jobs:
             let warningBlock = '';
             if (number !== nextCorrect) {
               warningBlock = [
-                '> [!WARNING]',
-                `> Branch \`${branch}\` uses number **${number}**, but the latest \`${type}\` branch is **${type}/${maxNumber}**.`,
-                `> The correct next number should be **${nextCorrect}**.`,
-                `> Please delete this branch and recreate it as \`${type}/${nextCorrect}\`.`,
+                '> [!NOTE]',
+                `> Branch \`${branch}\` uses number **${number}**, but the highest existing \`${type}\` issue is **${type}/${maxNumber}**.`,
+                `> If this numbering gap is unintentional, consider recreating the branch as \`${type}/${nextCorrect}\`.`,
                 '',
               ].join('\n');
             }
 
+            const commits = context.payload.commits;
+            const firstMessage = (commits && commits.length > 0)
+              ? commits[0].message.trim()
+              : '';
+            const description = firstMessage || '<!-- Fill in a short description of the goal of this branch -->';
+            const shortTitle = firstMessage
+              ? firstMessage.split('\n')[0].slice(0, 72)
+              : '';
+
             const { data: issue } = await github.rest.issues.create({
               owner:  context.repo.owner,
               repo:   context.repo.repo,
-              title:  `[${branch}] `,
+              title:  `[${branch}] ${shortTitle}`,
               labels: [type],
               body:   [
                 warningBlock,
@@ -86,12 +102,12 @@ jobs:
                 '',
                 `**Branch:** \`${branch}\``,
                 `**Type:** ${type === 'feat' ? 'Feature' : 'Bug fix'}`,
-                `**Created by:** @${{ github.actor }}`,
+                `**Created by:** @${actor}`,
                 '',
                 '---',
                 '',
                 '### What does this branch do?',
-                '<!-- Fill in a short description of the goal of this branch -->',
+                description,
                 '',
                 '### Notes',
                 '<!-- Anything relevant: design decisions, links, test results -->',
@@ -104,21 +120,6 @@ jobs:
 
             console.log(`Issue #${issue.number} created: ${issue.html_url}`);
 
-            // If the initial push already included commits, fill the description immediately
-            const commits = context.payload.commits;
-            if (commits && commits.length > 0) {
-              const firstMessage = commits[0].message.trim();
-              const placeholder = '<!-- Fill in a short description of the goal of this branch -->';
-              const updatedBody = issue.body.replace(placeholder, firstMessage);
-              await github.rest.issues.update({
-                owner:        context.repo.owner,
-                repo:         context.repo.repo,
-                issue_number: issue.number,
-                body:         updatedBody,
-              });
-              console.log(`Issue description filled from initial push: "${firstMessage}"`);
-            }
-
   update-issue-description:
     runs-on: ubuntu-latest
     if: github.event.created == false
@@ -128,18 +129,22 @@ jobs:
     steps:
       - name: Parse branch name
         id: parse
+        env:
+          BRANCH: ${{ github.ref_name }}
         run: |
-          BRANCH="${{ github.ref_name }}"
           TYPE=$(echo "$BRANCH" | cut -d'/' -f1)
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
           echo "type=$TYPE"     >> "$GITHUB_OUTPUT"
 
       - name: Fill issue description from first commit message
         uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ steps.parse.outputs.branch }}
+          TYPE: ${{ steps.parse.outputs.type }}
         with:
           script: |
-            const branch  = '${{ steps.parse.outputs.branch }}';
-            const type    = '${{ steps.parse.outputs.type }}';
+            const branch  = process.env.BRANCH;
+            const type    = process.env.TYPE;
             const commits = context.payload.commits;
 
             if (!commits || commits.length === 0) {
