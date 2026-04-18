@@ -45,26 +45,26 @@ dev   ──────●───●───●───●───●─�
 
 All work — whether a new feature or a bug fix — is done on a **feature branch** created from `dev`. When the work is ready, a Pull Request is opened toward `dev`, reviewed, merged, and the branch is deleted.
 
-There are two branch types, each with its own independent numeric counter:
+There are two branch types, each with its own independent numeric counter. Every branch name carries a short kebab-case title after the number so its purpose is visible at a glance:
 
 ```
-feat/<n>   →  new functionality  (feat/1, feat/2, feat/3 ...)
-fix/<n>    →  bug fix            (fix/1,  fix/2,  fix/3  ...)
+feat/<n>-<short-title>   →  new functionality  (feat/1-frame-layout, feat/2-isotp, ...)
+fix/<n>-<short-title>    →  bug fix            (fix/1-wrp-race,      fix/2-crc-pad,  ...)
 ```
 
-The `feat` and `fix` counters are independent: `feat/2` and `fix/2` can exist at the same time with no conflict.
+The short title should be 2–4 lowercase words joined by dashes. The `feat` and `fix` counters are independent: `feat/2-…` and `fix/2-…` can exist at the same time with no conflict.
 
 ### Tracking branch history
 
 Feature branches are deleted after merging to keep the repository clean. The history of each branch is preserved in **GitHub Issues**.
 
-Every branch has one associated issue. The issue carries a **label** (`feat` or `fix`) and its title includes the branch number, for example: `[feat/3] Add CAN broadcast for mission state`. When the branch is merged and deleted, the issue is closed — becoming a permanent record of all the work done.
+Every branch has one associated issue. The issue carries a **label** (`feat` or `fix`) and its title includes the full branch name, for example: `[feat/3-can-broadcast] Add CAN broadcast for mission state`. When the branch is merged and deleted, the issue is closed — becoming a permanent record of all the work done.
 
 To see which branches are currently active: filter issues by label and status `open`.
 To browse the full history: filter by label and status `closed`.
 The number for the next branch of each type is the last closed issue of that type plus one.
 
-> Example: if the last closed issue with label `feat` is `[feat/4] ...`, the next feature branch will be `feat/5`.
+> Example: if the last closed issue with label `feat` is `[feat/4-…] ...`, the next feature branch will be `feat/5-<your-title>`.
 
 ---
 
@@ -76,7 +76,7 @@ The repository includes a GitHub Actions workflow that manages tracking issues a
 
 When a `feat/*` or `fix/*` branch is pushed to GitHub, the workflow automatically opens an issue with:
 
-- The corresponding `[feat/N]` or `[fix/N]` title
+- A title that mirrors the branch name — `[feat/N-short-title]` or `[fix/N-short-title]`
 - The correct label (`feat` or `fix`)
 - A template with sections for describing the work and adding notes
 - The name of the developer who created the branch
@@ -104,8 +104,8 @@ git checkout dev
 git pull origin dev
 
 # Create your branch using the next available number for its type
-# (last closed issue of that type + 1)
-git checkout -b feat/5    # or fix/3, depending on that type's counter
+# (last closed issue of that type + 1) plus a short kebab-case title
+git checkout -b feat/5-frame-layout    # or fix/3-wrp-race, etc.
 ```
 
 > To find the right number: go to **Issues → filter by label `feat` or `fix` → sort by newest** and read the last number.
@@ -113,7 +113,7 @@ git checkout -b feat/5    # or fix/3, depending on that type's counter
 ### 2. Push the branch
 
 ```bash
-git push origin feat/5
+git push origin feat/5-frame-layout
 ```
 
 The tracking issue will be opened automatically on GitHub within seconds.
@@ -126,7 +126,7 @@ git add .
 git commit -m "short description of what this commit does"
 
 # Push the changes
-git push origin feat/5
+git push origin feat/5-frame-layout
 ```
 
 The message of your **first commit** will be used to automatically fill in the issue description.
