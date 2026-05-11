@@ -176,28 +176,38 @@ relay-action flags to `safety_events`.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> Start: cold boot, ErrorLatch clear
-  [*] --> Error: ErrorLatch set (sticky)
+    [*] --> Boot
 
-  Start --> Precharge: start_button && healthy
-  Start --> Charge: charger_detected
+    state boot_check <<choice>>
+    Boot --> boot_check
+    boot_check --> Start : ErrorLatch clear
+    boot_check --> Error : ErrorLatch set
 
-  Precharge --> Transition: dc_bus_V >= 0.95 * pack_V
-  Precharge --> Error: timeout > kPrechargeMaxMs
+    Start --> Precharge  : start button and healthy
+    Start --> Charge     : charger detected
 
-  Transition --> Run: hold >= kTransitionHoldMs && dc_bus steady
-  Transition --> Error: dc_bus_V dropped
+    Precharge --> Transition : dc_bus reached target
+    Precharge --> Error      : precharge timeout
 
-  Run --> Charge: charger_detected
-  Charge --> Run: !charger_detected
+    Transition --> Run   : hold elapsed and steady
+    Transition --> Error : dc_bus dropped
 
-  Run --> Error: safety::evaluate_fault
-  Charge --> Error: safety::evaluate_fault
-  Precharge --> Error: safety::evaluate_fault
-  Transition --> Error: safety::evaluate_fault
-  Start --> Error: safety::evaluate_fault
+    Run    --> Charge : charger detected
+    Charge --> Run    : charger removed
 
-  Error --> Error: sticky; only reset clears
+    Start      --> Error : safety fault
+    Precharge  --> Error : safety fault
+    Transition --> Error : safety fault
+    Run        --> Error : safety fault
+    Charge     --> Error : safety fault
+
+    Error --> [*] : reset only
+
+    note right of Error
+        sticky within a boot
+        ErrorLatch set in backup register
+        next boot starts here
+    end note
 ```
 
 Edge-transition relay actions:
@@ -235,9 +245,9 @@ sequenceDiagram
   participant state as StateTask
   participant other as Bms/Acu/Cur/Tele
 
-  HW->>main: Reset_Handler → SystemInit
+  HW->>main: Reset_Handler then SystemInit
   main->>main: HAL_Init, SystemClock_Config
-  main->>HW: MX_GPIO_Init (relays PD3/4/5 → PIN_RESET)
+  main->>HW: MX_GPIO_Init (relays driven low)
   main->>HW: MX_ADC1/3, MX_FDCAN1/2, MX_TIM17, MX_USART2
   main->>HW: ams_watchdog_init (IWDG1 alive pre-scheduler)
   main->>main: osKernelInitialize
@@ -246,26 +256,26 @@ sequenceDiagram
   main->>main: osKernelStart
 
   par scheduler running
-    init->>init: ErrorLatch::init (DBP unlock)
+    init->>init: ErrorLatch init (DBP unlock)
     init->>HW: HAL_FDCAN_ActivateNotification x2
     init->>HW: HAL_FDCAN_Start x2
     init->>init: osThreadExit
   and
-    safe->>safe: ErrorLatch::is_set?
+    safe->>safe: ErrorLatch is_set
     loop every 10 ms
       safe->>safe: snapshot all services
       alt fault
-        safe->>HW: Relays::open_all + ErrorLatch::set
-        Note over safe,HW: NO IWDG refresh → HW reset
+        safe->>HW: Relays open_all + ErrorLatch set
+        Note over safe,HW: NO IWDG refresh, HW reset follows
       else clean
         safe->>HW: service relay-action flags
         safe->>HW: HAL_IWDG_Refresh
       end
     end
   and
-    state->>state: Fan::init + initial duty
+    state->>state: Fan init + initial duty
     loop every 20 ms
-      state->>state: fsm::step → (next, safety_flags)
+      state->>state: fsm step returns next + flags
       state->>safe: osEventFlagsSet (safety_events)
     end
   and other
