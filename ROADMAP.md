@@ -29,7 +29,7 @@ tuning, telemetry over CAN-FD) lives outside the v1 scope.
 | 2 | Safety supervisor | ✅ done `feat/5-relay-driver` · ✅ done `feat/6-safety-task` · ✅ done `feat/7-safety-predicates` | `v0.2.0-safety` |
 | 3 | BMS communications | ✅ done `feat/8-bms-service` · ✅ done `feat/9-bms-rx-task` · ✅ done `feat/10-bms-poll-task` | `v0.3.0-bms` |
 | 4 | Current + accumulator CAN | ✅ done `feat/11-current-task` · ✅ done `feat/12-acu-can-rx` · ✅ done `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
-| 5 | State machine + integration | ✅ done `feat/14-state-task` · ✅ done `feat/15-precharge-timing` · 🔄 active `feat/16-fan-telemetry` · 🔜 planned `feat/17-sil-tests` · 🔜 planned `feat/18-commissioning` | `v1.0.0` |
+| 5 | State machine + integration | ✅ done `feat/14-state-task` · ✅ done `feat/15-precharge-timing` · 🔄 active `feat/16-fan-telemetry` · ✅ done `feat/17-sil-tests` · 🔜 planned `feat/18-commissioning` | `v1.0.0` |
 | — | Workflow polish _(sidequest)_ | ✅ done `feat/1-autoclose-on-dev-merge` · ✅ done `fix/1-workflow-titled-branches` | — |
 
 ## Branch diagram
@@ -124,7 +124,7 @@ gitGraph
     checkout dev
     merge feat/16-fan-telemetry
     branch feat/17-sil-tests
-    commit id: "○ SIL harness + integration tests (state transitions, fault injection)"
+    commit id: "✔ SIL harness + integration tests (state transitions, fault injection)"
     checkout dev
     merge feat/17-sil-tests
     branch feat/18-commissioning
