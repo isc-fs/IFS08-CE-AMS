@@ -127,16 +127,19 @@ struct Output {
     }
 
     case State::Run: {
-        if (in.current_sensor.charger_detected) {
-            return { State::Charge, 0u };
-        }
+        // Run = pack is in the car. Charger detection should be
+        // physically impossible here; if it happens it's almost
+        // certainly an electrical issue (noise on the charger CAN
+        // id, miswired charger). Stay in Run -- the predicate set
+        // will catch any genuine current anomaly via |I| > kImaxMa.
         return { State::Run, 0u };
     }
 
     case State::Charge: {
-        if (!in.current_sensor.charger_detected) {
-            return { State::Run, 0u };
-        }
+        // Charge = pack is at the charging station. Run and Charge
+        // are mutually exclusive contexts entered ONCE per power
+        // cycle from Start; we never transition between them at
+        // runtime. Stay here until reset.
         return { State::Charge, 0u };
     }
 

@@ -49,7 +49,7 @@ void test_fsm_start_transitions_to_charge_on_charger(void);
 void test_fsm_precharge_reaches_target(void);
 void test_fsm_precharge_stays_below_target(void);
 void test_fsm_transition_holds_then_runs(void);
-void test_fsm_run_to_charge_and_back(void);
+void test_fsm_run_and_charge_are_terminal(void);
 void test_fsm_any_state_to_error_on_fault(void);
 void test_fsm_error_is_sticky(void);
 void test_fsm_precharge_timeout_forces_error(void);
@@ -103,7 +103,7 @@ int main(void) {
     RUN_TEST(test_fsm_precharge_reaches_target);
     RUN_TEST(test_fsm_precharge_stays_below_target);
     RUN_TEST(test_fsm_transition_holds_then_runs);
-    RUN_TEST(test_fsm_run_to_charge_and_back);
+    RUN_TEST(test_fsm_run_and_charge_are_terminal);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
     RUN_TEST(test_fsm_error_is_sticky);
     RUN_TEST(test_fsm_precharge_timeout_forces_error);

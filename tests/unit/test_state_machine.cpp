@@ -88,14 +88,20 @@ extern "C" void test_fsm_transition_holds_then_runs(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
 }
 
-extern "C" void test_fsm_run_to_charge_and_back(void) {
+extern "C" void test_fsm_run_and_charge_are_terminal(void) {
+    // Run and Charge are mutually exclusive contexts (pack-in-car vs
+    // pack-in-charger) entered once per power cycle. The FSM must
+    // NOT transition between them at runtime, even if charger_detected
+    // wiggles (likely an electrical anomaly if it does).
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
-    auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
+
+    auto in_run = make_inputs(ams::fsm::State::Run, bms, cur, veh);
     cur.charger_detected = true;
-    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
-    in.current = ams::fsm::State::Charge;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in_run).next);
+
+    auto in_chg = make_inputs(ams::fsm::State::Charge, bms, cur, veh);
     cur.charger_detected = false;
-    TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in_chg).next);
 }
 
 extern "C" void test_fsm_any_state_to_error_on_fault(void) {

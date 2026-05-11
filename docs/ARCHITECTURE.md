@@ -192,6 +192,20 @@ unit-tested in isolation; `StateTask` is the thin wrapper that
 calls `fsm::step()` at 20 ms cadence and posts the returned
 relay-action flags to `safety_events`.
 
+**Two mutually exclusive contexts:**
+
+- **Run** = pack is installed in the car. Entered via the
+  `Start → Precharge → Transition → Run` path on the start button.
+- **Charge** = pack is removed from the car and on the charging
+  station. Entered via `Start → Charge` on charger detection.
+
+The two are decided **once per power cycle** at `Start` and cannot
+flip at runtime — a pack physically cannot move between car and
+charger while the AMS is alive. If `charger_detected` toggled in
+`Run` it would indicate an electrical fault (CAN noise, miswired
+charger); the FSM ignores it and the predicate set catches any real
+current anomaly.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Boot
@@ -210,9 +224,6 @@ stateDiagram-v2
     Transition --> Run   : hold elapsed and steady
     Transition --> Error : dc_bus dropped
 
-    Run    --> Charge : charger detected
-    Charge --> Run    : charger removed
-
     Start      --> Error : safety fault
     Precharge  --> Error : safety fault
     Transition --> Error : safety fault
@@ -220,6 +231,16 @@ stateDiagram-v2
     Charge     --> Error : safety fault
 
     Error --> [*] : reset only
+
+    note right of Run
+        terminal context
+        until reset or fault
+    end note
+
+    note left of Charge
+        terminal context
+        until reset or fault
+    end note
 
     note right of Error
         sticky within a boot
