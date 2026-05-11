@@ -2,7 +2,34 @@
 
 # IFS08 - CE_AMS
 
-Embedded firmware for the **Accumulator Management System (AMS)** of the IFS08, developed on STM32.
+Embedded firmware for the **Accumulator Management System (AMS)** of the IFS08, developed on STM32H733ZGTx with FreeRTOS (CMSIS-RTOS v2) and C++17 application code.
+
+---
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Safety invariants, task layout, data-flow + FSM mermaid diagrams, boot sequence, memory budget, file layout. **Start here.** |
+| [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Wire protocol for both buses (FDCAN1 accumulator + FDCAN2 BMS). Every TX/RX frame with byte-level layout. |
+| [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | Bench + on-vehicle calibration procedure. Every `COMMISSION`-tagged constant in `ams_config.hpp` is finalised here. |
+| [`ROADMAP.md`](ROADMAP.md) | Auto-generated phase plan + branch status badges. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | Conventions for branches, PRs, labels; how to add a CAN frame or a new task. |
+
+## Build
+
+```bash
+# Firmware (cross-compile)
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+cmake --build build
+
+# Host unit tests (44 tests, ~0.5 s)
+cmake -B build-tests -S tests/unit
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+```
+
+Both run on every push and PR via `.github/workflows/build-tests.yml`.
 
 ---
 
