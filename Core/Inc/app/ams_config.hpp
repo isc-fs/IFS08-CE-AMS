@@ -24,7 +24,8 @@ inline constexpr std::int32_t  kImaxMa   = 200000; // |I| absolute max  mA
 inline constexpr std::uint32_t kIStaleMs       =  200;  // current sensor stale
 inline constexpr std::uint32_t kBmsStaleMs     = 1500;  // any BMS module silent
 inline constexpr std::uint32_t kVcuStaleMs     =  200;  // VCU 0x100 stale
-inline constexpr std::uint32_t kPrechargeMaxMs = 1500;  // precharge timeout
+inline constexpr std::uint32_t kPrechargeMaxMs    = 1500;  // precharge timeout
+inline constexpr std::uint32_t kTransitionHoldMs  =  100;  // hold + verify
 
 inline constexpr std::uint8_t  kAllModulesMask = 0x1F;  // 5 modules present
 

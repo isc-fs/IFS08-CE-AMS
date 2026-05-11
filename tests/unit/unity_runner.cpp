@@ -52,6 +52,8 @@ void test_fsm_transition_holds_then_runs(void);
 void test_fsm_run_to_charge_and_back(void);
 void test_fsm_any_state_to_error_on_fault(void);
 void test_fsm_error_is_sticky(void);
+void test_fsm_precharge_timeout_forces_error(void);
+void test_fsm_transition_drops_voltage_to_error(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -97,6 +99,8 @@ int main(void) {
     RUN_TEST(test_fsm_run_to_charge_and_back);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
     RUN_TEST(test_fsm_error_is_sticky);
+    RUN_TEST(test_fsm_precharge_timeout_forces_error);
+    RUN_TEST(test_fsm_transition_drops_voltage_to_error);
 
     return UNITY_END();
 }
