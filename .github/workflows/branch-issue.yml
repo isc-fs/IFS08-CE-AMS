@@ -56,7 +56,9 @@ jobs:
               state: 'all',
               per_page: 100,
             });
-            const regex = new RegExp(`^\\[${type}/(\\d+)\\]`);
+            /* Accepts both bare `[feat/2]` titles and titled branches
+               like `[feat/2-frame-layout]`. */
+            const regex = new RegExp(`^\\[${type}/(\\d+)(?:-[^\\]]*)?\\]`);
             let maxNumber = 0;
             for (const issue of issues) {
               const match = issue.title.match(regex);
