@@ -25,8 +25,9 @@ uint32_t osKernelGetTickCount(void) {
     return s_tick;
 }
 
-// BmsService dereferences this; non-null is the only requirement.
-osMutexId_t bms_mutexHandle = reinterpret_cast<osMutexId_t>(0x1);
+// Services dereference these; non-null is the only requirement.
+osMutexId_t bms_mutexHandle     = reinterpret_cast<osMutexId_t>(0x1);
+osMutexId_t current_mutexHandle = reinterpret_cast<osMutexId_t>(0x2);
 
 // Test-only helpers: not declared in the mock cmsis_os2.h since they
 // are unique to the test fixture.

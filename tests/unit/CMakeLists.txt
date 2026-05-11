@@ -33,10 +33,12 @@ set(AMS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 # bms_mutexHandle are mocked in tests/unit/mocks/.
 add_executable(ams_unit_tests
     ${AMS_ROOT}/Core/Src/app/bms_service.cpp
+    ${AMS_ROOT}/Core/Src/app/current_service.cpp
 
     mocks/cmsis_os2_stub.cpp
 
     test_bms_service.cpp
+    test_current_service.cpp
     unity_runner.cpp
 )
 

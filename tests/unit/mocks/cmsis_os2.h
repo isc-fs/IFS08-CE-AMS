@@ -40,9 +40,10 @@ osStatus_t osMutexAcquire(osMutexId_t mutex, uint32_t timeout);
 osStatus_t osMutexRelease(osMutexId_t mutex);
 uint32_t   osKernelGetTickCount(void);
 
-/* For BmsService: bms_mutexHandle is declared extern there; we provide
- * a non-null stub in cmsis_os2_stub.cpp. */
+/* For BmsService / CurrentService: extern mutex handles. Non-null
+ * stubs provided by cmsis_os2_stub.cpp. */
 extern osMutexId_t bms_mutexHandle;
+extern osMutexId_t current_mutexHandle;
 
 #ifdef __cplusplus
 }

@@ -27,6 +27,7 @@
 #include "app/bms_poll_task.h"
 #include "app/bms_rx_task.h"
 #include "app/can_frame.h"
+#include "app/current_task.h"
 #include "app/safety_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
@@ -945,11 +946,9 @@ void StartAcuCanTask(void *argument)
 void StartCurrentTask(void *argument)
 {
   /* USER CODE BEGIN StartCurrentTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_current_task_run(argument);
+  /* Unreachable: ams_current_task_run() never returns. */
+  for(;;) { osDelay(1); }
   /* USER CODE END StartCurrentTask */
 }
 
