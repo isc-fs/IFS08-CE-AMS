@@ -26,10 +26,10 @@ tuning, telemetry over CAN-FD) lives outside the v1 scope.
 | Phase | Title | Branches | Milestone tag |
 |:---:|---|---|---|
 | 1 | Project bootstrap | ✅ done `feat/2-pm-deliverables` · ✅ done `feat/3-cubemx-freertos` · ✅ done `feat/4-dir-layout` | `v0.1.0-scaffold` |
-| 2 | Safety supervisor | ✅ done `feat/5-relay-driver` · ✅ done `feat/6-safety-task` · 🔄 active `feat/7-safety-predicates` | `v0.2.0-safety` |
+| 2 | Safety supervisor | ✅ done `feat/5-relay-driver` · ✅ done `feat/6-safety-task` · ✅ done `feat/7-safety-predicates` | `v0.2.0-safety` |
 | 3 | BMS communications | ✅ done `feat/8-bms-service` · ✅ done `feat/9-bms-rx-task` · ✅ done `feat/10-bms-poll-task` | `v0.3.0-bms` |
 | 4 | Current + accumulator CAN | ✅ done `feat/11-current-task` · ✅ done `feat/12-acu-can-rx` · ✅ done `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
-| 5 | State machine + integration | 🔜 planned `feat/14-state-task` · 🔜 planned `feat/15-precharge-timing` · 🔜 planned `feat/16-fan-telemetry` · 🔜 planned `feat/17-sil-tests` · 🔜 planned `feat/18-commissioning` | `v1.0.0` |
+| 5 | State machine + integration | 🔄 active `feat/14-state-task` · 🔜 planned `feat/15-precharge-timing` · 🔜 planned `feat/16-fan-telemetry` · 🔜 planned `feat/17-sil-tests` · 🔜 planned `feat/18-commissioning` | `v1.0.0` |
 | — | Workflow polish _(sidequest)_ | ✅ done `feat/1-autoclose-on-dev-merge` · ✅ done `fix/1-workflow-titled-branches` | — |
 
 ## Branch diagram
@@ -69,7 +69,7 @@ gitGraph
     checkout dev
     merge feat/6-safety-task
     branch feat/7-safety-predicates
-    commit id: "… range-check predicates + FORCE_ERROR event flag plumbing"
+    commit id: "✔ range-check predicates + FORCE_ERROR event flag plumbing"
     checkout dev
     merge feat/7-safety-predicates
     checkout main
@@ -112,7 +112,7 @@ gitGraph
 
     %% Phase 5 — State machine + integration
     branch feat/14-state-task
-    commit id: "○ StateTask FSM (6 states) + relay request via SafetyTask"
+    commit id: "… StateTask FSM (6 states) + relay request via SafetyTask"
     checkout dev
     merge feat/14-state-task
     branch feat/15-precharge-timing
