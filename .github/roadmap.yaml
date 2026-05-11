@@ -1,0 +1,90 @@
+# Source of truth for ROADMAP.md.
+#
+# Edit this file (or close / reopen a tracking issue on GitHub) and the
+# `roadmap.yml` workflow will regenerate ROADMAP.md with updated status
+# badges and a fresh mermaid branch diagram. Do not hand-edit ROADMAP.md —
+# the workflow will overwrite any local changes.
+
+title: AMS roadmap
+
+intro: |
+  Refactor roadmap for the IFS08-CE Accumulator Management System (AMS).
+  We are porting the legacy bare-metal AMS firmware (originally living in
+  `isc-fs/IFS08-CE/AMS`) to a FreeRTOS-based architecture in this dedicated
+  repository, targeting the STM32H733ZGTx.
+
+  Each phase is a cluster of feat branches cut from `dev`; a milestone tag
+  on `main` closes the phase once every branch in it has merged. Branch
+  status badges (✅ / 🔄 / 🔜) are derived from each branch's tracking
+  issue state in GitHub Issues.
+
+  **v1.0.0** is tagged at the end of Phase 5 — the AMS is feature-complete
+  for vehicle commissioning. Subsequent work (charger profiles, balancing
+  tuning, telemetry over CAN-FD) lives outside the v1 scope.
+
+phases:
+  - number: 1
+    title: Project bootstrap
+    tag: v0.1.0-scaffold
+    branches:
+      - name: feat/2-pm-deliverables
+        scope: architecture spec + CAN map + roadmap + PR template
+      - name: feat/3-cubemx-freertos
+        scope: CubeMX regen with FreeRTOS + C++ build green
+      - name: feat/4-dir-layout
+        scope: dir layout, ScopedMutex, ams_config.hpp, IWDG init
+
+  - number: 2
+    title: Safety supervisor
+    tag: v0.2.0-safety
+    branches:
+      - name: feat/5-relay-driver
+        scope: relay_driver + GPIO inactive on boot + backup-reg error latch
+      - name: feat/6-safety-task
+        scope: SafetyTask skeleton + IWDG feed on clean path only
+      - name: feat/7-safety-predicates
+        scope: range-check predicates + FORCE_ERROR event flag plumbing
+
+  - number: 3
+    title: BMS communications
+    tag: v0.3.0-bms
+    branches:
+      - name: feat/8-bms-service
+        scope: BmsService + can_frame.hpp + FDCAN1 ISR -> queue
+      - name: feat/9-bms-rx-task
+        scope: BmsRxTask parsing 5 modules x 19 cells + 38 temps
+      - name: feat/10-bms-poll-task
+        scope: BmsPollTask 250 ms V / 500 ms T + freshness watchdog
+
+  - number: 4
+    title: Current + accumulator CAN
+    tag: v0.4.0-pack-io
+    branches:
+      - name: feat/11-current-task
+        scope: CurrentTask ADC + filter + sensor-stale detection
+      - name: feat/12-acu-can-rx
+        scope: AcuCanTask RX (DC bus, start button, charger detect)
+      - name: feat/13-acu-can-tx
+        scope: AcuCanTask TX (pack status @ 100 ms, fault word, min V)
+
+  - number: 5
+    title: State machine + integration
+    tag: v1.0.0
+    branches:
+      - name: feat/14-state-task
+        scope: StateTask FSM (6 states) + relay request via SafetyTask
+      - name: feat/15-precharge-timing
+        scope: precharge timing + transition verification + ERROR latch wiring
+      - name: feat/16-fan-telemetry
+        scope: fan PWM (RUN vs CHARGE duty) + telemetry UART
+      - name: feat/17-sil-tests
+        scope: SIL harness + integration tests (state transitions, fault injection)
+      - name: feat/18-commissioning
+        scope: on-vehicle commissioning + calibration constants finalised
+
+sidequests:
+  - title: Workflow polish
+    note: Not part of the AMS refactor roadmap. Kept here for branch history.
+    branches:
+      - feat/1-autoclose-on-dev-merge
+      - fix/1-workflow-titled-branches
