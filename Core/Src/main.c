@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "app/app_globals.h"
 #include "app/app_init_task.h"
+#include "app/bms_rx_task.h"
 #include "app/can_frame.h"
 #include "app/safety_task.h"
 #include "app/watchdog.h"
@@ -893,11 +894,9 @@ void StartStateTask(void *argument)
 void StartBmsRxTask(void *argument)
 {
   /* USER CODE BEGIN StartBmsRxTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_bms_rx_task_run(argument);
+  /* Unreachable: ams_bms_rx_task_run() never returns. */
+  for(;;) { osDelay(1); }
   /* USER CODE END StartBmsRxTask */
 }
 
