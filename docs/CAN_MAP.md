@@ -22,20 +22,37 @@ upgrade FDCAN2 to CAN-FD if the slave modules support it; defer to Phase 3.
 
 ## Module addressing — BMS slaves (5 modules)
 
-Each BMS slave is identified by a CAN-ID offset of `0x1E` (30) from the
-master ID `0x12C`. The refactor must keep this scheme.
+Each BMS slave has its own CANID. **All response and request IDs for a
+given module are offsets from that module's CANID**, not from a single
+global base:
 
-| Module index | Voltage request ID | Voltage response IDs | Temperature request ID | Temperature response IDs |
+```
+CANID(m)        = 0x12C + m * 0x1E      (m = 0..4)
+voltage poll TX = CANID(m)              -- offset 0
+voltage resp RX = CANID(m) + 1..5       -- 5 frames per module
+temp poll    TX = CANID(m) + 20         -- offset 20
+temp resp    RX = CANID(m) + 21..25     -- 5 frames per module
+```
+
+| Module | CANID | Voltage resp | Temp poll TX | Temp resp |
 |---|---|---|---|---|
-| 0 | 0x12C | 0x12D – 0x131 | 0x140 | 0x14D – 0x151 |
-| 1 | 0x14A | 0x14B – 0x14F | 0x15E | 0x16B – 0x16F |
-| 2 | 0x168 | 0x169 – 0x16D | 0x17C | 0x189 – 0x18D |
-| 3 | 0x186 | 0x187 – 0x18B | 0x19A | 0x1A7 – 0x1AB |
-| 4 | 0x1A4 | 0x1A5 – 0x1A9 | 0x1B8 | 0x1C5 – 0x1C9 |
+| 0 | 0x12C | 0x12D – 0x131 | 0x140 | **0x141 – 0x145** |
+| 1 | 0x14A | 0x14B – 0x14F | 0x15E | **0x15F – 0x163** |
+| 2 | 0x168 | 0x169 – 0x16D | 0x17C | **0x17D – 0x181** |
+| 3 | 0x186 | 0x187 – 0x18B | 0x19A | **0x19B – 0x19F** |
+| 4 | 0x1A4 | 0x1A5 – 0x1A9 | 0x1B8 | **0x1B9 – 0x1BD** |
 
-Module index of an incoming frame is recovered as
-`m = (id - base_voltage_request) / 0x1E` (legacy uses `id % CANID`, same
-effect modulo collisions — TO BE VERIFIED before refactor lands).
+> **Corrected 2026-05-11.** An earlier revision of this document put
+> the temperature responses at `0x14D + m * 0x1E` (a fixed global
+> base). That's wrong: it lands `0x21` above each module's CANID,
+> well outside the legacy guard `id > CANID && id < CANID + 30`.
+> Caught by unit tests in fix/3-unit-tests against the actual legacy
+> parser at `isc-fs/IFS08-CE/AMS/Core/Src/class_bms.cpp:121-122`.
+
+Module index of an incoming frame is recovered by walking the 5 CANIDs
+and matching `id > CANID(m) && id < CANID(m) + 30`. Inter-module ranges
+abut (module n ends at `CANID + 30` = module n+1's CANID) so a single
+match is always unambiguous.
 
 ---
 
