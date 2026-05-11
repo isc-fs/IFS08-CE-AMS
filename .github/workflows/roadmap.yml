@@ -42,12 +42,16 @@ jobs:
 
       - name: Commit if changed
         run: |
-          if git diff --quiet -- ROADMAP.md; then
+          # Stage first so the diff catches both modified and untracked
+          # (first-run) cases. `git diff --quiet` against the working
+          # tree misses untracked files, which leaves a freshly-rendered
+          # ROADMAP.md uncommitted on the workflow's first invocation.
+          git add ROADMAP.md
+          if git diff --cached --quiet -- ROADMAP.md; then
             echo "ROADMAP.md is up-to-date; no commit needed."
             exit 0
           fi
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ROADMAP.md
           git commit -m "chore: regenerate ROADMAP.md [skip ci]"
           git push origin HEAD:dev
