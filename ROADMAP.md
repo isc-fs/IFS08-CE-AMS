@@ -25,7 +25,7 @@ tuning, telemetry over CAN-FD) lives outside the v1 scope.
 
 | Phase | Title | Branches | Milestone tag |
 |:---:|---|---|---|
-| 1 | Project bootstrap | ✅ done `feat/2-pm-deliverables` · ✅ done `feat/3-cubemx-freertos` · 🔜 planned `feat/4-dir-layout` | `v0.1.0-scaffold` |
+| 1 | Project bootstrap | ✅ done `feat/2-pm-deliverables` · ✅ done `feat/3-cubemx-freertos` · ✅ done `feat/4-dir-layout` | `v0.1.0-scaffold` |
 | 2 | Safety supervisor | 🔜 planned `feat/5-relay-driver` · 🔜 planned `feat/6-safety-task` · 🔜 planned `feat/7-safety-predicates` | `v0.2.0-safety` |
 | 3 | BMS communications | 🔜 planned `feat/8-bms-service` · 🔜 planned `feat/9-bms-rx-task` · 🔜 planned `feat/10-bms-poll-task` | `v0.3.0-bms` |
 | 4 | Current + accumulator CAN | 🔜 planned `feat/11-current-task` · 🔜 planned `feat/12-acu-can-rx` · 🔜 planned `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
@@ -52,7 +52,7 @@ gitGraph
     checkout dev
     merge feat/3-cubemx-freertos
     branch feat/4-dir-layout
-    commit id: "○ dir layout, ScopedMutex, ams_config.hpp, IWDG init"
+    commit id: "✔ dir layout, ScopedMutex, ams_config.hpp, IWDG init"
     checkout dev
     merge feat/4-dir-layout
     checkout main
