@@ -45,13 +45,26 @@ inline constexpr std::uint32_t kTelemetryPeriodMs = 500;
 // the encode/decode helpers in can_frame.hpp.
 // ---------------------------------------------------------------------------
 
-// 5 BMS slave modules, addressed by a 0x1E offset from the master.
-inline constexpr std::uint8_t  kBmsModuleCount   = 5;
-inline constexpr std::uint16_t kBmsModuleStride  = 0x1E;
-inline constexpr std::uint16_t kBmsVoltPollBase  = 0x12C;  // +N*stride per module
-inline constexpr std::uint16_t kBmsTempPollBase  = 0x140;
-inline constexpr std::uint16_t kBmsVoltRespBase  = 0x12D;  // +N*stride, then 5 frames
-inline constexpr std::uint16_t kBmsTempRespBase  = 0x14D;
+// 5 BMS slave modules. Each module has its own CANID; module N's CANID
+// is (kBmsVoltPollBase + N * kBmsModuleStride). The legacy protocol
+// then assigns offsets RELATIVE TO that per-module CANID:
+//
+//   offset  1..5   -> voltage response frames (frame_idx = offset - 1)
+//   offset 20      -> temperature poll request (TX from AMS)
+//   offset 21..25  -> temperature response frames (frame_idx = offset - 21)
+//
+// classify() in bms_service.cpp walks the 5 CANIDs and matches the
+// incoming id against the (canid, canid + 30) range with `m = id - canid`.
+// See docs/CAN_MAP.md for the full table.
+inline constexpr std::uint8_t  kBmsModuleCount      = 5;
+inline constexpr std::uint16_t kBmsModuleStride     = 0x1E;
+inline constexpr std::uint16_t kBmsVoltPollBase     = 0x12C;  // module 0 CANID
+inline constexpr std::uint16_t kBmsTempPollOffset   = 20;     // CANID + 20
+inline constexpr std::uint8_t  kBmsVoltRespOffsetLo = 1;
+inline constexpr std::uint8_t  kBmsVoltRespOffsetHi = 5;
+inline constexpr std::uint8_t  kBmsTempRespOffsetLo = 21;
+inline constexpr std::uint8_t  kBmsTempRespOffsetHi = 25;
+inline constexpr std::uint16_t kBmsModuleAddrRange  = 30;     // legacy guard
 
 inline constexpr std::uint8_t  kCellsPerModule   = 19;
 inline constexpr std::uint8_t  kTempsPerModule   = 38;

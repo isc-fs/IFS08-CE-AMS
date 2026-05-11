@@ -17,42 +17,48 @@ namespace ams {
 
 namespace {
 
-// All BMS frame IDs sit between base and base + 5 * kBmsModuleStride.
-// The two "panes" (voltage 0x12D..0x131 + per-module offset, and
-// temperature 0x14D..0x151 + per-module offset) are 0x14D - 0x12C = 33
-// = 0x21 apart from the voltage poll base. We work in offsets from
-// kBmsVoltPollBase (0x12C) throughout, mapping to (module, kind, idx).
-constexpr std::uint16_t kVoltRespBaseOffset = config::kBmsVoltRespBase - config::kBmsVoltPollBase;  // 0x01
-constexpr std::uint16_t kTempRespBaseOffset = config::kBmsTempRespBase - config::kBmsVoltPollBase;  // 0x21
-constexpr std::uint8_t  kFramesPerPane      = 5;
-
+// Mirrors the legacy BMS_MOD::parse() classification, walking each
+// module's per-CANID range:
+//
+//   CANID(m) = kBmsVoltPollBase + m * kBmsModuleStride
+//   if id > CANID(m) && id < CANID(m) + 30:
+//       offset = id - CANID(m)
+//       offset in [ 1.. 5] -> voltage response, frame_idx = offset - 1
+//       offset in [21..25] -> temperature response, frame_idx = offset - 21
+//
+// Note: the strict `>` excludes the poll-request id (offset 0); the
+// guard `< CANID(m) + 30` (kBmsModuleAddrRange) excludes the next
+// module's poll. Inter-module ranges abut but do not overlap.
 enum class FrameKind : std::uint8_t { Unknown, Voltage, Temperature };
 
 struct Decoded {
-    FrameKind   kind;
+    FrameKind    kind;
     std::uint8_t module;
     std::uint8_t frame_idx;
 };
 
 Decoded classify(std::uint32_t id) noexcept {
-    if (id < config::kBmsVoltPollBase) return {FrameKind::Unknown, 0, 0};
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        const std::uint32_t canid =
+            static_cast<std::uint32_t>(config::kBmsVoltPollBase) +
+            static_cast<std::uint32_t>(m) * config::kBmsModuleStride;
 
-    const std::uint16_t off = static_cast<std::uint16_t>(id - config::kBmsVoltPollBase);
+        if (id <= canid)                                  continue;
+        if (id >= canid + config::kBmsModuleAddrRange)    continue;
 
-    const std::uint8_t module = static_cast<std::uint8_t>(off / config::kBmsModuleStride);
-    if (module >= config::kBmsModuleCount) return {FrameKind::Unknown, 0, 0};
+        const std::uint32_t offset = id - canid;
 
-    const std::uint16_t in_pane = off % config::kBmsModuleStride;
-
-    if (in_pane >= kVoltRespBaseOffset &&
-        in_pane <  kVoltRespBaseOffset + kFramesPerPane) {
-        return {FrameKind::Voltage, module,
-                static_cast<std::uint8_t>(in_pane - kVoltRespBaseOffset)};
-    }
-    if (in_pane >= kTempRespBaseOffset &&
-        in_pane <  kTempRespBaseOffset + kFramesPerPane) {
-        return {FrameKind::Temperature, module,
-                static_cast<std::uint8_t>(in_pane - kTempRespBaseOffset)};
+        if (offset >= config::kBmsVoltRespOffsetLo &&
+            offset <= config::kBmsVoltRespOffsetHi) {
+            return {FrameKind::Voltage, m,
+                    static_cast<std::uint8_t>(offset - config::kBmsVoltRespOffsetLo)};
+        }
+        if (offset >= config::kBmsTempRespOffsetLo &&
+            offset <= config::kBmsTempRespOffsetHi) {
+            return {FrameKind::Temperature, m,
+                    static_cast<std::uint8_t>(offset - config::kBmsTempRespOffsetLo)};
+        }
+        return {FrameKind::Unknown, 0, 0};
     }
     return {FrameKind::Unknown, 0, 0};
 }
