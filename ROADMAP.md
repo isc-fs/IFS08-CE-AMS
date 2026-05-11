@@ -26,7 +26,7 @@ tuning, telemetry over CAN-FD) lives outside the v1 scope.
 | Phase | Title | Branches | Milestone tag |
 |:---:|---|---|---|
 | 1 | Project bootstrap | ✅ done `feat/2-pm-deliverables` · ✅ done `feat/3-cubemx-freertos` · ✅ done `feat/4-dir-layout` | `v0.1.0-scaffold` |
-| 2 | Safety supervisor | 🔜 planned `feat/5-relay-driver` · 🔜 planned `feat/6-safety-task` · 🔜 planned `feat/7-safety-predicates` | `v0.2.0-safety` |
+| 2 | Safety supervisor | ✅ done `feat/5-relay-driver` · 🔜 planned `feat/6-safety-task` · 🔜 planned `feat/7-safety-predicates` | `v0.2.0-safety` |
 | 3 | BMS communications | 🔜 planned `feat/8-bms-service` · 🔜 planned `feat/9-bms-rx-task` · 🔜 planned `feat/10-bms-poll-task` | `v0.3.0-bms` |
 | 4 | Current + accumulator CAN | 🔜 planned `feat/11-current-task` · 🔜 planned `feat/12-acu-can-rx` · 🔜 planned `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
 | 5 | State machine + integration | 🔜 planned `feat/14-state-task` · 🔜 planned `feat/15-precharge-timing` · 🔜 planned `feat/16-fan-telemetry` · 🔜 planned `feat/17-sil-tests` · 🔜 planned `feat/18-commissioning` | `v1.0.0` |
@@ -61,7 +61,7 @@ gitGraph
 
     %% Phase 2 — Safety supervisor
     branch feat/5-relay-driver
-    commit id: "○ relay_driver + GPIO inactive on boot + backup-reg error latch"
+    commit id: "✔ relay_driver + GPIO inactive on boot + backup-reg error latch"
     checkout dev
     merge feat/5-relay-driver
     branch feat/6-safety-task
