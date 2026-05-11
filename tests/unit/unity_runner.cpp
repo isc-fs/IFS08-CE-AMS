@@ -16,6 +16,12 @@ void test_unknown_id_is_rejected(void);
 void test_is_healthy_requires_all_modules(void);
 void test_is_healthy_false_after_staleness(void);
 
+// test_current_service.cpp
+void test_current_adc_zero_point_reads_near_zero(void);
+void test_current_adc_discharge_positive(void);
+void test_current_adc_charge_negative(void);
+void test_current_adc_symmetric_around_zero(void);
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -27,6 +33,11 @@ int main(void) {
     RUN_TEST(test_unknown_id_is_rejected);
     RUN_TEST(test_is_healthy_requires_all_modules);
     RUN_TEST(test_is_healthy_false_after_staleness);
+
+    RUN_TEST(test_current_adc_zero_point_reads_near_zero);
+    RUN_TEST(test_current_adc_discharge_positive);
+    RUN_TEST(test_current_adc_charge_negative);
+    RUN_TEST(test_current_adc_symmetric_around_zero);
 
     return UNITY_END();
 }

@@ -83,6 +83,22 @@ inline constexpr std::uint32_t kAcuTxCurrNormId  = 0x502;
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         kPrechargeRatio   = 0.95f;
 
+// Current sensor calibration. Pack current measured via a Hall-effect
+// transducer on PF11 -> ADC1 channel 2. The legacy AMS used:
+//   - 2.5 V output at zero current
+//   - 5.7 mV per ampere sensitivity (sign: + = discharge, - = charge)
+// .ioc puts ADC1 in 12-bit + 64x oversampling + right-shift 6, so the
+// effective sample is 12-bit (0..4095) referenced to Vref ~ 3.3 V.
+// Refine constants during commissioning (feat/18).
+inline constexpr std::uint16_t kAdcVrefMv          = 3300;
+inline constexpr std::uint16_t kAdcMaxCount        = 4095;
+inline constexpr std::int32_t  kCurrentZeroMv      = 2500;
+inline constexpr std::int32_t  kCurrentMvPerAmpe1  = 57;   // 5.7 mV/A, scaled x10
+inline constexpr std::uint8_t  kCurrentFilterShift = 4;    // tau ~ 16 samples
+
+// IIR low-pass filter coefficient is encoded as a shift so the filter
+// is `filtered = filtered - (filtered >> shift) + (raw >> shift)`.
+
 // BMS poll payloads (TX from AMS -> BMS slaves on FDCAN2).
 // Voltage poll carries the cell-balancing target in mV (big-endian);
 // the legacy code sets this to the desired upper-balance limit. Send a
