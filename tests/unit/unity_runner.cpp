@@ -30,6 +30,18 @@ void test_update_start_button_frame(void);
 void test_acu_frame_on_wrong_bus_rejected(void);
 void test_acu_unknown_id_rejected(void);
 
+// test_safety_predicates.cpp
+void test_predicates_nominal_no_fault(void);
+void test_predicates_force_error(void);
+void test_predicates_sdc_open(void);
+void test_predicates_cell_undervoltage(void);
+void test_predicates_cell_overvoltage(void);
+void test_predicates_cell_overtemp(void);
+void test_predicates_bms_stale(void);
+void test_predicates_current_overlimit(void);
+void test_predicates_current_stale(void);
+void test_predicates_vcu_stale(void);
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -53,6 +65,17 @@ int main(void) {
     RUN_TEST(test_update_start_button_frame);
     RUN_TEST(test_acu_frame_on_wrong_bus_rejected);
     RUN_TEST(test_acu_unknown_id_rejected);
+
+    RUN_TEST(test_predicates_nominal_no_fault);
+    RUN_TEST(test_predicates_force_error);
+    RUN_TEST(test_predicates_sdc_open);
+    RUN_TEST(test_predicates_cell_undervoltage);
+    RUN_TEST(test_predicates_cell_overvoltage);
+    RUN_TEST(test_predicates_cell_overtemp);
+    RUN_TEST(test_predicates_bms_stale);
+    RUN_TEST(test_predicates_current_overlimit);
+    RUN_TEST(test_predicates_current_stale);
+    RUN_TEST(test_predicates_vcu_stale);
 
     return UNITY_END();
 }

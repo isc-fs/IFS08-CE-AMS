@@ -4,8 +4,12 @@
 
 #include "ams_config.hpp"
 #include "ams_events.hpp"
+#include "bms_service.hpp"
+#include "current_service.hpp"
 #include "error_latch.hpp"
 #include "relay_driver.hpp"
+#include "safety_predicates.hpp"
+#include "vehicle_service.hpp"
 #include "watchdog.hpp"
 
 #include "cmsis_os2.h"
@@ -65,10 +69,21 @@ void SafetyTask::run() noexcept {
             ((evt & osFlagsError) == 0u) &&
             ((evt & ams::events::safety::kForceError) != 0u);
 
-        // The full predicate set lands in feat/7. Today the only fault
-        // sources are the explicit FORCE_ERROR event and the latched
-        // backup-register flag from a previous boot.
-        const bool fault = error_latched_ || flagged_error;
+        // Snapshot every input domain at once; then evaluate.
+        const auto bms_snap     = BmsService::instance().snapshot();
+        const auto current_snap = CurrentService::instance().snapshot();
+        const auto vehicle_snap = VehicleService::instance().snapshot();
+        const bool sdc_closed   =
+            HAL_GPIO_ReadPin(DIGITAL1_GPIO_Port, DIGITAL1_Pin) == GPIO_PIN_SET;
+
+        const safety::Inputs ev = {
+            bms_snap, current_snap, vehicle_snap,
+            sdc_closed,
+            flagged_error,
+            osKernelGetTickCount(),
+        };
+
+        const bool fault = error_latched_ || safety::evaluate_fault(ev);
 
         if (fault) {
             latch_error_();
