@@ -83,6 +83,13 @@ inline constexpr std::uint32_t kAcuTxCurrNormId  = 0x502;
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         kPrechargeRatio   = 0.95f;
 
+// BMS poll payloads (TX from AMS -> BMS slaves on FDCAN2).
+// Voltage poll carries the cell-balancing target in mV (big-endian);
+// the legacy code sets this to the desired upper-balance limit. Send a
+// safe default that won't trigger aggressive balancing on bring-up;
+// real value tuned during commissioning (feat/18).
+inline constexpr std::uint16_t kBmsBalancingTargetmV = 3700;
+
 // ---------------------------------------------------------------------------
 // Backup register flag (RTC_BKP_DR0): latched ERROR state across resets.
 // See docs/ARCHITECTURE.md §1 invariant 5.
