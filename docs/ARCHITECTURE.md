@@ -157,7 +157,25 @@ flowchart TD
   TeleT --> UART2
 
   bms_evt -- pollV / pollT --> BmsPollT
+
+  classDef hw    fill:#1e293b,stroke:#0f172a,color:#f8fafc
+  classDef isr   fill:#fb923c,stroke:#9a3412,color:#1c1917
+  classDef queue fill:#fde68a,stroke:#a16207,color:#1c1917
+  classDef svc   fill:#60a5fa,stroke:#1e40af,color:#f8fafc
+  classDef task  fill:#34d399,stroke:#065f46,color:#052e16
+  classDef safe  fill:#ef4444,stroke:#7f1d1d,color:#fef2f2
+
+  class FDCAN1,FDCAN2,ADC1,GPIOD,GPIOE9,TIM17,UART2,IWDG hw
+  class RX1,RX2 isr
+  class acu_rx,bms_rx,sa_evt,bms_evt queue
+  class BmsSvc,CurSvc,VehSvc svc
+  class AcuT,BmsRxT,BmsPollT,CurT,StateT,TeleT task
+  class SafeT safe
 ```
+
+**Legend** — hardware (slate) · ISRs (orange) · queues & event groups
+(amber) · services (blue) · tasks (green) · `SafetyTask` (red, the
+only realtime-priority task in the system).
 
 Arrows are direction of value flow; mutex / queue producers always
 go through the labelled primitive. The only direct GPIO writes
@@ -208,7 +226,22 @@ stateDiagram-v2
         ErrorLatch set in backup register
         next boot starts here
     end note
+
+    classDef idle    fill:#cbd5e1,stroke:#475569,color:#0f172a
+    classDef bring   fill:#fde68a,stroke:#a16207,color:#1c1917
+    classDef live    fill:#34d399,stroke:#065f46,color:#052e16
+    classDef chg     fill:#22d3ee,stroke:#0e7490,color:#083344
+    classDef fault   fill:#ef4444,stroke:#7f1d1d,color:#fef2f2
+
+    class Start idle
+    class Precharge,Transition bring
+    class Run live
+    class Charge chg
+    class Error fault
 ```
+
+**Legend** — idle (slate) · bring-up (amber) · running (green) ·
+charging (cyan) · error (red).
 
 Edge-transition relay actions:
 
@@ -237,6 +270,11 @@ Edge-transition relay actions:
 ## 6. Boot sequence
 
 ```mermaid
+%%{init: {'theme':'base','themeVariables':{
+  'actorBkg':'#e2e8f0','actorBorder':'#475569','actorTextColor':'#0f172a',
+  'noteBkgColor':'#fee2e2','noteBorderColor':'#7f1d1d','noteTextColor':'#7f1d1d',
+  'sequenceNumberColor':'#0f172a'
+}}}%%
 sequenceDiagram
   participant HW
   participant main as main()
