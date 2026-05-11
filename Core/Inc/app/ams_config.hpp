@@ -12,14 +12,18 @@
 namespace ams::config {
 
 // ---------------------------------------------------------------------------
-// Pack thresholds (FS rules). See docs/ARCHITECTURE.md §6 (SafetyTask).
+// Pack thresholds (FS rules). See docs/ARCHITECTURE.md §6 (SafetyTask)
+// and docs/COMMISSIONING.md §1 for the procedure to finalise these.
+//
+// COMMISSION: these are placeholder defaults. Finalise per cell
+// datasheet + FS rules before v1.0.0.
 // ---------------------------------------------------------------------------
 
-inline constexpr std::uint16_t kCellUVmV =  2800;  // under-voltage
-inline constexpr std::uint16_t kCellOVmV =  4200;  // over-voltage
-inline constexpr std::int16_t  kCellUTC  =   -10;  // under-temperature °C
-inline constexpr std::int16_t  kCellOTC  =    60;  // over-temperature  °C
-inline constexpr std::int32_t  kImaxMa   = 200000; // |I| absolute max  mA
+inline constexpr std::uint16_t kCellUVmV =  2800;  // under-voltage   -- COMMISSION
+inline constexpr std::uint16_t kCellOVmV =  4200;  // over-voltage    -- COMMISSION
+inline constexpr std::int16_t  kCellUTC  =   -10;  // under-temp °C   -- COMMISSION
+inline constexpr std::int16_t  kCellOTC  =    60;  // over-temp °C    -- COMMISSION
+inline constexpr std::int32_t  kImaxMa   = 200000; // |I| max mA      -- COMMISSION
 
 inline constexpr std::uint32_t kIStaleMs       =  200;  // current sensor stale
 inline constexpr std::uint32_t kBmsStaleMs     = 1500;  // any BMS module silent
@@ -90,12 +94,16 @@ inline constexpr float         kPrechargeRatio   = 0.95f;
 //   - 5.7 mV per ampere sensitivity (sign: + = discharge, - = charge)
 // .ioc puts ADC1 in 12-bit + 64x oversampling + right-shift 6, so the
 // effective sample is 12-bit (0..4095) referenced to Vref ~ 3.3 V.
-// Refine constants during commissioning (feat/18).
+//
+// COMMISSION: kCurrentZeroMv and kCurrentMvPerAmpe1 MUST be calibrated
+// per real-hardware procedure in docs/COMMISSIONING.md §2 before
+// v1.0.0. Real Hall units drift; the unit-test-passing defaults are
+// only for bring-up.
 inline constexpr std::uint16_t kAdcVrefMv          = 3300;
 inline constexpr std::uint16_t kAdcMaxCount        = 4095;
-inline constexpr std::int32_t  kCurrentZeroMv      = 2500;
-inline constexpr std::int32_t  kCurrentMvPerAmpe1  = 57;   // 5.7 mV/A, scaled x10
-inline constexpr std::uint8_t  kCurrentFilterShift = 4;    // tau ~ 16 samples
+inline constexpr std::int32_t  kCurrentZeroMv      = 2500;  // COMMISSION
+inline constexpr std::int32_t  kCurrentMvPerAmpe1  = 57;    // COMMISSION (5.7 mV/A x10)
+inline constexpr std::uint8_t  kCurrentFilterShift = 4;     // tau ~ 16 samples
 
 // IIR low-pass filter coefficient is encoded as a shift so the filter
 // is `filtered = filtered - (filtered >> shift) + (raw >> shift)`.
