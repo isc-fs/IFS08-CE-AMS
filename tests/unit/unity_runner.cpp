@@ -22,6 +22,14 @@ void test_current_adc_discharge_positive(void);
 void test_current_adc_charge_negative(void);
 void test_current_adc_symmetric_around_zero(void);
 
+// test_vehicle_service.cpp
+void test_decode_dc_bus_little_endian(void);
+void test_decode_start_button(void);
+void test_update_dc_bus_frame(void);
+void test_update_start_button_frame(void);
+void test_acu_frame_on_wrong_bus_rejected(void);
+void test_acu_unknown_id_rejected(void);
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -38,6 +46,13 @@ int main(void) {
     RUN_TEST(test_current_adc_discharge_positive);
     RUN_TEST(test_current_adc_charge_negative);
     RUN_TEST(test_current_adc_symmetric_around_zero);
+
+    RUN_TEST(test_decode_dc_bus_little_endian);
+    RUN_TEST(test_decode_start_button);
+    RUN_TEST(test_update_dc_bus_frame);
+    RUN_TEST(test_update_start_button_frame);
+    RUN_TEST(test_acu_frame_on_wrong_bus_rejected);
+    RUN_TEST(test_acu_unknown_id_rejected);
 
     return UNITY_END();
 }

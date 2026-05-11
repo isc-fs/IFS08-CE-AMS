@@ -44,6 +44,7 @@ uint32_t   osKernelGetTickCount(void);
  * stubs provided by cmsis_os2_stub.cpp. */
 extern osMutexId_t bms_mutexHandle;
 extern osMutexId_t current_mutexHandle;
+extern osMutexId_t vehicle_mutexHandle;
 
 #ifdef __cplusplus
 }

@@ -22,6 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app/acu_can_task.h"
 #include "app/app_globals.h"
 #include "app/app_init_task.h"
 #include "app/bms_poll_task.h"
@@ -928,11 +929,9 @@ void StartBmsPollTask(void *argument)
 void StartAcuCanTask(void *argument)
 {
   /* USER CODE BEGIN StartAcuCanTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_acu_can_task_run(argument);
+  /* Unreachable: ams_acu_can_task_run() never returns. */
+  for(;;) { osDelay(1); }
   /* USER CODE END StartAcuCanTask */
 }
 
