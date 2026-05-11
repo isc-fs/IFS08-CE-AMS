@@ -50,3 +50,17 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+# CMake build output
+/build/
+/build-*/
+
+# clangd index cache
+/.cache/
+
+# STM32CubeIDE workspace metadata
+.settings/
+.metadata/
+
+# CMake user files
+CMakeUserPresets.json
