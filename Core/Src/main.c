@@ -31,6 +31,7 @@
 #include "app/current_task.h"
 #include "app/safety_task.h"
 #include "app/state_task.h"
+#include "app/telemetry_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
 
@@ -959,11 +960,8 @@ void StartCurrentTask(void *argument)
 void StartTelemetryTask(void *argument)
 {
   /* USER CODE BEGIN StartTelemetryTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_telemetry_task_run(argument);
+  for(;;) { osDelay(1); }
   /* USER CODE END StartTelemetryTask */
 }
 
