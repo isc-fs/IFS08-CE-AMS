@@ -22,7 +22,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "app/app_globals.h"
 #include "app/can_frame.h"
+#include "app/safety_task.h"
+#include "app/watchdog.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -216,7 +219,9 @@ int main(void)
   MX_ADC3_Init();
   MX_TIM17_Init();
   /* USER CODE BEGIN 2 */
-
+  /* Start the IWDG BEFORE osKernelStart so the watchdog is alive even
+   * during the brief pre-scheduler window. Refresh from SafetyTask. */
+  ams_watchdog_init();
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -290,7 +295,9 @@ int main(void)
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
+  /* CubeMX 6.16 CMake target does not emit code for event groups
+   * declared in the .ioc -- create them here. See app_globals.cpp. */
+  ams_app_globals_init();
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
@@ -853,11 +860,9 @@ void StartAppInitTask(void *argument)
 void StartSafetyTask(void *argument)
 {
   /* USER CODE BEGIN StartSafetyTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_safety_task_run(argument);
+  /* Unreachable: ams_safety_task_run() never returns. */
+  for(;;) { osDelay(1); }
   /* USER CODE END StartSafetyTask */
 }
 
