@@ -10,7 +10,11 @@
 
 #pragma once
 
-#include <array>
+// The wire layout lives in the C header so main.c (CubeMX-generated, C)
+// can do sizeof(CanFrame) when constructing the FreeRTOS message queues.
+// We re-export the same struct into the ams:: namespace for the C++ side.
+#include "app/can_frame.h"
+
 #include <cstdint>
 
 namespace ams {
@@ -20,23 +24,9 @@ enum class CanBus : std::uint8_t {
     Acu = 1,  // FDCAN2 in the legacy code, accumulator/vehicle bus
 };
 
-// Static across the project. Classic CAN payload is 8 bytes; the .ioc
-// keeps FrameFormat = FDCAN_FRAME_FD_NO_BRS but we cap payloads at the
-// classic size because every CAN partner today (BMS slaves, charger,
-// VCU 0x100/0x600) speaks classic.
-inline constexpr std::uint8_t kCanFrameMaxData = 8;
+inline constexpr std::uint8_t kCanFrameMaxData = AMS_CAN_FRAME_MAX_DATA;
 
-struct CanFrame {
-    std::uint32_t id;                // 11- or 29-bit, masked at use site
-    std::uint8_t  dlc;               // 0..8
-    bool          extended;          // true => 29-bit id
-    bool          fd;                // currently always false; reserved
-    CanBus        bus;
-    std::uint32_t timestamp_ms;      // osKernelGetTickCount() at RX
-    std::array<std::uint8_t, kCanFrameMaxData> data;
-};
-
-static_assert(sizeof(CanFrame) <= 32,
-              "CanFrame should fit in a 32-byte queue slot");
+// Same memory layout as the C struct -- this is just a namespaced alias.
+using CanFrame = ::CanFrame;
 
 }  // namespace ams

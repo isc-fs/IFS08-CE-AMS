@@ -22,7 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "app/can_frame.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -62,30 +62,21 @@ const osThreadAttr_t defaultTask_attributes = {
 osThreadId_t App_InitTaskHandle;
 const osThreadAttr_t App_InitTask_attributes = {
   .name = "App_InitTask",
-  .cb_mem = &NULL,
-  .cb_size = sizeof(NULL),
-  .stack_mem = &NULL[0],
-  .stack_size = sizeof(NULL),
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for SafetyTask */
 osThreadId_t SafetyTaskHandle;
 const osThreadAttr_t SafetyTask_attributes = {
   .name = "SafetyTask",
-  .cb_mem = &NULL,
-  .cb_size = sizeof(NULL),
-  .stack_mem = &NULL[0],
-  .stack_size = sizeof(NULL),
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityRealtime,
 };
 /* Definitions for StateTask */
 osThreadId_t StateTaskHandle;
 const osThreadAttr_t StateTask_attributes = {
   .name = "StateTask",
-  .cb_mem = &NULL,
-  .cb_size = sizeof(NULL),
-  .stack_mem = &NULL[0],
-  .stack_size = sizeof(NULL),
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
 /* Definitions for BmsRxTask */
