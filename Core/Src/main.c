@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app/app_globals.h"
+#include "app/app_init_task.h"
 #include "app/can_frame.h"
 #include "app/safety_task.h"
 #include "app/watchdog.h"
@@ -842,11 +843,9 @@ void StartDefaultTask(void *argument)
 void StartAppInitTask(void *argument)
 {
   /* USER CODE BEGIN StartAppInitTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_app_init_task_run(argument);
+  /* Unreachable: ams_app_init_task_run() calls osThreadExit(). */
+  for(;;) { osDelay(1); }
   /* USER CODE END StartAppInitTask */
 }
 

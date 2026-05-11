@@ -19,9 +19,12 @@
 
 namespace ams {
 
+// Per docs/CAN_MAP.md and the legacy AMS firmware: FDCAN1 is the
+// accumulator/vehicle bus, FDCAN2 is the BMS slave bus. The numeric
+// values match the wire transport byte in CanFrame::bus.
 enum class CanBus : std::uint8_t {
-    Bms = 0,  // FDCAN1 in the legacy code, BMS slaves
-    Acu = 1,  // FDCAN2 in the legacy code, accumulator/vehicle bus
+    Acu = 0,  // FDCAN1 -- accumulator / vehicle / charger
+    Bms = 1,  // FDCAN2 -- BMS slave modules
 };
 
 inline constexpr std::uint8_t kCanFrameMaxData = AMS_CAN_FRAME_MAX_DATA;
