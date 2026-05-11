@@ -18,6 +18,7 @@
 #include "ams_config.hpp"
 #include "ams_events.hpp"
 #include "app/app_globals.h"
+#include "current_service.hpp"
 
 #include "cmsis_os2.h"
 #include "main.h"
@@ -68,13 +69,19 @@ void send_poll(std::uint32_t id,
 }
 
 void send_voltage_polls() {
+    // Legacy parity: suppress balancing TX while a charger is on the
+    // bus. The slaves interpret the 2-byte payload as a balancing
+    // target -- we don't want passive balancing to fight the charger's
+    // active balance algorithm.
+    if (ams::CurrentService::instance().snapshot().charger_detected) {
+        return;
+    }
+
     for (std::uint8_t m = 0; m < ams::config::kBmsModuleCount; ++m) {
         const std::uint32_t canid =
             static_cast<std::uint32_t>(ams::config::kBmsVoltPollBase) +
             static_cast<std::uint32_t>(m) * ams::config::kBmsModuleStride;
 
-        // TODO(feat/12+): suppress when charging (legacy behavior).
-        // For bring-up always send the balancing target.
         send_poll(canid,
                   static_cast<std::uint8_t>(ams::config::kBmsBalancingTargetmV >> 8),
                   static_cast<std::uint8_t>(ams::config::kBmsBalancingTargetmV & 0xFF));
