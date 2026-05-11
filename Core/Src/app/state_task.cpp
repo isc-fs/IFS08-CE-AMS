@@ -58,6 +58,14 @@ extern "C" void ams_state_task_run(void *argument) {
             state            = out.next;
             state_entry_tick = osKernelGetTickCount();
             g_state_telemetry = static_cast<std::uint8_t>(state);
+
+            // Persist ERROR across resets. SafetyTask also writes the
+            // latch on the fault path; we duplicate here so the latch
+            // gets set even if FSM forces ERROR without a predicate
+            // fault (e.g. precharge timeout).
+            if (state == ams::fsm::State::Error) {
+                ams::ErrorLatch::set();
+            }
         }
     }
 }

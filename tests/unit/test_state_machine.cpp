@@ -115,3 +115,24 @@ extern "C" void test_fsm_error_is_sticky(void) {
     // even with everything healthy
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, ams::fsm::step(in).next);
 }
+
+extern "C" void test_fsm_precharge_timeout_forces_error(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    veh.dc_bus_V = 50;  // never reaches target
+    in.state_entry_tick = in.now_tick - (ams::config::kPrechargeMaxMs + 1);
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
+}
+
+extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
+    // Started Transition; voltage now dropped well below target.
+    veh.dc_bus_V = 100;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
+}

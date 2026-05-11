@@ -93,6 +93,15 @@ struct Output {
     }
 
     case State::Precharge: {
+        // Hard deadline: if we don't hit precharge target within
+        // kPrechargeMaxMs, something is wrong (stuck contactor, low
+        // pack V, mismeasured DC bus). Force ERROR.
+        if (in.now_tick - in.state_entry_tick > config::kPrechargeMaxMs) {
+            return { State::Error,
+                     events::safety::kForceError |
+                     events::safety::kOpenAirN | events::safety::kOpenAirP |
+                     events::safety::kOpenPrecharge };
+        }
         if (precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Transition,
                      events::safety::kCloseAirP |
@@ -102,10 +111,16 @@ struct Output {
     }
 
     case State::Transition: {
-        // Hold the transition state for kPrechargeHoldMs while we
-        // verify DC bus stays steady, then enter RUN. Timing
-        // refinements (steady-state check) land in feat/15.
-        if (in.now_tick - in.state_entry_tick >= 100u) {
+        // Hold for kTransitionHoldMs and require that the DC bus
+        // STAYS at or above the precharge target the entire time --
+        // if it slumps (a contactor opens, cap leaks) we go to ERROR.
+        if (!precharge_target_reached(in.bms, in.vehicle)) {
+            return { State::Error,
+                     events::safety::kForceError |
+                     events::safety::kOpenAirN | events::safety::kOpenAirP |
+                     events::safety::kOpenPrecharge };
+        }
+        if (in.now_tick - in.state_entry_tick >= config::kTransitionHoldMs) {
             return { State::Run, 0u };
         }
         return { State::Transition, 0u };
