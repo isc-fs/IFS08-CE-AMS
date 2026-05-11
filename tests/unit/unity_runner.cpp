@@ -42,6 +42,17 @@ void test_predicates_current_overlimit(void);
 void test_predicates_current_stale(void);
 void test_predicates_vcu_stale(void);
 
+// test_state_machine.cpp
+void test_fsm_start_waits_without_button(void);
+void test_fsm_start_transitions_to_precharge_on_button(void);
+void test_fsm_start_transitions_to_charge_on_charger(void);
+void test_fsm_precharge_reaches_target(void);
+void test_fsm_precharge_stays_below_target(void);
+void test_fsm_transition_holds_then_runs(void);
+void test_fsm_run_to_charge_and_back(void);
+void test_fsm_any_state_to_error_on_fault(void);
+void test_fsm_error_is_sticky(void);
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -76,6 +87,16 @@ int main(void) {
     RUN_TEST(test_predicates_current_overlimit);
     RUN_TEST(test_predicates_current_stale);
     RUN_TEST(test_predicates_vcu_stale);
+
+    RUN_TEST(test_fsm_start_waits_without_button);
+    RUN_TEST(test_fsm_start_transitions_to_precharge_on_button);
+    RUN_TEST(test_fsm_start_transitions_to_charge_on_charger);
+    RUN_TEST(test_fsm_precharge_reaches_target);
+    RUN_TEST(test_fsm_precharge_stays_below_target);
+    RUN_TEST(test_fsm_transition_holds_then_runs);
+    RUN_TEST(test_fsm_run_to_charge_and_back);
+    RUN_TEST(test_fsm_any_state_to_error_on_fault);
+    RUN_TEST(test_fsm_error_is_sticky);
 
     return UNITY_END();
 }

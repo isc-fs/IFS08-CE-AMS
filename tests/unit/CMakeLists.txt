@@ -41,6 +41,7 @@ add_executable(ams_unit_tests
     test_bms_service.cpp
     test_current_service.cpp
     test_safety_predicates.cpp
+    test_state_machine.cpp
     test_vehicle_service.cpp
     unity_runner.cpp
 )

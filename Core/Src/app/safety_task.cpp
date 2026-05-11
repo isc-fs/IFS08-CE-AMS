@@ -93,8 +93,24 @@ void SafetyTask::run() noexcept {
             continue;
         }
 
-        // TODO(feat/7): consume AIR_CLOSE_REQ / AIR_OPEN_REQ etc. and
-        // drive the relays accordingly.
+        // Service FSM-driven relay actions on the clean path. We
+        // consume the relay-action bits here (clearing them on read)
+        // so each request gets actioned exactly once; the FSM is
+        // free to post the same bit on the next 20 ms cycle and we
+        // will pick it up again.
+        const std::uint32_t actions = osEventFlagsWait(
+            safety_eventsHandle,
+            ams::events::safety::kAllRelayActions,
+            osFlagsWaitAny,
+            0);
+        if ((actions & osFlagsError) == 0u) {
+            if (actions & ams::events::safety::kCloseAirN)      Relays::close_air_negative();
+            if (actions & ams::events::safety::kCloseAirP)      Relays::close_air_positive();
+            if (actions & ams::events::safety::kClosePrecharge) Relays::close_precharge();
+            if (actions & ams::events::safety::kOpenAirN)       Relays::open_air_negative();
+            if (actions & ams::events::safety::kOpenAirP)       Relays::open_air_positive();
+            if (actions & ams::events::safety::kOpenPrecharge)  Relays::open_precharge();
+        }
 
         Watchdog::refresh();
     }
