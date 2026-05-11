@@ -30,6 +30,7 @@
 #include "app/can_frame.h"
 #include "app/current_task.h"
 #include "app/safety_task.h"
+#include "app/state_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
 
@@ -879,11 +880,8 @@ void StartSafetyTask(void *argument)
 void StartStateTask(void *argument)
 {
   /* USER CODE BEGIN StartStateTask */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+  ams_state_task_run(argument);
+  for(;;) { osDelay(1); }
   /* USER CODE END StartStateTask */
 }
 
