@@ -13,6 +13,7 @@ Embedded firmware for the **Accumulator Management System (AMS)** of the IFS08, 
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Safety invariants, task layout, data-flow + FSM mermaid diagrams, boot sequence, memory budget, file layout. **Start here.** |
 | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Wire protocol for both buses (FDCAN1 accumulator + FDCAN2 BMS). Every TX/RX frame with byte-level layout. |
 | [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | Bench + on-vehicle calibration procedure. Every `COMMISSION`-tagged constant in `ams_config.hpp` is finalised here. |
+| [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) | Hardware-in-the-loop test plan. 50+ tests across boot, safety, FSM, comms, bootloader integration, soak. Defines the v1.1.0 acceptance gate. |
 | [`ROADMAP.md`](ROADMAP.md) | Auto-generated phase plan + branch status badges. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Conventions for branches, PRs, labels; how to add a CAN frame or a new task. |
 
