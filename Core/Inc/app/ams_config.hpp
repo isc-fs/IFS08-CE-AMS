@@ -116,11 +116,26 @@ inline constexpr std::uint8_t  kCurrentFilterShift = 4;     // tau ~ 16 samples
 inline constexpr std::uint16_t kBmsBalancingTargetmV = 3700;
 
 // ---------------------------------------------------------------------------
-// Backup register flag (RTC_BKP_DR0): latched ERROR state across resets.
+// Backup-register usage. RTC_BKP_DR0 is owned by the bootloader (it
+// reads BL_BOOT_REQ_MAGIC there on every boot, see issue #54 / the
+// stm32-can-bootloader memmap). Application uses RTC_BKP_DR1 for the
+// ERROR latch so the two never share a word.
 // See docs/ARCHITECTURE.md §1 invariant 5.
 // ---------------------------------------------------------------------------
 
-inline constexpr std::uint32_t kBkpErrorReg     = 0;
+inline constexpr std::uint32_t kBkpErrorReg     = 1;
 inline constexpr std::uint32_t kBkpErrorMagic   = 0xA115EE51u;
+
+// Bootloader handshake (consumed by the jump-to-bootloader feature
+// tracked in issue #54; declared here so the constants are in one
+// place). The bootloader reads kBkpErrorReg-class registers; we must
+// not touch kBlBootReqReg from the app except via the dedicated
+// reboot-request path.
+inline constexpr std::uint32_t kBlBootReqReg    = 0;
+inline constexpr std::uint32_t kBlBootReqMagic  = 0xB00710ADu;
+
+// Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
+// ORIGIN and the bootloader's BL_APP_BASE.
+inline constexpr std::uint32_t kAppFlashBase    = 0x08020000u;
 
 }  // namespace ams::config

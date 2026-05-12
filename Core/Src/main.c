@@ -195,7 +195,14 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
+  /* Application is linked at 0x08020000 (sector 1+); sector 0 belongs
+   * to the bootloader. Set SCB->VTOR before any interrupt could fire
+   * so the right vector table is in effect even when this image is
+   * flashed directly (without the bootloader's pre-jump VTOR setup).
+   * Must precede HAL_Init -- which itself relies on SysTick / NMI
+   * paths reading from the correct table.
+   * See isc-fs/stm32-can-bootloader Core/Inc/bl_memmap.h. */
+  SCB->VTOR = 0x08020000U;
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
