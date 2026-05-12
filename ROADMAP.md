@@ -18,8 +18,11 @@ status badges (✅ / 🔄 / 🔜) are derived from each branch's tracking
 issue state in GitHub Issues.
 
 **v1.0.0** is tagged at the end of Phase 5 — the AMS is feature-complete
-for vehicle commissioning. Subsequent work (charger profiles, balancing
-tuning, telemetry over CAN-FD) lives outside the v1 scope.
+for vehicle commissioning. **v1.1.0** at the end of Phase 6 makes the
+image bootloader-compatible (lives in flash sectors 1..6 and can be
+flashed in-system via [stm32-can-bootloader](https://github.com/isc-fs/stm32-can-bootloader)).
+Subsequent work (charger profiles, balancing tuning, telemetry over
+CAN-FD) lives outside the v1 scope.
 
 ## Phase summary
 
@@ -30,6 +33,7 @@ tuning, telemetry over CAN-FD) lives outside the v1 scope.
 | 3 | BMS communications | ✅ done `feat/8-bms-service` · ✅ done `feat/9-bms-rx-task` · ✅ done `feat/10-bms-poll-task` | `v0.3.0-bms` |
 | 4 | Current + accumulator CAN | ✅ done `feat/11-current-task` · ✅ done `feat/12-acu-can-rx` · ✅ done `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
 | 5 | State machine + integration | ✅ done `feat/14-state-task` · ✅ done `feat/15-precharge-timing` · ✅ done `feat/16-fan-telemetry` · ✅ done `feat/17-sil-tests` · ✅ done `feat/18-commissioning` | `v1.0.0` |
+| 6 | Bootloader integration | ✅ done `feat/19-flash-relocation` · 🔜 planned `feat/20-bootloader-trigger` | `v1.1.0-bootloader` |
 | — | Workflow polish _(sidequest)_ | ✅ done `feat/1-autoclose-on-dev-merge` · ✅ done `fix/1-workflow-titled-branches` | — |
 
 ## Branch diagram
@@ -133,6 +137,19 @@ gitGraph
     merge feat/18-commissioning
     checkout main
     merge dev tag: "v1.0.0"
+    checkout dev
+
+    %% Phase 6 — Bootloader integration
+    branch feat/19-flash-relocation
+    commit id: "✔ app at 0x08020000, BKP1R for ErrorLatch, CI flash-layout guard"
+    checkout dev
+    merge feat/19-flash-relocation
+    branch feat/20-bootloader-trigger
+    commit id: "○ CAN-triggered jump to bootloader (FDCAN2 id 0x002 + 4 B magic)"
+    checkout dev
+    merge feat/20-bootloader-trigger
+    checkout main
+    merge dev tag: "v1.1.0-bootloader"
     checkout dev
 
 ```
