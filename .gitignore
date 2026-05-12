@@ -69,3 +69,9 @@ CMakeUserPresets.json
 .clangd
 .vscode/
 .idea/
+
+# PCB files (schematics, layouts, gerbers). The firmware repo is not
+# the canonical store for hardware artefacts -- they live in the PCB
+# repos. Local copies under pcb/ are for reference only and must not
+# be committed.
+/pcb/
