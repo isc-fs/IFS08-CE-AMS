@@ -33,7 +33,7 @@ CAN-FD) lives outside the v1 scope.
 | 3 | BMS communications | ✅ done `feat/8-bms-service` · ✅ done `feat/9-bms-rx-task` · ✅ done `feat/10-bms-poll-task` | `v0.3.0-bms` |
 | 4 | Current + accumulator CAN | ✅ done `feat/11-current-task` · ✅ done `feat/12-acu-can-rx` · ✅ done `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
 | 5 | State machine + integration | ✅ done `feat/14-state-task` · ✅ done `feat/15-precharge-timing` · ✅ done `feat/16-fan-telemetry` · ✅ done `feat/17-sil-tests` · ✅ done `feat/18-commissioning` | `v1.0.0` |
-| 6 | Bootloader integration | ✅ done `feat/19-flash-relocation` · 🔜 planned `feat/20-bootloader-trigger` | `v1.1.0-bootloader` |
+| 6 | Bootloader integration | ✅ done `feat/19-flash-relocation` · ✅ done `feat/20-bootloader-trigger` | `v1.1.0-bootloader` |
 | — | Workflow polish _(sidequest)_ | ✅ done `feat/1-autoclose-on-dev-merge` · ✅ done `fix/1-workflow-titled-branches` | — |
 
 ## Branch diagram
@@ -145,7 +145,7 @@ gitGraph
     checkout dev
     merge feat/19-flash-relocation
     branch feat/20-bootloader-trigger
-    commit id: "○ CAN-triggered jump to bootloader (FDCAN2 id 0x002 + 4 B magic)"
+    commit id: "✔ CAN-triggered jump to bootloader (FDCAN2 id 0x002 + 4 B magic)"
     checkout dev
     merge feat/20-bootloader-trigger
     checkout main
