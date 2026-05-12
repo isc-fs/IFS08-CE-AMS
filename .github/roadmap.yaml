@@ -19,8 +19,11 @@ intro: |
   issue state in GitHub Issues.
 
   **v1.0.0** is tagged at the end of Phase 5 — the AMS is feature-complete
-  for vehicle commissioning. Subsequent work (charger profiles, balancing
-  tuning, telemetry over CAN-FD) lives outside the v1 scope.
+  for vehicle commissioning. **v1.1.0** at the end of Phase 6 makes the
+  image bootloader-compatible (lives in flash sectors 1..6 and can be
+  flashed in-system via [stm32-can-bootloader](https://github.com/isc-fs/stm32-can-bootloader)).
+  Subsequent work (charger profiles, balancing tuning, telemetry over
+  CAN-FD) lives outside the v1 scope.
 
 phases:
   - number: 1
@@ -81,6 +84,15 @@ phases:
         scope: SIL harness + integration tests (state transitions, fault injection)
       - name: feat/18-commissioning
         scope: on-vehicle commissioning + calibration constants finalised
+
+  - number: 6
+    title: Bootloader integration
+    tag: v1.1.0-bootloader
+    branches:
+      - name: feat/19-flash-relocation
+        scope: app at 0x08020000, BKP1R for ErrorLatch, CI flash-layout guard
+      - name: feat/20-bootloader-trigger
+        scope: CAN-triggered jump to bootloader (FDCAN2 id 0x002 + 4 B magic)
 
 sidequests:
   - title: Workflow polish
