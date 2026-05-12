@@ -12,6 +12,7 @@
 #include "app/bms_rx_task.h"
 
 #include "bms_service.hpp"
+#include "bootloader.hpp"
 #include "can_frame.hpp"
 
 #include "cmsis_os2.h"
@@ -40,6 +41,13 @@ extern "C" void ams_bms_rx_task_run(void *argument) {
             // try again rather than spinning.
             osDelay(10);
             continue;
+        }
+
+        // Boot-trigger check happens BEFORE BmsService parsing.
+        // request_reboot() never returns -- it opens the relays,
+        // writes BL_BOOT_REQ_MAGIC to BKP0R, and issues a HW reset.
+        if (ams::Bootloader::matches_trigger(frame)) {
+            ams::Bootloader::request_reboot();
         }
 
         if (!ams::BmsService::instance().update_from_frame(frame)) {
