@@ -64,3 +64,8 @@ dkms.conf
 
 # CMake user files
 CMakeUserPresets.json
+
+# Editor / IDE local config
+.clangd
+.vscode/
+.idea/
