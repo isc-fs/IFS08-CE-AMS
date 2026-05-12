@@ -39,6 +39,7 @@ add_executable(ams_unit_tests
     mocks/cmsis_os2_stub.cpp
 
     test_bms_service.cpp
+    test_bootloader.cpp
     test_current_service.cpp
     test_safety_predicates.cpp
     test_sil_scenarios.cpp

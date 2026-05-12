@@ -126,13 +126,24 @@ inline constexpr std::uint16_t kBmsBalancingTargetmV = 3700;
 inline constexpr std::uint32_t kBkpErrorReg     = 1;
 inline constexpr std::uint32_t kBkpErrorMagic   = 0xA115EE51u;
 
-// Bootloader handshake (consumed by the jump-to-bootloader feature
-// tracked in issue #54; declared here so the constants are in one
-// place). The bootloader reads kBkpErrorReg-class registers; we must
-// not touch kBlBootReqReg from the app except via the dedicated
-// reboot-request path.
+// Bootloader handshake. The bootloader reads RTC_BKP_DR0 on every
+// boot; if it equals kBlBootReqMagic it stays in BL mode awaiting CAN
+// traffic. Application must not touch RTC_BKP_DR0 except via the
+// dedicated Bootloader::request_reboot() path.
 inline constexpr std::uint32_t kBlBootReqReg    = 0;
 inline constexpr std::uint32_t kBlBootReqMagic  = 0xB00710ADu;
+
+// CAN frame the app listens for to trigger a deliberate reboot into
+// the bootloader. Standard 11-bit ID, very high arbitration priority,
+// well below the BMS namespace (0x12C+). On FDCAN2 -- same bus the
+// bootloader listens on, so the host stays on one bus for the whole
+// reboot-and-flash workflow.
+//
+// 4-byte payload magic exists so a stray same-ID frame can't
+// accidentally reboot the car. All four bytes must match exactly.
+inline constexpr std::uint32_t kBlBootReqCanId      = 0x002u;
+inline constexpr std::uint8_t  kBlBootReqPayload[4] = { 0xB0, 0x07, 0xAD, 0x11 };
+inline constexpr std::uint8_t  kBlBootReqDlc        = 4;
 
 // Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
 // ORIGIN and the bootloader's BL_APP_BASE.

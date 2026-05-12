@@ -30,6 +30,14 @@ void test_update_start_button_frame(void);
 void test_acu_frame_on_wrong_bus_rejected(void);
 void test_acu_unknown_id_rejected(void);
 
+// test_bootloader.cpp
+void test_bootloader_trigger_exact_match(void);
+void test_bootloader_trigger_wrong_bus(void);
+void test_bootloader_trigger_wrong_id(void);
+void test_bootloader_trigger_wrong_dlc(void);
+void test_bootloader_trigger_each_magic_byte_flipped(void);
+void test_bootloader_trigger_trailing_bytes_ignored(void);
+
 // test_safety_predicates.cpp
 void test_predicates_nominal_no_fault(void);
 void test_predicates_force_error(void);
@@ -85,6 +93,13 @@ int main(void) {
     RUN_TEST(test_update_start_button_frame);
     RUN_TEST(test_acu_frame_on_wrong_bus_rejected);
     RUN_TEST(test_acu_unknown_id_rejected);
+
+    RUN_TEST(test_bootloader_trigger_exact_match);
+    RUN_TEST(test_bootloader_trigger_wrong_bus);
+    RUN_TEST(test_bootloader_trigger_wrong_id);
+    RUN_TEST(test_bootloader_trigger_wrong_dlc);
+    RUN_TEST(test_bootloader_trigger_each_magic_byte_flipped);
+    RUN_TEST(test_bootloader_trigger_trailing_bytes_ignored);
 
     RUN_TEST(test_predicates_nominal_no_fault);
     RUN_TEST(test_predicates_force_error);

@@ -30,6 +30,27 @@ void ams_app_init_task_run(void *argument)
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
 
+    // FDCAN filter setup. CubeMX configures 0 standard / 5 extended
+    // filter slots; with no software-defined filters the default for
+    // unmatched frames depends on GlobalFilterConfig. Be explicit:
+    // accept every unmatched standard and extended frame into FIFO0
+    // on both buses. This covers:
+    //   FDCAN1 (ACU bus): VCU 0x100 (ext), 0x600 (std), charger
+    //     0x18FF50E7 (ext), and any future VCU frames.
+    //   FDCAN2 (BMS bus): slave responses 0x12D+ (std) plus the
+    //     boot-trigger frame at 0x002 (std).
+    // Remote frames are rejected on both buses.
+    HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,
+        FDCAN_ACCEPT_IN_RX_FIFO0,
+        FDCAN_ACCEPT_IN_RX_FIFO0,
+        FDCAN_REJECT_REMOTE,
+        FDCAN_REJECT_REMOTE);
+    HAL_FDCAN_ConfigGlobalFilter(&hfdcan2,
+        FDCAN_ACCEPT_IN_RX_FIFO0,
+        FDCAN_ACCEPT_IN_RX_FIFO0,
+        FDCAN_REJECT_REMOTE,
+        FDCAN_REJECT_REMOTE);
+
     // FDCAN bring-up: ISR notifications first, then Start. Either
     // order works but doing notifications first guarantees we don't
     // lose the first frame that arrives between Start and Notify.
