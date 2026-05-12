@@ -29,8 +29,10 @@ Everything else exists to enforce these:
 4. **The watchdog is fed only on `SafetyTask`'s clean path.** A
    stuck supervisor → IWDG timeout (≈100 ms) → hardware reset →
    relays default open.
-5. **ERROR is latched across resets** via `RTC->BKP0R` (magic
+5. **ERROR is latched across resets** via `RTC->BKP1R` (magic
    `0xA115EE51`). Cleared only by full backup-domain power loss.
+   `BKP0R` is reserved for the bootloader's boot-request handshake
+   (`0xB00710AD`); the two registers must never share a word.
 6. **Shared sensor state has one writer.** Each domain has its own
    mutex; readers `snapshot()` under the lock and work off a copy.
 
@@ -398,12 +400,20 @@ CubeMX 6.16 doesn't emit them from .ioc):
 ## 9. Memory budget (as built)
 
 ```
-FLASH:    74 464 B / 1 MB    ( 7.10 %)
+FLASH:    74 448 B / 768 KB  ( 9.47 %)  -- app region only (sectors 1..6).
+                                          Sector 0 reserved for the bootloader,
+                                          sector 7 for BL NVM + app metadata.
 DTCMRAM:  44 408 B / 128 KB  (33.88 %)  -- stacks, TCBs, BSS,
                                           FreeRTOS heap_4
 ITCMRAM:       0 B           -- unused
 RAM_D1/D2/D3:  0 B           -- unused
 ```
+
+The 768 KB ceiling is enforced both at link time (`STM32H733XG_FLASH.ld`
+`FLASH` region is sized for the app range) and in CI (the
+[`check_flash_layout.py`](../scripts/check_flash_layout.py) step in
+`build-tests.yml` rejects any image that lands in sector 0 or
+overflows sector 6).
 
 FreeRTOS heap (`configTOTAL_HEAP_SIZE = 32 768`): ~14.7 KB used,
 ~18 KB free. Newlib reentrant structs account for ~1 KB. Three

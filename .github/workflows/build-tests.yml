@@ -43,6 +43,16 @@ jobs:
           arm-none-eabi-size --format=berkeley build/AMS.elf >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
+      - name: Verify bootloader-compatible flash layout
+        run: |
+          python3 scripts/check_flash_layout.py build/AMS.elf | tee layout.log
+          {
+            echo "## Flash layout vs. stm32-can-bootloader"
+            echo '```'
+            cat layout.log
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+
   unit-tests:
     name: Host unit tests (Unity)
     runs-on: ubuntu-latest
