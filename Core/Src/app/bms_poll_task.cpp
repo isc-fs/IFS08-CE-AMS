@@ -21,14 +21,22 @@
 #include "ams_config.hpp"
 #include "ams_events.hpp"
 #include "app/app_globals.h"
+#include "balance_controller.hpp"
 #include "bms_service.hpp"
 #include "ltc6811.hpp"
 #include "ltc6820.hpp"
+#include "state_machine.hpp"
 
 #include "cmsis_os2.h"
 
 #include <cstddef>
 #include <cstdint>
+
+// FSM state mirror, owned by StateTask. Reading a single byte from
+// another task is safe without a lock; we only need a coherent
+// snapshot at the call point, which volatile + 8-bit read guarantees
+// on Cortex-M7.
+extern "C" volatile std::uint8_t g_state_telemetry;
 
 namespace {
 
@@ -46,6 +54,12 @@ volatile std::uint32_t g_ltc_spi_err_count = 0;
 // within 50 ms" acceptance criterion without a scope.
 volatile std::uint32_t g_bms_volt_poll_ms  = 0;
 volatile std::uint32_t g_bms_volt_poll_max = 0;
+
+// Balancing-update counters: cycles since last WRCFGA + total
+// cycles where at least one DCC bit was set. Surfaced for HIL.
+volatile std::uint32_t g_balance_cycles_total  = 0;
+volatile std::uint32_t g_balance_cycles_active = 0;
+std::uint32_t          s_volt_poll_count       = 0;
 
 void volt_timer_cb(void * /*arg*/) {
     osEventFlagsSet(bms_eventsHandle, ams::events::bms::kPollVDue);
@@ -111,6 +125,63 @@ void run_voltage_poll() {
     const std::uint32_t now_ms = osKernelGetTickCount();
     (void)BmsService::instance().update_from_ltc_response(
         reply, sizeof(reply), now_ms);
+}
+
+// ---------------------------------------------------------------------------
+// Cell balancing (#74). Once every kBalanceUpdatePolls voltage cycles
+// we snapshot BmsState, ask BalanceController what to discharge, pack
+// DCC bits into 10 WRCFGA payloads, and broadcast them. Outside of
+// fsm::State::Charge the controller returns an all-zero mask so the
+// next WRCFGA clears whatever was set previously.
+// ---------------------------------------------------------------------------
+void maybe_run_balance_update() {
+    using namespace ams;
+
+    if (++s_volt_poll_count < config::kBalanceUpdatePolls) return;
+    s_volt_poll_count = 0;
+
+    const auto       state    = BmsService::instance().snapshot();
+    const fsm::State fsm_curr =
+        static_cast<fsm::State>(g_state_telemetry);
+    const auto       mask     = balance::compute_mask(state, fsm_curr);
+
+    std::uint8_t per_ic[config::kLtcChainLength][6];
+    bool         any_dcc = false;
+
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        // LTC_1 (upper, chain index 2m) owns module cells 0..9.
+        std::uint16_t dcc_upper = 0;
+        for (std::uint8_t c = 0; c < config::kCellsPerLtcUpper; ++c) {
+            if (mask.cell[m][c]) {
+                dcc_upper = static_cast<std::uint16_t>(dcc_upper | (1u << c));
+            }
+        }
+        // LTC_2 (lower, chain index 2m+1) owns module cells 10..18.
+        std::uint16_t dcc_lower = 0;
+        for (std::uint8_t c = 0; c < config::kCellsPerLtcLower; ++c) {
+            if (mask.cell[m][config::kCellsPerLtcUpper + c]) {
+                dcc_lower = static_cast<std::uint16_t>(dcc_lower | (1u << c));
+            }
+        }
+
+        const auto upper = ltc6811::pack_cfga_payload(dcc_upper);
+        const auto lower = ltc6811::pack_cfga_payload(dcc_lower);
+        for (std::size_t k = 0; k < 6; ++k) {
+            per_ic[2u * m + 0u][k] = upper[k];
+            per_ic[2u * m + 1u][k] = lower[k];
+        }
+
+        if (dcc_upper != 0u || dcc_lower != 0u) any_dcc = true;
+    }
+
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::kCmdWRCFGA, per_ic)) {
+        ++g_ltc_spi_err_count;
+        return;
+    }
+
+    ++g_balance_cycles_total;
+    if (any_dcc) ++g_balance_cycles_active;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +296,10 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
         if (evt & ams::events::bms::kPollVDue) {
             const std::uint32_t t0 = osKernelGetTickCount();
             run_voltage_poll();
+            // Balancing piggybacks on the V-poll cadence; the
+            // controller is gated by FSM state internally so it's a
+            // no-op outside Charge.
+            maybe_run_balance_update();
             const std::uint32_t dt = osKernelGetTickCount() - t0;
             g_bms_volt_poll_ms = dt;
             if (dt > g_bms_volt_poll_max) g_bms_volt_poll_max = dt;

@@ -198,4 +198,26 @@ void build_write_frame(std::uint16_t                       cmd,
                                                     std::size_t         n_bytes,
                                                     std::uint8_t        max_chain) noexcept;
 
+// ---------------------------------------------------------------------------
+// WRCFGA payload builder (#74).
+//
+// CFGAR register layout (LTC6811 datasheet Table 39):
+//   byte 0  GPIO5..GPIO1 pull-down disables | REFON | SWTRD | ADCOPT
+//   byte 1  VUV[7:0]
+//   byte 2  VOV[3:0] : VUV[11:8]
+//   byte 3  VOV[11:4]
+//   byte 4  DCC8..DCC1               (bit i = DCC{i+1})
+//   byte 5  DCTO[3:0] : DCC12..DCC9  (low nibble = DCC{i+9})
+//
+// We disable the LTC's own UV/OV detection (kept in software via the
+// safety predicates), enable REFON (faster ADC startup), and leave
+// GPIO1..5 as inputs so the ADAX path keeps working (#71). The DCTO
+// timer is left at 0 -- each cycle we re-send WRCFGA explicitly so
+// discharge can't latch beyond one balancing window.
+//
+// dcc_bits is a 12-bit mask: bit i = "discharge cell channel i+1".
+// Bits above bit 11 are silently ignored.
+[[nodiscard]] std::array<std::uint8_t, 6>
+pack_cfga_payload(std::uint16_t dcc_bits) noexcept;
+
 }  // namespace ams::ltc6811

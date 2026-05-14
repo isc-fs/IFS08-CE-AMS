@@ -94,10 +94,19 @@ inline constexpr std::uint8_t  kCurrentFilterShift = 4;     // tau ~ 16 samples
 // IIR low-pass filter coefficient is encoded as a shift so the filter
 // is `filtered = filtered - (filtered >> shift) + (raw >> shift)`.
 
-// Cell-balancing target voltage (mV). Used by #74 (WRCFGA-driven
-// passive balancing). Anything below this stays untouched; cells
-// above get their dis-charge FET asserted by the LTC6811.
-inline constexpr std::uint16_t kBmsBalancingTargetmV = 3700;
+// Cell-balancing parameters (#74). Passive balancing driven from
+// the Charge state only: pick the cells with the largest excess
+// over the pack minimum, cap the simultaneous count per module so
+// dissipation per board stays bounded, and inhibit entirely when
+// the warmest NTC says the pack is already hot.
+//
+// COMMISSION before v1.0.0 against the dissipation budget of the
+// BMS_LITE balance resistors and the airflow available in the
+// accumulator box.
+inline constexpr std::uint16_t kBalanceDeltaMv     = 50;    // mV above min to start balancing
+inline constexpr std::int16_t  kBalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
+inline constexpr std::uint8_t  kBalanceMaxActive   = 4;     // cells per module discharging at once
+inline constexpr std::uint32_t kBalanceUpdatePolls = 4;     // = 1 Hz at kBmsPollVoltMs = 250 ms
 
 // LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",
 // 7 kHz first stage) is the canonical choice for race-pack
