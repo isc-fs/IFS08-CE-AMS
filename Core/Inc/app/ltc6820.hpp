@@ -57,7 +57,24 @@ struct CsPin {
 // One Bus instance per MCU SPI peripheral feeding an LTC6820.
 class Bus {
    public:
+    // Default ctor leaves the bus inert (no HAL touched). The
+    // singleton ams::ltc6820::Bus::default_instance() relies on this
+    // so it can have static-storage duration without pulling HAL into
+    // the C-runtime init sequence. Call configure() after HAL is up.
+    Bus() noexcept = default;
+
     Bus(SPI_HandleTypeDef* hspi, CsPin cs) noexcept;
+
+    // Late-binding init. Safe to call from App_InitTask once HAL_SPI
+    // and the GPIO peripheral are alive. Calling twice rewires the
+    // handles; the previously-asserted CS line is released.
+    void configure(SPI_HandleTypeDef* hspi, CsPin cs) noexcept;
+
+    // Process-wide default Bus. Initialised by App_InitTask via
+    // configure() and read from BmsPollTask (and future balancing /
+    // temp tasks). One LTC6820 master per AMS board, so a singleton
+    // is the natural fit.
+    static Bus& default_instance() noexcept;
 
     // Wake the chain. Per LTC6811 datasheet § "Core LTC6811 State
     // Transitions": each IC needs >=  10 µs of CS-low to leave IDLE,
@@ -88,8 +105,8 @@ class Bus {
                              std::size_t        out_capacity) noexcept;
 
    private:
-    SPI_HandleTypeDef* hspi_;
-    CsPin              cs_;
+    SPI_HandleTypeDef* hspi_ = nullptr;
+    CsPin              cs_   = {};
 
     void cs_low() noexcept;
     void cs_high() noexcept;

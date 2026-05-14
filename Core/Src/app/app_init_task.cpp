@@ -86,10 +86,9 @@ void ams_app_init_task_run(void *argument)
     //    ERROR and refuse to leave it until the operator power-
     //    cycles with the chain healthy.
     // ----------------------------------------------------------------
-    static ams::ltc6820::Bus ltc_bus{
-        &hspi1,
-        ams::ltc6820::CsPin{ LTC6820_CS_GPIO_Port, LTC6820_CS_Pin }
-    };
+    auto& ltc_bus = ams::ltc6820::Bus::default_instance();
+    ltc_bus.configure(&hspi1,
+                      ams::ltc6820::CsPin{ LTC6820_CS_GPIO_Port, LTC6820_CS_Pin });
     ltc_bus.wakeup();
 
     const auto cmd_rdcfga = ams::ltc6811::pack_command(ams::ltc6811::kCmdRDCFGA);

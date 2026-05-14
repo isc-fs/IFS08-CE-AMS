@@ -52,6 +52,21 @@ Bus::Bus(SPI_HandleTypeDef* hspi, CsPin cs) noexcept
     cs_high();
 }
 
+void Bus::configure(SPI_HandleTypeDef* hspi, CsPin cs) noexcept {
+    hspi_ = hspi;
+    cs_   = cs;
+    cs_high();
+}
+
+Bus& Bus::default_instance() noexcept {
+    // Function-local static under -fno-threadsafe-statics: zero
+    // guards, zero locks, zero overhead at the call site. Default-
+    // constructed once on first reach (an early App_InitTask call);
+    // configure() then wires it to hspi1 + PA4.
+    static Bus s_instance;
+    return s_instance;
+}
+
 void Bus::cs_low() noexcept {
     HAL_GPIO_WritePin(static_cast<GPIO_TypeDef*>(cs_.port), cs_.pin, GPIO_PIN_RESET);
 }
