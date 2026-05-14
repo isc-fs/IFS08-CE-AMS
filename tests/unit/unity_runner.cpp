@@ -13,6 +13,12 @@ void test_bms_ltc_pec_fail_increments_error_counter(void);
 void test_bms_ltc_short_buffer_rejected(void);
 void test_bms_ltc_null_buffer_rejected(void);
 void test_bms_ltc_is_healthy_false_after_staleness(void);
+void test_bms_temp_sweep_room_temp_on_one_channel(void);
+void test_bms_temp_hotter_voltage_gives_hotter_reading(void);
+void test_bms_temp_rail_reading_skips_slot(void);
+void test_bms_temp_pec_fail_skips_slot(void);
+void test_bms_temp_bad_channel_idx_rejected(void);
+void test_bms_temp_short_buffer_rejected(void);
 void test_bms_legacy_can_path_is_inert(void);
 
 // test_current_service.cpp
@@ -115,6 +121,12 @@ int main(void) {
     RUN_TEST(test_bms_ltc_short_buffer_rejected);
     RUN_TEST(test_bms_ltc_null_buffer_rejected);
     RUN_TEST(test_bms_ltc_is_healthy_false_after_staleness);
+    RUN_TEST(test_bms_temp_sweep_room_temp_on_one_channel);
+    RUN_TEST(test_bms_temp_hotter_voltage_gives_hotter_reading);
+    RUN_TEST(test_bms_temp_rail_reading_skips_slot);
+    RUN_TEST(test_bms_temp_pec_fail_skips_slot);
+    RUN_TEST(test_bms_temp_bad_channel_idx_rejected);
+    RUN_TEST(test_bms_temp_short_buffer_rejected);
     RUN_TEST(test_bms_legacy_can_path_is_inert);
 
     RUN_TEST(test_current_adc_zero_point_reads_near_zero);

@@ -120,10 +120,76 @@ void run_voltage_poll() {
 // pumps the chain (idle wakeup) so the LTCs don't drop into T_SLEEP
 // (~2 s) when the operator has paused the voltage loop for debug.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Temperature poll: 20-step ADG731 mux sweep.
+//
+//   for ch_idx in 0..19:
+//     WRCOMM  load(pack_adg731_select(map[ch_idx])) for every IC
+//     STCOMM  shift the COMM register out -> mux selects channel
+//     1 ms    mux + NTC divider settle
+//     ADAX    AUX-ADC conversion (AUX1 only -> Gpio1)
+//     1 ms    ADC settle
+//     RDAUXA  chain reply -> BmsService::update_temperature
+//
+// 20 channels x ~3 ms ~= 60 ms total -- well below the 500 ms poll
+// budget and the 100 ms acceptance criterion stays achievable with
+// HAL/jitter overhead.
+// ---------------------------------------------------------------------------
 void run_temperature_poll() {
-    ams::ltc6820::Bus::default_instance().wakeup();
-    // TODO(#71): ADG731 mux sweep + ADAX + RDAUXA, then
-    //            BmsService::update_temps_from_ltc_response(...).
+    using namespace ams;
+
+    auto& bus = ltc6820::Bus::default_instance();
+
+    // Same mux-select payload broadcast to every LTC each step. The
+    // ADG731 ignores the bits it can't address (only ch < 32 used).
+    std::uint8_t per_ic_payload[config::kLtcChainLength][6];
+
+    for (std::uint8_t ch_idx = 0; ch_idx < config::kTempsPerLtc; ++ch_idx) {
+        const std::uint8_t mux_ch = config::kAdg731ChannelMap[ch_idx];
+        const auto sel = ltc6811::pack_adg731_select(mux_ch);
+
+        for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
+            for (std::size_t k = 0; k < 6; ++k) {
+                per_ic_payload[ic][k] = sel[k];
+            }
+        }
+
+        // 1. WRCOMM: load the select word into every IC's COMM reg.
+        if (!bus.write_chain_command(ltc6811::kCmdWRCOMM, per_ic_payload)) {
+            ++g_ltc_spi_err_count;
+            continue;
+        }
+        // 2. STCOMM: shift COMM register out -> mux receives.
+        if (!bus.stcomm()) {
+            ++g_ltc_spi_err_count;
+            continue;
+        }
+        // 3. Settling for the mux + NTC voltage-divider. The
+        //    osDelay tick (1 kHz) is plenty; ADG731 t_TRANSITION is
+        //    ~80 ns and the 10 k / 10 k divider settles in << 1 ms.
+        osDelay(1);
+
+        // 4. ADAX(Gpio1) broadcast -> AUX-ADC conversion on every IC.
+        const auto adax_cmd = ltc6811::pack_command(
+            ltc6811::adax_cmd(static_cast<ltc6811::AdcMode>(config::kAdcMode),
+                              ltc6811::AuxSel::Gpio1));
+        if (!bus.send_command(adax_cmd.data())) {
+            ++g_ltc_spi_err_count;
+            continue;
+        }
+        osDelay(config::kAdaxSettleMs);
+
+        // 5. RDAUXA: read AUX1..AUX3 + PEC per IC.
+        constexpr std::size_t kReply = config::kLtcChainLength * 8u;
+        std::uint8_t reply[kReply] = {};
+        const auto rdauxa = ltc6811::pack_command(ltc6811::kCmdRDAUXA);
+        if (!bus.read_register_group(rdauxa.data(), reply, sizeof(reply))) {
+            ++g_ltc_spi_err_count;
+            continue;
+        }
+
+        (void)BmsService::instance().update_temperature(ch_idx, reply, sizeof(reply));
+    }
 }
 
 }  // namespace

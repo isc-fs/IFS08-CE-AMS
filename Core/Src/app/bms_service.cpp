@@ -9,6 +9,7 @@
 #include "cmsis_os2.h"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -30,7 +31,62 @@ BmsService::BmsService() {
     state_.max_cell_mV = 0;
     state_.min_tempC   = std::numeric_limits<std::int16_t>::max();
     state_.max_tempC   = std::numeric_limits<std::int16_t>::min();
+
+    // Default cell_tempC to 25 degC so unpopulated NTC slots can't
+    // dominate the max/min on the first temp poll. Real readings
+    // overwrite each slot once update_temperature commits a valid
+    // Steinhart/Beta conversion.
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        for (std::uint8_t t = 0; t < config::kTempsPerModule; ++t) {
+            state_.cell_tempC[m][t] = 25;
+        }
+    }
 }
+
+namespace {
+
+// Convert one AUX1 mV reading (LTC6811 100-uV units already de-scaled
+// to mV by ltc6811::decode_aux_voltage_group) into a temperature.
+// Returns INT16_MIN on out-of-plausibility (open circuit, shorted,
+// or computed °C outside kNtcMinValidC..kNtcMaxValidC), which the
+// caller uses as a "skip this slot" sentinel.
+std::int16_t ntc_mV_to_tempC(std::uint16_t v_aux_mV) noexcept {
+    using namespace ams::config;
+
+    // Rail readings -> open or shorted. Drop.
+    if (v_aux_mV == 0u || v_aux_mV >= kNtcVrefMv) {
+        return std::numeric_limits<std::int16_t>::min();
+    }
+
+    // R_ntc = R_series * V_aux / (V_ref - V_aux)
+    const float v_aux_f = static_cast<float>(v_aux_mV);
+    const float v_ref_f = static_cast<float>(kNtcVrefMv);
+    const float r_ntc   = static_cast<float>(kNtcSeriesR) * v_aux_f
+                          / (v_ref_f - v_aux_f);
+
+    // Beta model: 1/T = 1/T0 + (1/B) * ln(R/R25)
+    const float ratio = r_ntc / static_cast<float>(kNtcR25);
+    if (!(ratio > 0.0f)) {
+        return std::numeric_limits<std::int16_t>::min();
+    }
+    const float inv_T = (1.0f / kNtcT0Kelvin)
+                       + (std::log(ratio) / static_cast<float>(kNtcBeta));
+    if (!(inv_T > 0.0f)) {
+        return std::numeric_limits<std::int16_t>::min();
+    }
+    const float t_K = 1.0f / inv_T;
+    const float t_C = t_K - 273.15f;
+
+    if (t_C < static_cast<float>(kNtcMinValidC) ||
+        t_C > static_cast<float>(kNtcMaxValidC)) {
+        return std::numeric_limits<std::int16_t>::min();
+    }
+
+    // Round to nearest degree.
+    return static_cast<std::int16_t>(t_C + (t_C >= 0.0f ? 0.5f : -0.5f));
+}
+
+}  // namespace
 
 void BmsService::recompute_summaries_() noexcept {
     std::uint32_t sum_v_mV = 0;
@@ -151,6 +207,47 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
 
     recompute_summaries_();
     return any_module_fresh;
+}
+
+bool BmsService::update_temperature(std::uint8_t        channel_idx,
+                                    const std::uint8_t* chain_response,
+                                    std::size_t         len) noexcept {
+    constexpr std::size_t kSeg      = 8;
+    constexpr std::size_t kExpected = config::kLtcChainLength * kSeg;
+
+    if (chain_response == nullptr || len < kExpected) return false;
+    if (channel_idx >= config::kTempsPerLtc)          return false;
+
+    ScopedMutex lock(bms_mutexHandle);
+    if (!lock.acquired()) return false;
+
+    bool any_ok = false;
+    std::array<std::uint16_t, 3> aux{};
+
+    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
+        const std::uint8_t* seg = chain_response + ic * kSeg;
+        if (!ltc6811::decode_aux_voltage_group(seg, aux)) {
+            g_ltc_pec_err_count[ic]++;
+            continue;
+        }
+        // AUX1 (GPIO1) carries the buffered ADG731 output. AUX2/AUX3
+        // are unused on BMS_LITE -- we read them anyway because they
+        // come in the same group, but discard.
+        const std::int16_t t = ntc_mV_to_tempC(aux[0]);
+        if (t == std::numeric_limits<std::int16_t>::min()) {
+            continue;  // out of range -> keep last good value
+        }
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::kLtcsPerModule);
+        const bool         is_upper = (ic % config::kLtcsPerModule) == 0u;
+        const std::uint8_t slot     = is_upper
+            ? channel_idx
+            : static_cast<std::uint8_t>(config::kTempsPerLtc + channel_idx);
+        state_.cell_tempC[module][slot] = t;
+        any_ok = true;
+    }
+
+    recompute_summaries_();
+    return any_ok;
 }
 
 BmsState BmsService::snapshot() const noexcept {
