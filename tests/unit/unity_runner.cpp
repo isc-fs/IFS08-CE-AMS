@@ -63,6 +63,16 @@ void test_fsm_error_is_sticky(void);
 void test_fsm_precharge_timeout_forces_error(void);
 void test_fsm_transition_drops_voltage_to_error(void);
 
+// test_telemetry_encoders.cpp
+void test_telem_status_layout(void);
+void test_telem_status_ams_ok_normalised(void);
+void test_telem_pack_layout_positive_current(void);
+void test_telem_pack_layout_negative_current(void);
+void test_telem_temps_layout(void);
+void test_telem_temps_clip_to_int8_range(void);
+void test_telem_temps_heartbeat_passthrough(void);
+void test_telem_field_independence(void);
+
 // test_sil_scenarios.cpp
 void test_sil_nominal_startup_to_run(void);
 void test_sil_precharge_timeout_to_error(void);
@@ -123,6 +133,15 @@ int main(void) {
     RUN_TEST(test_fsm_error_is_sticky);
     RUN_TEST(test_fsm_precharge_timeout_forces_error);
     RUN_TEST(test_fsm_transition_drops_voltage_to_error);
+
+    RUN_TEST(test_telem_status_layout);
+    RUN_TEST(test_telem_status_ams_ok_normalised);
+    RUN_TEST(test_telem_pack_layout_positive_current);
+    RUN_TEST(test_telem_pack_layout_negative_current);
+    RUN_TEST(test_telem_temps_layout);
+    RUN_TEST(test_telem_temps_clip_to_int8_range);
+    RUN_TEST(test_telem_temps_heartbeat_passthrough);
+    RUN_TEST(test_telem_field_independence);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_precharge_timeout_to_error);
