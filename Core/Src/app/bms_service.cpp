@@ -3,11 +3,12 @@
 #include "bms_service.hpp"
 
 #include "ams_config.hpp"
+#include "ltc6811.hpp"
 #include "scoped_mutex.hpp"
 
 #include "cmsis_os2.h"
 
-#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <limits>
 
@@ -15,55 +16,7 @@ extern "C" osMutexId_t bms_mutexHandle;  // created in main.c
 
 namespace ams {
 
-namespace {
-
-// Mirrors the legacy BMS_MOD::parse() classification, walking each
-// module's per-CANID range:
-//
-//   CANID(m) = kBmsVoltPollBase + m * kBmsModuleStride
-//   if id > CANID(m) && id < CANID(m) + 30:
-//       offset = id - CANID(m)
-//       offset in [ 1.. 5] -> voltage response, frame_idx = offset - 1
-//       offset in [21..25] -> temperature response, frame_idx = offset - 21
-//
-// Note: the strict `>` excludes the poll-request id (offset 0); the
-// guard `< CANID(m) + 30` (kBmsModuleAddrRange) excludes the next
-// module's poll. Inter-module ranges abut but do not overlap.
-enum class FrameKind : std::uint8_t { Unknown, Voltage, Temperature };
-
-struct Decoded {
-    FrameKind    kind;
-    std::uint8_t module;
-    std::uint8_t frame_idx;
-};
-
-Decoded classify(std::uint32_t id) noexcept {
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
-        const std::uint32_t canid =
-            static_cast<std::uint32_t>(config::kBmsVoltPollBase) +
-            static_cast<std::uint32_t>(m) * config::kBmsModuleStride;
-
-        if (id <= canid)                                  continue;
-        if (id >= canid + config::kBmsModuleAddrRange)    continue;
-
-        const std::uint32_t offset = id - canid;
-
-        if (offset >= config::kBmsVoltRespOffsetLo &&
-            offset <= config::kBmsVoltRespOffsetHi) {
-            return {FrameKind::Voltage, m,
-                    static_cast<std::uint8_t>(offset - config::kBmsVoltRespOffsetLo)};
-        }
-        if (offset >= config::kBmsTempRespOffsetLo &&
-            offset <= config::kBmsTempRespOffsetHi) {
-            return {FrameKind::Temperature, m,
-                    static_cast<std::uint8_t>(offset - config::kBmsTempRespOffsetLo)};
-        }
-        return {FrameKind::Unknown, 0, 0};
-    }
-    return {FrameKind::Unknown, 0, 0};
-}
-
-}  // namespace
+extern "C" volatile std::uint32_t g_ltc_pec_err_count[config::kLtcChainLength] = {};
 
 BmsService& BmsService::instance() noexcept {
     static BmsService kInstance;
@@ -77,40 +30,6 @@ BmsService::BmsService() {
     state_.max_cell_mV = 0;
     state_.min_tempC   = std::numeric_limits<std::int16_t>::max();
     state_.max_tempC   = std::numeric_limits<std::int16_t>::min();
-}
-
-void BmsService::parse_voltage_frame_(std::uint8_t module, std::uint8_t frame_idx,
-                                      const std::uint8_t *data) noexcept {
-    // 4 cells per frame, big-endian uint16 mV. Last frame (idx 4)
-    // covers 3 cells (0..18), bytes 6-7 unused.
-    const std::uint8_t base_cell = static_cast<std::uint8_t>(frame_idx * 4);
-    const std::uint8_t cells_this_frame =
-        (base_cell + 4u > config::kCellsPerModule)
-            ? static_cast<std::uint8_t>(config::kCellsPerModule - base_cell)
-            : 4u;
-
-    for (std::uint8_t k = 0; k < cells_this_frame; ++k) {
-        const std::uint16_t mv = static_cast<std::uint16_t>(
-            (static_cast<std::uint16_t>(data[2u * k]) << 8) |
-             static_cast<std::uint16_t>(data[2u * k + 1u]));
-        state_.cell_mV[module][base_cell + k] = mv;
-    }
-}
-
-void BmsService::parse_temperature_frame_(std::uint8_t module, std::uint8_t frame_idx,
-                                          const std::uint8_t *data) noexcept {
-    // 8 temps per frame, signed int8 °C. Last frame (idx 4) covers
-    // 6 temps (32..37); bytes 6-7 unused.
-    const std::uint8_t base_temp = static_cast<std::uint8_t>(frame_idx * 8);
-    const std::uint8_t temps_this_frame =
-        (base_temp + 8u > config::kTempsPerModule)
-            ? static_cast<std::uint8_t>(config::kTempsPerModule - base_temp)
-            : 8u;
-
-    for (std::uint8_t k = 0; k < temps_this_frame; ++k) {
-        state_.cell_tempC[module][base_temp + k] =
-            static_cast<std::int16_t>(static_cast<std::int8_t>(data[k]));
-    }
 }
 
 void BmsService::recompute_summaries_() noexcept {
@@ -148,28 +67,90 @@ void BmsService::recompute_summaries_() noexcept {
     state_.avg_tempC       = (n_t > 0) ? static_cast<std::int16_t>(sum_t / static_cast<std::int32_t>(n_t)) : 0;
 }
 
+// ---------------------------------------------------------------------------
+// Legacy CAN entry point. The BMS bus moved to LTC6811-1 / isoSPI in
+// v1.2.0 (#67-#74) so this path no longer ingests live data; it is
+// retained only so BmsRxTask still compiles until #73 retires it.
+// ---------------------------------------------------------------------------
 bool BmsService::update_from_frame(const CanFrame& f) noexcept {
-    if (f.bus != static_cast<std::uint8_t>(CanBus::Bms)) return false;
+    (void)f;
+    return false;
+}
 
-    const Decoded d = classify(f.id);
-    if (d.kind == FrameKind::Unknown) return false;
-    if (f.dlc < 8) return false;  // every BMS data frame is 8 bytes
+bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
+                                          std::size_t         len,
+                                          std::uint32_t       now_tick_ms) noexcept {
+    constexpr std::size_t kSeg        = 8;                              // 6 data + 2 PEC
+    constexpr std::size_t kGroupBytes = config::kLtcChainLength * kSeg; // 10 * 8 = 80
+    constexpr std::size_t kExpected   = 4u * kGroupBytes;               // 320
+
+    if (chain_response == nullptr || len < kExpected) return false;
 
     ScopedMutex lock(bms_mutexHandle);
     if (!lock.acquired()) return false;
 
-    if (d.kind == FrameKind::Voltage) {
-        parse_voltage_frame_(d.module, d.frame_idx, f.data);
-    } else {
-        parse_temperature_frame_(d.module, d.frame_idx, f.data);
+    // Per-IC PEC sweep first, then commit cell values for ICs that
+    // passed all four groups. Doing it in two passes keeps the state
+    // strictly atomic per IC -- a half-updated module is never
+    // observable through snapshot().
+    std::uint16_t new_ltc_online = 0u;
+    std::array<std::array<std::uint16_t, 3>, 4> groups{};  // [group_idx][slot]
+
+    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
+        bool ic_ok = true;
+        for (std::uint8_t g = 0; g < 4; ++g) {
+            const std::uint8_t* seg =
+                chain_response + g * kGroupBytes + ic * kSeg;
+            if (!ltc6811::decode_cell_voltage_group(seg, groups[g])) {
+                ic_ok = false;
+                break;
+            }
+        }
+        if (!ic_ok) {
+            g_ltc_pec_err_count[ic]++;
+            continue;
+        }
+
+        // Commit. Module index and "upper vs lower" derive from the
+        // chain index: even slots are LTC_1 (top of the module, 10
+        // cells), odd slots are LTC_2 (bottom, 9 cells).
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::kLtcsPerModule);
+        const bool         is_upper = (ic % config::kLtcsPerModule) == 0u;
+
+        if (is_upper) {
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][0 + k] = groups[0][k];
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][3 + k] = groups[1][k];
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][6 + k] = groups[2][k];
+            state_.cell_mV[module][9] = groups[3][0];   // LTC_1's cell 10
+        } else {
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][10 + k] = groups[0][k];
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][13 + k] = groups[1][k];
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][16 + k] = groups[2][k];
+            // RDCVD entirely discarded -- LTC_2 owns only 9 cells.
+        }
+
+        new_ltc_online = static_cast<std::uint16_t>(new_ltc_online | (1u << ic));
     }
 
-    state_.last_rx_tick[d.module] = f.timestamp_ms;
-    state_.module_online_mask     = static_cast<std::uint8_t>(
-        state_.module_online_mask | (1u << d.module));
+    state_.ltc_online_mask = new_ltc_online;
+
+    // Module is healthy this cycle iff BOTH its LTCs passed PEC.
+    // module_online_mask stays sticky (once-online); freshness is the
+    // dynamic gate via last_rx_tick + is_healthy.
+    bool any_module_fresh = false;
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        const std::uint16_t pair =
+            static_cast<std::uint16_t>((1u << (2u * m)) | (1u << (2u * m + 1u)));
+        if ((new_ltc_online & pair) == pair) {
+            state_.module_online_mask = static_cast<std::uint8_t>(
+                state_.module_online_mask | (1u << m));
+            state_.last_rx_tick[m] = now_tick_ms;
+            any_module_fresh = true;
+        }
+    }
 
     recompute_summaries_();
-    return true;
+    return any_module_fresh;
 }
 
 BmsState BmsService::snapshot() const noexcept {
