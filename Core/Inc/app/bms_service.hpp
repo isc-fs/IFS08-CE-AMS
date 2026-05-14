@@ -113,13 +113,6 @@ public:
                             const std::uint8_t* chain_response,
                             std::size_t         len) noexcept;
 
-    // ------------------------------------------------------------------
-    // Legacy CAN data path. Retained as a no-op until BmsRxTask gets
-    // retired in #73; returns false unconditionally so callers (the
-    // soon-to-be-deleted task) don't see writes appear out of nowhere.
-    // New code should call update_from_ltc_response instead.
-    bool update_from_frame(const CanFrame& f) noexcept;
-
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.
     [[nodiscard]] BmsState snapshot() const noexcept;

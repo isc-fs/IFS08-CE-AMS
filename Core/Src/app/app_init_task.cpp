@@ -28,7 +28,6 @@
 extern "C" {
 
 extern FDCAN_HandleTypeDef hfdcan1;
-extern FDCAN_HandleTypeDef hfdcan2;
 extern SPI_HandleTypeDef   hspi1;
 
 void ams_app_init_task_run(void *argument)
@@ -40,36 +39,24 @@ void ams_app_init_task_run(void *argument)
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
 
-    // FDCAN filter setup. CubeMX configures 0 standard / 5 extended
-    // filter slots; with no software-defined filters the default for
-    // unmatched frames depends on GlobalFilterConfig. Be explicit:
-    // accept every unmatched standard and extended frame into FIFO0
-    // on both buses. This covers:
-    //   FDCAN1 (ACU bus): VCU 0x100 (ext), 0x600 (std), charger
-    //     0x18FF50E7 (ext), and any future VCU frames.
-    //   FDCAN2 (BMS bus): slave responses 0x12D+ (std) plus the
-    //     boot-trigger frame at 0x002 (std).
-    // Remote frames are rejected on both buses.
+    // FDCAN1 (accumulator + boot-trigger bus). FDCAN2 is left
+    // initialised but unstarted -- the bootloader claims it after the
+    // BL_BOOT_REQ_MAGIC reset, and the app no longer listens on it
+    // (BmsRxTask was retired in #73; the boot-trigger frame moved to
+    // FDCAN1, handled inside AcuCanTask).
+    //
+    // GlobalFilter: accept every unmatched standard / extended frame
+    // into FIFO0 (covers VCU 0x100 ext, 0x600 std, charger 0x18FF50E7
+    // ext, boot-trigger 0x002 std). Remote frames rejected on both.
     HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,
         FDCAN_ACCEPT_IN_RX_FIFO0,
         FDCAN_ACCEPT_IN_RX_FIFO0,
         FDCAN_REJECT_REMOTE,
         FDCAN_REJECT_REMOTE);
-    HAL_FDCAN_ConfigGlobalFilter(&hfdcan2,
-        FDCAN_ACCEPT_IN_RX_FIFO0,
-        FDCAN_ACCEPT_IN_RX_FIFO0,
-        FDCAN_REJECT_REMOTE,
-        FDCAN_REJECT_REMOTE);
 
-    // FDCAN bring-up: ISR notifications first, then Start. Either
-    // order works but doing notifications first guarantees we don't
-    // lose the first frame that arrives between Start and Notify.
     HAL_FDCAN_ActivateNotification(&hfdcan1,
                                    FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-    HAL_FDCAN_ActivateNotification(&hfdcan2,
-                                   FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
     HAL_FDCAN_Start(&hfdcan1);
-    HAL_FDCAN_Start(&hfdcan2);
 
     // ----------------------------------------------------------------
     // LTC6811-1 chain bring-up + length discovery (#68 + #69).

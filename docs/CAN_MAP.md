@@ -392,24 +392,29 @@ Source: `parse_state()` `module_state_machine.cpp:350`.
 
 ---
 
-## RX — bootloader-trigger command (FDCAN2)
+## RX — bootloader-trigger command (FDCAN1)
 
 Not from the legacy AMS — added in the refactor for in-system firmware
 update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-bootloader).
+
+> Moved from FDCAN2 to FDCAN1 in v1.2.0 (#73). FDCAN2 stays the
+> bootloader's working bus after reset, but the in-band reboot
+> trigger now rides on the accumulator/vehicle bus alongside
+> everything the pit-tool already sends.
 
 ### `0x002` — request reboot into bootloader
 
 | Field | Value |
 |---|---|
 | Direction | RX (host → AMS) |
-| Bus | **FDCAN2** (same bus the bootloader listens on) |
+| Bus | **FDCAN1** (accumulator bus; the bootloader takes FDCAN2 over after the reset) |
 | ID type | Standard 11-bit, very high arbitration priority |
 | DLC | 4 |
 | Payload | `{0xB0, 0x07, 0xAD, 0x11}` -- all 4 bytes must match exactly |
-| Effect | `BmsRxTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting commands. |
+| Effect | `AcuCanTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting flash commands on FDCAN2. |
 | Failure modes | Wrong bus, wrong ID, wrong DLC, or any byte of the payload differing → frame silently dropped, no reboot. |
 
-Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), wired in [`Core/Src/app/bms_rx_task.cpp`](../Core/Src/app/bms_rx_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`kBlBootReqCanId`, `kBlBootReqPayload`, `kBlBootReqDlc`).
+Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`kBlBootReqCanId`, `kBlBootReqPayload`, `kBlBootReqDlc`).
 
 ---
 

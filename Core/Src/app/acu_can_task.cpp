@@ -20,6 +20,7 @@
 
 #include "ams_config.hpp"
 #include "bms_service.hpp"
+#include "bootloader.hpp"
 #include "can_frame.hpp"
 #include "current_service.hpp"
 #include "vehicle_service.hpp"
@@ -103,6 +104,15 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         // pick up the next one. Keeps TX cadence within ~1 RX-frame
         // worst-case jitter.
         if (osMessageQueueGet(acu_rx_queueHandle, &frame, nullptr, timeout) == osOK) {
+            // Boot-trigger frame moved to FDCAN1 in v1.2.0 (#73). Has
+            // to come BEFORE VehicleService so we still react to the
+            // reboot request even if the trigger ID accidentally
+            // collides with a future VCU frame.
+            // request_reboot() never returns -- it opens all relays,
+            // writes BL_BOOT_REQ_MAGIC into BKP0R, and resets.
+            if (ams::Bootloader::matches_trigger(frame)) {
+                ams::Bootloader::request_reboot();
+            }
             if (!ams::VehicleService::instance().update_from_frame(frame)) {
                 ++g_acu_rx_dropped_unknown;
             }

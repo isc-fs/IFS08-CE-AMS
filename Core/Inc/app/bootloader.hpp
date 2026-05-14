@@ -15,8 +15,12 @@
 //   3. Writes the magic into RTC->BKP0R
 //   4. Calls NVIC_SystemReset -- never returns
 //
-// Trigger surface (today): a single dedicated CAN frame on FDCAN2.
-// See docs/CAN_MAP.md and ams_config.hpp::kBlBootReqCanId.
+// Trigger surface (v1.2.0+): a single dedicated CAN frame on FDCAN1
+// (the accumulator bus). Pre-v1.2.0 it was on FDCAN2, but after #73
+// retired BmsRxTask the only listener on FDCAN2 was the bootloader-
+// reboot frame -- moving it to FDCAN1 lets the pit-tool talk to the
+// AMS over the same bus it already uses for VCU telemetry. See
+// docs/CAN_MAP.md and ams_config.hpp::kBlBootReqCanId.
 
 #pragma once
 
@@ -39,7 +43,7 @@ public:
     // logic, inlined in the header so the host unit-test build can
     // exercise it without pulling in HAL / FreeRTOS.
     [[nodiscard]] static bool matches_trigger(const CanFrame& f) noexcept {
-        if (f.bus != static_cast<std::uint8_t>(CanBus::Bms)) return false;
+        if (f.bus != static_cast<std::uint8_t>(CanBus::Acu)) return false;
         if (f.id  != config::kBlBootReqCanId)                return false;
         if (f.dlc != config::kBlBootReqDlc)                  return false;
         return std::memcmp(f.data,
