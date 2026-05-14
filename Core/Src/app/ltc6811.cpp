@@ -143,6 +143,22 @@ std::array<std::uint8_t, 6> pack_adg731_select(std::uint8_t channel) noexcept {
     return p;
 }
 
+std::array<std::uint8_t, 6> pack_cfga_payload(std::uint16_t dcc_bits) noexcept {
+    std::array<std::uint8_t, 6> cfg = {};
+    // byte 0: GPIO5..GPIO1 pull-downs disabled (bits 7..3 = 1) so the
+    // ADAX path keeps reading the buffered mux output; REFON = 1 for
+    // fast ADC startup; SWTRD = 0, ADCOPT = 0.
+    cfg[0] = 0xFCu;
+    // VUV = 0, VOV = 0xFFF -> LTC's onboard UV/OV detection effectively
+    // disabled (safety predicates do this in software).
+    cfg[1] = 0x00u;                       // VUV[7:0]
+    cfg[2] = 0xF0u;                       // VOV[3:0]=F | VUV[11:8]=0
+    cfg[3] = 0xFFu;                       // VOV[11:4]=FF
+    cfg[4] = static_cast<std::uint8_t>(dcc_bits & 0xFFu);            // DCC1..DCC8
+    cfg[5] = static_cast<std::uint8_t>((dcc_bits >> 8) & 0x0Fu);     // DCC9..DCC12 (DCTO=0)
+    return cfg;
+}
+
 std::uint8_t count_pec_valid_segments(const std::uint8_t* bytes,
                                       std::size_t         n_bytes,
                                       std::uint8_t        max_chain) noexcept {

@@ -104,6 +104,14 @@ void test_telem_temps_clip_to_int8_range(void);
 void test_telem_temps_heartbeat_passthrough(void);
 void test_telem_field_independence(void);
 
+// test_balance_controller.cpp
+void test_balance_uniform_pack_no_discharge(void);
+void test_balance_single_hot_cell_in_charge(void);
+void test_balance_caps_at_max_active_per_module(void);
+void test_balance_disabled_outside_charge(void);
+void test_balance_thermal_lockout(void);
+void test_balance_threshold_strict_inequality(void);
+
 // test_sil_scenarios.cpp
 void test_sil_nominal_startup_to_run(void);
 void test_sil_precharge_timeout_to_error(void);
@@ -203,6 +211,13 @@ int main(void) {
     RUN_TEST(test_telem_temps_clip_to_int8_range);
     RUN_TEST(test_telem_temps_heartbeat_passthrough);
     RUN_TEST(test_telem_field_independence);
+
+    RUN_TEST(test_balance_uniform_pack_no_discharge);
+    RUN_TEST(test_balance_single_hot_cell_in_charge);
+    RUN_TEST(test_balance_caps_at_max_active_per_module);
+    RUN_TEST(test_balance_disabled_outside_charge);
+    RUN_TEST(test_balance_thermal_lockout);
+    RUN_TEST(test_balance_threshold_strict_inequality);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_precharge_timeout_to_error);

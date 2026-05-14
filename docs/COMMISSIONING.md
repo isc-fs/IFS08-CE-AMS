@@ -134,6 +134,42 @@ S1..S10 → ch 0..9 → NTC_1..NTC_10, S17..S26 → ch 16..25 → NTC_11..NTC_20
 
 ---
 
+## 3c. Cell balancing (LTC6811 WRCFGA / passive)
+
+Passive balancing runs only in `fsm::State::Charge`. Once per
+`kBalanceUpdatePolls` voltage-poll cycles (~1 Hz at the default 250 ms
+voltage cadence) BmsPollTask snapshots `BmsState`, runs the
+`ams::balance::compute_mask` policy, packs the per-IC DCC bits into
+WRCFGA payloads, and broadcasts.
+
+Tunables in `ams_config.hpp`:
+
+| Constant | Default | Effect |
+|---|---:|---|
+| `kBalanceDeltaMv` | 50 mV | Discharge any cell where `v > min_cell_mV + delta`. Smaller = tighter balance, more heat. |
+| `kBalanceMaxActive` | 4 | Max cells per module discharging simultaneously. Drives per-board dissipation. |
+| `kBalanceTempMax` | 50 °C | Inhibit all balancing if `max_tempC > this`. Don't add heat when the pack is already warm. |
+| `kBalanceUpdatePolls` | 4 | Cycles between WRCFGA updates. Smaller = more reactive, larger = less SPI traffic. |
+
+Procedure:
+
+1. With the pack in Charge state on the bench (charger attached,
+   `kAcuRxChargerId` frame live, FSM in Charge), watch
+   `g_balance_cycles_active` climb whenever any cell sits above the
+   threshold. `g_balance_cycles_total` increments unconditionally so
+   you can compute the active fraction.
+2. Verify per-board dissipation with a clamp meter on the supply
+   rail to one BMS_LITE during a known-imbalanced soak. If the
+   resistor stack runs above its thermal budget, drop
+   `kBalanceMaxActive` first, then raise `kBalanceDeltaMv` to
+   tolerate a wider equilibrium voltage band.
+3. Confirm `WRCFGA -> RDCFGA` round-trip reads back the DCC bits we
+   intended (HIL: cell at 4150 mV in module 2 with the rest at
+   4100 mV should set DCC for that cell on the corresponding chain
+   IC; RDCFGA reflects it).
+
+---
+
 ## 4. BMS freshness window
 
 `kBmsStaleMs` defaults to 1500 ms. The slave's typical response is
