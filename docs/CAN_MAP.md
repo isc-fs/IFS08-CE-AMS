@@ -20,7 +20,17 @@ upgrade FDCAN2 to CAN-FD if the slave modules support it; defer to Phase 3.
 
 ---
 
-## Module addressing — BMS slaves (5 modules)
+> **DEPRECATED in v1.2.0 (LTC6811-1 isoSPI).** The five BMS modules
+> no longer talk to the AMS over FDCAN2 — they sit on a daisy-chained
+> isoSPI link driven by an LTC6820 master and read via the LTC6811-1
+> register groups. The on-MCU surface that used to ingest these
+> frames (`BmsService::update_from_frame`) is now an inert stub kept
+> alive only until `BmsRxTask` is retired in #73. New code goes
+> through `BmsService::update_from_ltc_response` and the wire format
+> is documented in `docs/BMS_LTC6811.md` (#75). The sections below
+> are kept verbatim for archaeology / firmware on legacy hardware.
+
+## Module addressing — BMS slaves (5 modules) [LEGACY]
 
 Each BMS slave has its own CANID. **All response and request IDs for a
 given module are offsets from that module's CANID**, not from a single

@@ -7,14 +7,13 @@
 extern "C" {
 
 // test_bms_service.cpp
-void test_voltage_frame_module0_decodes_cells_0_3(void);
-void test_voltage_frame_module4_decodes(void);
-void test_voltage_frame_idx4_handles_three_cells(void);
-void test_temperature_frame_decodes_signed_int8(void);
-void test_frame_on_wrong_bus_is_rejected(void);
-void test_unknown_id_is_rejected(void);
-void test_is_healthy_requires_all_modules(void);
-void test_is_healthy_false_after_staleness(void);
+void test_bms_ltc_clean_response_decodes_all_cells(void);
+void test_bms_ltc_pec_fail_on_one_ic_marks_module_stale(void);
+void test_bms_ltc_pec_fail_increments_error_counter(void);
+void test_bms_ltc_short_buffer_rejected(void);
+void test_bms_ltc_null_buffer_rejected(void);
+void test_bms_ltc_is_healthy_false_after_staleness(void);
+void test_bms_legacy_can_path_is_inert(void);
 
 // test_current_service.cpp
 void test_current_adc_zero_point_reads_near_zero(void);
@@ -110,14 +109,13 @@ void test_sil_sdc_open_is_sticky(void);
 int main(void) {
     UNITY_BEGIN();
 
-    RUN_TEST(test_voltage_frame_module0_decodes_cells_0_3);
-    RUN_TEST(test_voltage_frame_module4_decodes);
-    RUN_TEST(test_voltage_frame_idx4_handles_three_cells);
-    RUN_TEST(test_temperature_frame_decodes_signed_int8);
-    RUN_TEST(test_frame_on_wrong_bus_is_rejected);
-    RUN_TEST(test_unknown_id_is_rejected);
-    RUN_TEST(test_is_healthy_requires_all_modules);
-    RUN_TEST(test_is_healthy_false_after_staleness);
+    RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
+    RUN_TEST(test_bms_ltc_pec_fail_on_one_ic_marks_module_stale);
+    RUN_TEST(test_bms_ltc_pec_fail_increments_error_counter);
+    RUN_TEST(test_bms_ltc_short_buffer_rejected);
+    RUN_TEST(test_bms_ltc_null_buffer_rejected);
+    RUN_TEST(test_bms_ltc_is_healthy_false_after_staleness);
+    RUN_TEST(test_bms_legacy_can_path_is_inert);
 
     RUN_TEST(test_current_adc_zero_point_reads_near_zero);
     RUN_TEST(test_current_adc_discharge_positive);

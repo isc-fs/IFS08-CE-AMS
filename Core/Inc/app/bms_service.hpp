@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: proprietary
 //
-// Aggregates per-module cell voltages and temperatures from the 5 BMS
-// slaves on FDCAN2.  Single-writer (BmsRxTask, feat/9); many readers
-// (SafetyTask, StateTask, AcuCanTask, TelemetryTask).
+// Aggregates per-module cell voltages and (in #71) temperatures from
+// the LTC6811-1 daisy-chain (kLtcChainLength = 10 ICs feeding 5 BMS
+// modules at 2 ICs each). Single-writer (BmsPollTask, #72); many
+// readers (SafetyTask, StateTask, AcuCanTask, TelemetryTask).
 //
-// Wire protocol: docs/CAN_MAP.md §"RX -- BMS slaves to AMS".
+// Wire protocol: docs/BMS_LTC6811.md (#75) -- replaces the legacy
+// FDCAN2 BMS section now marked DEPRECATED in docs/CAN_MAP.md.
 // Synchronisation: docs/ARCHITECTURE.md §3 ownership map.
 
 #pragma once
@@ -12,6 +14,7 @@
 #include "ams_config.hpp"
 #include "can_frame.hpp"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace ams {
@@ -28,23 +31,73 @@ struct BmsState {
     std::int16_t  max_tempC;
     std::int16_t  avg_tempC;
 
-    // Per-module freshness for the SafetyTask staleness check.
+    // Per-module freshness for the SafetyTask staleness check. Updated
+    // on a successful poll where BOTH LTCs of the module reported
+    // PEC-clean.
     std::uint32_t last_rx_tick[config::kBmsModuleCount];
 
-    // Bit N set <=> module N has reported at least once. Compared
-    // against config::kAllModulesMask (0x1F) by SafetyTask.
+    // Bit N set <=> module N has reported PEC-clean at least once.
+    // Compared against config::kAllModulesMask (0x1F) by SafetyTask.
+    // Sticky: dynamic disappearance is detected via the staleness
+    // window, not by clearing this mask.
     std::uint8_t  module_online_mask;
+
+    // 10-bit "this poll's per-IC PEC-OK" mask (LSB = chain index 0).
+    // Source of truth from which module_online_mask is derived. Not
+    // sticky -- reflects the most recent update_from_ltc_response.
+    std::uint16_t ltc_online_mask;
 };
 
 class BmsService {
 public:
     static BmsService& instance() noexcept;
 
-    // Called by BmsRxTask only. Parses the frame against the protocol
-    // in docs/CAN_MAP.md and updates the relevant slice of state under
-    // the mutex. Returns true if the frame matched a known voltage or
-    // temperature ID; false if it was unrecognised (in which case
-    // nothing was written).
+    // ------------------------------------------------------------------
+    // Active data path (v1.2.0+): one call per polling cycle of
+    // BmsPollTask. Walks 4 register groups (RDCVA + RDCVB + RDCVC +
+    // RDCVD), kLtcChainLength ICs each, 8 bytes per IC (6 data + 2
+    // PEC). Expected buffer layout, all 4 groups concatenated in
+    // RDCV_A,B,C,D order:
+    //
+    //   [group_A[ic0]..[ic9]] [group_B[ic0]..[ic9]]
+    //   [group_C[ic0]..[ic9]] [group_D[ic0]..[ic9]]
+    //
+    //   total len = 4 * kLtcChainLength * 8 = 320 bytes
+    //
+    // Per-IC cell-slot mapping inside the module's 19-cell window:
+    //
+    //   LTC_1 (chain index 2N, "upper", 10 cells)
+    //     RDCVA -> module cells 0,1,2
+    //     RDCVB -> module cells 3,4,5
+    //     RDCVC -> module cells 6,7,8
+    //     RDCVD -> module cell 9 (slots 2,3 of group D unused)
+    //
+    //   LTC_2 (chain index 2N+1, "lower", 9 cells)
+    //     RDCVA -> module cells 10,11,12
+    //     RDCVB -> module cells 13,14,15
+    //     RDCVC -> module cells 16,17,18
+    //     RDCVD -> discarded
+    //
+    // Per-IC PEC handling: if ANY of the 4 register groups for an IC
+    // fails PEC, that IC is marked offline this cycle and its cell
+    // slots are left untouched (last known voltages remain in
+    // cell_mV). The corresponding entry in g_ltc_pec_err_count
+    // increments so telemetry can surface bus noise without the
+    // safety supervisor latching ERROR on a single PEC blip. ERROR
+    // only fires when the module's freshness window expires, exactly
+    // as before.
+    //
+    // Returns true if the call wrote at least one module's slice;
+    // false on buffer size mismatch, null pointer, or mutex timeout.
+    bool update_from_ltc_response(const std::uint8_t* chain_response,
+                                  std::size_t         len,
+                                  std::uint32_t       now_tick_ms) noexcept;
+
+    // ------------------------------------------------------------------
+    // Legacy CAN data path. Retained as a no-op until BmsRxTask gets
+    // retired in #73; returns false unconditionally so callers (the
+    // soon-to-be-deleted task) don't see writes appear out of nowhere.
+    // New code should call update_from_ltc_response instead.
     bool update_from_frame(const CanFrame& f) noexcept;
 
     // Atomic read of the full state. Caller gets its own copy; the
@@ -58,14 +111,16 @@ public:
 private:
     BmsService();
 
-    // Internal helpers; assume the mutex is already held.
-    void parse_voltage_frame_(std::uint8_t module, std::uint8_t frame_idx,
-                              const std::uint8_t *data) noexcept;
-    void parse_temperature_frame_(std::uint8_t module, std::uint8_t frame_idx,
-                                  const std::uint8_t *data) noexcept;
+    // Internal helper; assumes the mutex is already held. Recomputes
+    // pack_voltage_mV / min/max cell / min/max/avg temp from the cell
+    // and temperature matrices.
     void recompute_summaries_() noexcept;
 
     mutable BmsState state_ = {};
 };
+
+// Per-IC PEC error counter, exported for telemetry diagnostics
+// (#72 / #75). 10 ICs == kLtcChainLength.
+extern "C" volatile std::uint32_t g_ltc_pec_err_count[config::kLtcChainLength];
 
 }  // namespace ams
