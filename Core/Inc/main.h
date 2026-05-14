@@ -59,6 +59,8 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define LTC6820_CS_Pin GPIO_PIN_4
+#define LTC6820_CS_GPIO_Port GPIOA
 #define AMS_OK_Pin GPIO_PIN_13
 #define AMS_OK_GPIO_Port GPIOF
 #define DIGITAL1_Pin GPIO_PIN_9
