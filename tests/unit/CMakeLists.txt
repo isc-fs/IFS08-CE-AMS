@@ -34,6 +34,7 @@ set(AMS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../..)
 add_executable(ams_unit_tests
     ${AMS_ROOT}/Core/Src/app/bms_service.cpp
     ${AMS_ROOT}/Core/Src/app/current_service.cpp
+    ${AMS_ROOT}/Core/Src/app/ltc6811.cpp
     ${AMS_ROOT}/Core/Src/app/vehicle_service.cpp
 
     mocks/cmsis_os2_stub.cpp
@@ -41,6 +42,7 @@ add_executable(ams_unit_tests
     test_bms_service.cpp
     test_bootloader.cpp
     test_current_service.cpp
+    test_ltc6811_decode.cpp
     test_safety_predicates.cpp
     test_sil_scenarios.cpp
     test_state_machine.cpp

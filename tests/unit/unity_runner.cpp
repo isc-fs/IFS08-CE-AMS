@@ -63,6 +63,27 @@ void test_fsm_error_is_sticky(void);
 void test_fsm_precharge_timeout_forces_error(void);
 void test_fsm_transition_drops_voltage_to_error(void);
 
+// test_ltc6811_decode.cpp
+void test_ltc6811_pec_datasheet_wrcfga(void);
+void test_ltc6811_pec_empty(void);
+void test_ltc6811_pec_deterministic(void);
+void test_ltc6811_pec_sensitivity(void);
+void test_ltc6811_pec_lsb_is_zero(void);
+void test_ltc6811_pack_command_wrcfga(void);
+void test_ltc6811_pack_command_rdcva(void);
+void test_ltc6811_adcv_norm_dcp1_all_cells(void);
+void test_ltc6811_adcv_norm_dcp0_all_cells(void);
+void test_ltc6811_adax_norm_all_aux(void);
+void test_ltc6811_decode_cell_voltage_roundtrip(void);
+void test_ltc6811_decode_cell_voltage_bad_pec(void);
+void test_ltc6811_decode_aux_voltage_roundtrip(void);
+void test_ltc6811_build_write_frame_chain10(void);
+void test_ltc6811_build_write_frame_short_buffer_safe(void);
+void test_ltc6811_pack_adg731_channel_5(void);
+void test_ltc6811_pack_adg731_channel_0(void);
+void test_ltc6811_pack_adg731_channel_31(void);
+void test_ltc6811_pack_adg731_channel_masked(void);
+
 // test_telemetry_encoders.cpp
 void test_telem_status_layout(void);
 void test_telem_status_ams_ok_normalised(void);
@@ -133,6 +154,26 @@ int main(void) {
     RUN_TEST(test_fsm_error_is_sticky);
     RUN_TEST(test_fsm_precharge_timeout_forces_error);
     RUN_TEST(test_fsm_transition_drops_voltage_to_error);
+
+    RUN_TEST(test_ltc6811_pec_datasheet_wrcfga);
+    RUN_TEST(test_ltc6811_pec_empty);
+    RUN_TEST(test_ltc6811_pec_deterministic);
+    RUN_TEST(test_ltc6811_pec_sensitivity);
+    RUN_TEST(test_ltc6811_pec_lsb_is_zero);
+    RUN_TEST(test_ltc6811_pack_command_wrcfga);
+    RUN_TEST(test_ltc6811_pack_command_rdcva);
+    RUN_TEST(test_ltc6811_adcv_norm_dcp1_all_cells);
+    RUN_TEST(test_ltc6811_adcv_norm_dcp0_all_cells);
+    RUN_TEST(test_ltc6811_adax_norm_all_aux);
+    RUN_TEST(test_ltc6811_decode_cell_voltage_roundtrip);
+    RUN_TEST(test_ltc6811_decode_cell_voltage_bad_pec);
+    RUN_TEST(test_ltc6811_decode_aux_voltage_roundtrip);
+    RUN_TEST(test_ltc6811_build_write_frame_chain10);
+    RUN_TEST(test_ltc6811_build_write_frame_short_buffer_safe);
+    RUN_TEST(test_ltc6811_pack_adg731_channel_5);
+    RUN_TEST(test_ltc6811_pack_adg731_channel_0);
+    RUN_TEST(test_ltc6811_pack_adg731_channel_31);
+    RUN_TEST(test_ltc6811_pack_adg731_channel_masked);
 
     RUN_TEST(test_telem_status_layout);
     RUN_TEST(test_telem_status_ams_ok_normalised);
