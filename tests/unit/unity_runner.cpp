@@ -83,6 +83,12 @@ void test_ltc6811_pack_adg731_channel_5(void);
 void test_ltc6811_pack_adg731_channel_0(void);
 void test_ltc6811_pack_adg731_channel_31(void);
 void test_ltc6811_pack_adg731_channel_masked(void);
+void test_ltc6811_chain_discovery_all_ten_valid(void);
+void test_ltc6811_chain_discovery_nine_then_bad(void);
+void test_ltc6811_chain_discovery_ten_plus_trailing_garbage(void);
+void test_ltc6811_chain_discovery_first_bad(void);
+void test_ltc6811_chain_discovery_short_buffer(void);
+void test_ltc6811_chain_discovery_null_safe(void);
 
 // test_telemetry_encoders.cpp
 void test_telem_status_layout(void);
@@ -174,6 +180,12 @@ int main(void) {
     RUN_TEST(test_ltc6811_pack_adg731_channel_0);
     RUN_TEST(test_ltc6811_pack_adg731_channel_31);
     RUN_TEST(test_ltc6811_pack_adg731_channel_masked);
+    RUN_TEST(test_ltc6811_chain_discovery_all_ten_valid);
+    RUN_TEST(test_ltc6811_chain_discovery_nine_then_bad);
+    RUN_TEST(test_ltc6811_chain_discovery_ten_plus_trailing_garbage);
+    RUN_TEST(test_ltc6811_chain_discovery_first_bad);
+    RUN_TEST(test_ltc6811_chain_discovery_short_buffer);
+    RUN_TEST(test_ltc6811_chain_discovery_null_safe);
 
     RUN_TEST(test_telem_status_layout);
     RUN_TEST(test_telem_status_ams_ok_normalised);
