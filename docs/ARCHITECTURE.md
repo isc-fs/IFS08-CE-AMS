@@ -43,18 +43,26 @@ Everything else exists to enforce these:
 CubeMX 6.16 generates a **CMake-based** project (not Eclipse-managed-
 make). The boundary between generated and hand-written code:
 
-```
-CubeMX-owned (regenerated from AMS.ioc):
-  ├─ Core/Src/{main.c, freertos.c, stm32h7xx_*.c}
-  ├─ Drivers/STM32H7xx_HAL_Driver/
-  ├─ Middlewares/Third_Party/FreeRTOS/
-  └─ cmake/stm32cubemx/CMakeLists.txt
+```mermaid
+flowchart LR
+    subgraph Gen["CubeMX-owned (regenerated from AMS.ioc)"]
+        G1[Core/Src/main.c<br/>Core/Src/freertos.c<br/>Core/Src/stm32h7xx_*.c]
+        G2[Drivers/STM32H7xx_HAL_Driver/]
+        G3[Middlewares/Third_Party/FreeRTOS/]
+        G4[cmake/stm32cubemx/CMakeLists.txt]
+    end
+    subgraph Hand["Hand-written (lives forever)"]
+        H1[Core/Inc/app/*.hpp + *.h]
+        H2[Core/Src/app/*.cpp]
+        H3[CMakeLists.txt<br/>top-level, edited once]
+        H4[tests/unit/<br/>host CMake + Unity]
+    end
+    Gen -. "USER CODE BEGIN ... END blocks<br/>call ams_*_task_run trampolines" .-> Hand
 
-Hand-written (lives forever):
-  ├─ Core/Inc/app/*.hpp + *.h
-  ├─ Core/Src/app/*.cpp
-  ├─ CMakeLists.txt           (top-level, edited once)
-  └─ tests/unit/              (host CMake + Unity)
+    classDef gen  fill:#fde68a,stroke:#a16207,color:#1c1917
+    classDef hand fill:#34d399,stroke:#065f46,color:#052e16
+    class G1,G2,G3,G4 gen
+    class H1,H2,H3,H4 hand
 ```
 
 C++ code never modifies the generated `main.c`. Instead it provides
@@ -70,7 +78,7 @@ system toolchain (Clang on macOS, GCC on Linux/CI).
 
 ## 3. Task architecture
 
-10 tasks total (incl. CMSIS-RTOS-mandated `defaultTask` and the
+9 tasks total (incl. CMSIS-RTOS-mandated `defaultTask` and the
 FreeRTOS timer-service daemon). All declared in
 [`AMS.ioc`](../AMS.ioc) so CubeMX regenerates them every time.
 
@@ -79,13 +87,19 @@ FreeRTOS timer-service daemon). All declared in
 | `App_InitTask` | High (40) | once | 512 | [`app_init_task.cpp`](../Core/Src/app/app_init_task.cpp) |
 | `SafetyTask` | Realtime (48) | 10 ms | 512 | [`safety_task.cpp`](../Core/Src/app/safety_task.cpp) |
 | `StateTask` | High (40) | 20 ms | 1024 | [`state_task.cpp`](../Core/Src/app/state_task.cpp) |
-| `BmsRxTask` | AboveNormal (32) | event-driven | 512 | [`bms_rx_task.cpp`](../Core/Src/app/bms_rx_task.cpp) |
-| `BmsPollTask` | Normal (24) | timer-driven | 256 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
-| `AcuCanTask` | AboveNormal (32) | mixed (RX event + 250/500 ms TX) | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
+| `BmsPollTask` | Normal (24) | 250 ms / 500 ms (isoSPI poll) | 256 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
+| `AcuCanTask` | AboveNormal (32) | mixed (RX event + 250/500 ms TX; also dispatches the boot-trigger frame on FDCAN1) | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
 | `CurrentTask` | AboveNormal (32) | 50 ms | 256 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
 | `TelemetryTask` | Low (8) | 500 ms | 512 | [`telemetry_task.cpp`](../Core/Src/app/telemetry_task.cpp) |
 | `defaultTask` | Low (8) | — | 128 | (placeholder, CMSIS) |
 | Timer service | Normal | callback-driven | 256 | FreeRTOS daemon |
+
+`BmsPollTask` owns the LTC6811 isoSPI conversation end-to-end —
+ADCV/RDCV[A-D] every 250 ms and the 20-channel WRCOMM/STCOMM/ADAX/
+RDAUXA sweep every 500 ms. The legacy `BmsRxTask` was retired in
+v1.2.0 (#73) once the BMS data path moved off FDCAN2; the
+bootloader-trigger frame it used to dispatch now rides on FDCAN1
+and is handled inside `AcuCanTask`.
 
 `SafetyTask` is the only Realtime-priority task in the system. Its
 period of 10 ms is the hard contract: worst-case latency from
@@ -99,24 +113,29 @@ period of 10 ms is the hard contract: worst-case latency from
 ```mermaid
 flowchart TD
   subgraph HW[STM32H733]
-    FDCAN1[FDCAN1 RX/TX]
-    FDCAN2[FDCAN2 RX/TX]
+    FDCAN1[FDCAN1 RX/TX<br/>ACU + bootloader-trigger]
+    FDCAN2[FDCAN2<br/>bootloader-claimed post-reset only]
+    SPI1[SPI1 master + PA4 CS<br/>via LTC6820]
     ADC1[ADC1 ch2 PF11]
     GPIOD[GPIOD PD3/4/5 relays]
     GPIOE9[GPIOE PE9 SDC]
     TIM17[TIM17_CH1 PB9 fan]
-    UART2[USART2 PA2/3]
+    FDCAN1TX[FDCAN1 TX telemetry<br/>0x4A0/0x4A1/0x4A2]
     IWDG[IWDG1 ~100 ms]
+  end
+
+  subgraph Chain[LTC6811-1 daisy-chain]
+    LTC[10 × LTC6811<br/>5 modules × 2]
+    MUX[2 × ADG731 per module<br/>40 NTCs / module]
+    LTC --- MUX
   end
 
   subgraph ISR[ISRs]
     RX1[FDCAN1 RX-FIFO0 cb]
-    RX2[FDCAN2 RX-FIFO0 cb]
   end
 
   subgraph Queues
     acu_rx[(acu_rx_queue 16)]
-    bms_rx[(bms_rx_queue 32)]
     sa_evt[[safety_events]]
     bms_evt[[bms_events]]
   end
@@ -129,7 +148,6 @@ flowchart TD
 
   subgraph Tasks
     AcuT[AcuCanTask]
-    BmsRxT[BmsRxTask]
     BmsPollT[BmsPollTask]
     CurT[CurrentTask]
     StateT[StateTask]
@@ -139,10 +157,12 @@ flowchart TD
 
   FDCAN1 --> RX1 --> acu_rx --> AcuT --> VehSvc
   AcuT -.charger.-> CurSvc
+  AcuT -- "boot-trigger 0x002 → request_reboot" --> FDCAN1
   AcuT -- "0x12C / 0x450" --> FDCAN1
 
-  FDCAN2 --> RX2 --> bms_rx --> BmsRxT --> BmsSvc
-  BmsPollT -- "polls" --> FDCAN2
+  SPI1 <-->|"ADCV/RDCV* (V)<br/>WRCOMM+STCOMM+ADAX+RDAUXA (T)<br/>WRCFGA (balance)"| Chain
+  BmsPollT -- "isoSPI conversation" --> SPI1
+  BmsPollT --> BmsSvc
 
   ADC1 --> CurT --> CurSvc
 
@@ -156,33 +176,43 @@ flowchart TD
   SafeT -- refresh --> IWDG
   GPIOE9 --> SafeT
   GPIOE9 --> StateT
-  TeleT --> UART2
+  TeleT --> FDCAN1TX
 
   bms_evt -- pollV / pollT --> BmsPollT
 
   classDef hw    fill:#1e293b,stroke:#0f172a,color:#f8fafc
+  classDef chain fill:#0ea5e9,stroke:#0369a1,color:#f0f9ff
   classDef isr   fill:#fb923c,stroke:#9a3412,color:#1c1917
   classDef queue fill:#fde68a,stroke:#a16207,color:#1c1917
   classDef svc   fill:#60a5fa,stroke:#1e40af,color:#f8fafc
   classDef task  fill:#34d399,stroke:#065f46,color:#052e16
   classDef safe  fill:#ef4444,stroke:#7f1d1d,color:#fef2f2
+  classDef dim   fill:#475569,stroke:#1e293b,color:#cbd5e1
 
-  class FDCAN1,FDCAN2,ADC1,GPIOD,GPIOE9,TIM17,UART2,IWDG hw
-  class RX1,RX2 isr
-  class acu_rx,bms_rx,sa_evt,bms_evt queue
+  class FDCAN1,SPI1,ADC1,GPIOD,GPIOE9,TIM17,FDCAN1TX,IWDG hw
+  class FDCAN2 dim
+  class LTC,MUX chain
+  class RX1 isr
+  class acu_rx,sa_evt,bms_evt queue
   class BmsSvc,CurSvc,VehSvc svc
-  class AcuT,BmsRxT,BmsPollT,CurT,StateT,TeleT task
+  class AcuT,BmsPollT,CurT,StateT,TeleT task
   class SafeT safe
 ```
 
-**Legend** — hardware (slate) · ISRs (orange) · queues & event groups
-(amber) · services (blue) · tasks (green) · `SafetyTask` (red, the
-only realtime-priority task in the system).
+**Legend** — hardware (slate, FDCAN2 dimmed because the app no longer
+drives it) · LTC6811 chain + ADG731 mux (cyan) · ISRs (orange) ·
+queues & event groups (amber) · services (blue) · tasks (green) ·
+`SafetyTask` (red, the only realtime-priority task in the system).
 
 Arrows are direction of value flow; mutex / queue producers always
 go through the labelled primitive. The only direct GPIO writes
 happen in `SafetyTask` (relays + watchdog) and `App_InitTask`
-(one-shot driver bring-up).
+(one-shot driver bring-up + LTC chain wakeup / length discovery).
+
+The BMS transport is now isoSPI end-to-end; see
+[`BMS_LTC6811.md`](BMS_LTC6811.md) for the LTC6811-1 wire protocol,
+register-group layout, daisy-chain semantics, PEC15 rules, and the
+ADG731 channel mapping that drives the temperature sweep.
 
 ---
 
@@ -356,9 +386,20 @@ guarded by one mutex. Single-writer per service; many readers.
 
 | Service | Mutex | Writer | Readers |
 |---|---|---|---|
-| [`BmsService`](../Core/Inc/app/bms_service.hpp) | `bms_mutexHandle` | `BmsRxTask` | Safety, State, AcuCan TX, Telemetry |
+| [`BmsService`](../Core/Inc/app/bms_service.hpp) | `bms_mutexHandle` | `BmsPollTask` (LTC6811 isoSPI sweeps; `update_from_ltc_response` + `update_temperature`) | Safety, State, AcuCan TX, BalanceController, Telemetry |
 | [`CurrentService`](../Core/Inc/app/current_service.hpp) | `current_mutexHandle` | `CurrentTask` (ADC), `AcuCanTask` (charger flag) | Safety, State, AcuCan TX, BmsPoll, Telemetry |
 | [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `vehicle_mutexHandle` | `AcuCanTask` | Safety, State, Telemetry |
+
+`BmsState` shape (current, post-#71):
+
+| Field | Type | Notes |
+|---|---|---|
+| `cell_mV` | `uint16_t [5][19]` | 95 cells; populated by `update_from_ltc_response`. |
+| `cell_tempC` | `int16_t [5][40]` | 200 NTC slots; populated by `update_temperature`. Ctor-initialised to 25 °C so unpopulated channels don't dominate `max_tempC`. |
+| `pack_voltage_mV`, `min/max_cell_mV`, `min/max/avg_tempC` | summaries | recomputed inside the same mutex after every write. |
+| `last_rx_tick[5]` | `uint32_t` | advances only on a poll where BOTH LTCs of the module passed PEC. |
+| `module_online_mask` | `uint8_t` | sticky (once-online); compared against `kAllModulesMask`. |
+| `ltc_online_mask` | `uint16_t` | non-sticky per-cycle per-IC PEC-OK mask (10 bits). |
 
 Mutex access goes through
 [`ScopedMutex`](../Core/Inc/app/scoped_mutex.hpp) RAII. No raw
@@ -374,9 +415,13 @@ Three primitives, nothing else.
 
 | Queue | Depth | Item | Producer | Consumer |
 |---|---:|---|---|---|
-| `bms_rx_queue` | 32 | `CanFrame` | FDCAN2 RX ISR | BmsRxTask |
 | `acu_rx_queue` | 16 | `CanFrame` | FDCAN1 RX ISR | AcuCanTask |
 | `acu_tx_queue` | 16 | `CanFrame` | (reserved) | (reserved) |
+
+`bms_rx_queue` was retired in v1.2.0 (#73) along with `BmsRxTask` —
+the BMS no longer talks over CAN, and the bootloader-trigger frame
+that used to share FDCAN2 with the BMS bus now rides on FDCAN1
+(handled inline inside `AcuCanTask`).
 
 `acu_tx_queue` is declared in the .ioc but currently unused —
 `AcuCanTask` is the sole producer on FDCAN1 TX and calls HAL
@@ -389,25 +434,22 @@ CubeMX 6.16 doesn't emit them from .ioc):
 
 | Group | Bit | Set by | Cleared by |
 |---|---|---|---|
-| `safety_events` | `kForceError` | StateTask (Error entry) | SafetyTask (latch + reset only) |
+| `safety_events` | `kForceError` | StateTask (Error entry), App_InitTask (chain-length mismatch on boot) | SafetyTask (latch + reset only) |
 |  | `kCloseAirN/AirP/Precharge` | StateTask | SafetyTask (consume on action) |
 |  | `kOpenAirN/AirP/Precharge` | StateTask | SafetyTask (consume on action) |
-| `bms_events` | `kPollVDue` | osTimer 250 ms | BmsPollTask |
-|  | `kPollTDue` | osTimer 500 ms | BmsPollTask |
+| `bms_events` | `kPollVDue` | osTimer 250 ms | BmsPollTask (ADCV + RDCV[A-D] over isoSPI) |
+|  | `kPollTDue` | osTimer 500 ms | BmsPollTask (20-channel ADG731 mux sweep) |
 
 ---
 
 ## 9. Memory budget (as built)
 
-```
-FLASH:    74 448 B / 768 KB  ( 9.47 %)  -- app region only (sectors 1..6).
-                                          Sector 0 reserved for the bootloader,
-                                          sector 7 for BL NVM + app metadata.
-DTCMRAM:  44 408 B / 128 KB  (33.88 %)  -- stacks, TCBs, BSS,
-                                          FreeRTOS heap_4
-ITCMRAM:       0 B           -- unused
-RAM_D1/D2/D3:  0 B           -- unused
-```
+| Region | Used | Capacity | % used | Notes |
+|---|---:|---:|---:|---|
+| FLASH | ~78 KB | 768 KB | ~10 % | app region only (sectors 1..6). Sector 0 reserved for the bootloader, sector 7 for BL NVM + app metadata. Cross-compile run summary on each CI build reports the exact byte count. |
+| DTCMRAM | ~46 KB | 128 KB | ~36 % | stacks, TCBs, BSS, FreeRTOS heap_4. |
+| ITCMRAM | 0 B | 64 KB | 0 % | unused. |
+| RAM_D1/D2/D3 | 0 B | — | — | unused. |
 
 The 768 KB ceiling is enforced both at link time (`STM32H733XG_FLASH.ld`
 `FLASH` region is sized for the app range) and in CI (the
@@ -467,10 +509,10 @@ separate harness):
 
 | Layer | Files | Coverage |
 |---|---|---|
-| Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine` | 39 tests: CAN decode, ADC scaling, mutex-protected snapshot/health, each safety predicate in isolation, each FSM transition |
+| Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine`, `test_bootloader`, `test_ltc6811_decode`, `test_telemetry_encoders`, `test_balance_controller` | ~95 tests: LTC6811 PEC15 + register decoders + chain-length walker, ADG731 channel packing, balancing policy, BMS / current / vehicle service decode + freshness, ADC scaling, each safety predicate in isolation, each FSM transition, telemetry encoders, boot-trigger frame matcher |
 | SIL (multi-step) | `test_sil_scenarios` | 5 scenarios: nominal startup, precharge timeout, BMS dropout, charger path, SDC sticky |
 
-**44 / 44 PASS on every push** via
+**~95 / ~95 PASS on every push** via
 `.github/workflows/build-tests.yml`, which also cross-compiles the
 firmware with `arm-none-eabi-gcc` and reports flash/RAM sizes in
 the run summary.
@@ -499,18 +541,21 @@ IFS08-CE-AMS/
 │   │   ├── FreeRTOSConfig.h, main.h, stm32h7xx_*.h
 │   │   └── app/                     # HAND-WRITTEN
 │   │       ├── acu_can_task.h
-│   │       ├── ams_config.hpp       # ALL constexpr
+│   │       ├── ams_config.hpp       # ALL constexpr (incl. LTC/NTC tunables)
 │   │       ├── ams_events.hpp       # event-group bits
 │   │       ├── app_globals.h
 │   │       ├── app_init_task.h
+│   │       ├── balance_controller.hpp  # pure-logic balancing policy (#74)
 │   │       ├── bms_poll_task.h
-│   │       ├── bms_rx_task.h
 │   │       ├── bms_service.hpp
+│   │       ├── bootloader.hpp
 │   │       ├── can_frame.{h,hpp}
 │   │       ├── current_service.hpp
 │   │       ├── current_task.h
 │   │       ├── error_latch.hpp
 │   │       ├── fan.hpp
+│   │       ├── ltc6811.hpp          # pure-logic LTC6811 wire layer (#67)
+│   │       ├── ltc6820.hpp          # SPI/CS isoSPI master wrapper (#68)
 │   │       ├── relay_driver.hpp
 │   │       ├── safety_predicates.hpp
 │   │       ├── safety_task.{h,hpp}
@@ -526,17 +571,20 @@ IFS08-CE-AMS/
 │   │   ├── stm32h7xx_*.c, sysmem.c, syscalls.c
 │   │   ├── stm32h7xx_hal_timebase_tim.c
 │   │   └── app/                     # HAND-WRITTEN
-│   │       ├── acu_can_task.cpp
+│   │       ├── acu_can_task.cpp     # also dispatches boot-trigger on FDCAN1
 │   │       ├── app_globals.cpp
 │   │       ├── app_init_task.cpp
-│   │       ├── bms_poll_task.cpp
-│   │       ├── bms_rx_task.cpp
+│   │       ├── bms_poll_task.cpp    # LTC6811 isoSPI driver (V + T + balance)
 │   │       ├── bms_service.cpp
-│   │       ├── can_isr.cpp           # HAL_FDCAN_RxFifo0Callback
+│   │       ├── bootloader.cpp
+│   │       ├── can_isr.cpp           # HAL_FDCAN_RxFifo0Callback (FDCAN1 only)
 │   │       ├── current_service.cpp
 │   │       ├── current_task.cpp
 │   │       ├── error_latch.cpp
 │   │       ├── fan.cpp
+│   │       ├── firmware_info.cpp
+│   │       ├── ltc6811.cpp           # PEC15 + register-group decoders + WRCFGA
+│   │       ├── ltc6820.cpp           # HAL_SPI wrapper, wakeup, STCOMM
 │   │       ├── relay_driver.cpp
 │   │       ├── safety_task.cpp
 │   │       ├── state_task.cpp
@@ -552,8 +600,10 @@ IFS08-CE-AMS/
 │   └── stm32cubemx/CMakeLists.txt    # regenerated by CubeMX
 ├── docs/
 │   ├── ARCHITECTURE.md               # this file
-│   ├── CAN_MAP.md                    # wire protocol
-│   └── COMMISSIONING.md              # bench / on-vehicle calibration
+│   ├── BMS_LTC6811.md                # isoSPI BMS wire protocol
+│   ├── CAN_MAP.md                    # vehicle / ACU CAN protocol
+│   ├── COMMISSIONING.md              # bench / on-vehicle calibration
+│   └── HIL_TESTS.md                  # bench acceptance plan
 ├── tests/
 │   └── unit/
 │       ├── CMakeLists.txt            # host CMake (FetchContent Unity)
@@ -603,8 +653,9 @@ For team members coming from
 |---|---|---|
 | `g_in` + `g_inMutex` (single shared struct) | 3 services, 3 mutexes | Distinct domains; finer locking |
 | `ControlTask` 10 ms | `StateTask` 20 ms + `SafetyTask` 10 ms | Safety split out at higher priority |
-| `CanRxTask` 5 ms single bus | `BmsRxTask` + `AcuCanTask` | Two buses, different semantics |
+| `CanRxTask` 5 ms single bus | `AcuCanTask` (FDCAN1 only) | BMS moved off CAN onto isoSPI in v1.2.0 (#67–#74); `BmsRxTask` retired (#73). |
 | `CanTxTask` drains queue | Merged into `AcuCanTask` / `BmsPollTask` | Fewer context switches |
+| legacy AMS CAN polling on FDCAN2 | LTC6811-1 isoSPI broadcast (ADCV / RDCV[A-D] / WRCOMM / ADAX / RDAUXA / WRCFGA) via LTC6820 master on SPI1 | Hardware swap to BMS_LITE in v1.2.0; protocol details in [`BMS_LTC6811.md`](BMS_LTC6811.md). |
 | (none) | `SafetyTask` realtime + watchdog discipline | AMS has direct safety output |
 | `AppRuntime_*Step` factoring | Pure helpers (`fsm::step`, `safety::evaluate_fault`, `adc_to_mA`, `classify`) | Larger host-testable surface |
 | C only | C++ for app, C for CubeMX-owned | Legacy AMS was already C++; classes simplify mutex/service patterns |
