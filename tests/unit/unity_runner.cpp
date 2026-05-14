@@ -19,7 +19,6 @@ void test_bms_temp_rail_reading_skips_slot(void);
 void test_bms_temp_pec_fail_skips_slot(void);
 void test_bms_temp_bad_channel_idx_rejected(void);
 void test_bms_temp_short_buffer_rejected(void);
-void test_bms_legacy_can_path_is_inert(void);
 
 // test_current_service.cpp
 void test_current_adc_zero_point_reads_near_zero(void);
@@ -127,7 +126,6 @@ int main(void) {
     RUN_TEST(test_bms_temp_pec_fail_skips_slot);
     RUN_TEST(test_bms_temp_bad_channel_idx_rejected);
     RUN_TEST(test_bms_temp_short_buffer_rejected);
-    RUN_TEST(test_bms_legacy_can_path_is_inert);
 
     RUN_TEST(test_current_adc_zero_point_reads_near_zero);
     RUN_TEST(test_current_adc_discharge_positive);

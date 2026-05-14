@@ -129,10 +129,12 @@ inline constexpr std::uint32_t kBlBootReqReg    = 0;
 inline constexpr std::uint32_t kBlBootReqMagic  = 0xB00710ADu;
 
 // CAN frame the app listens for to trigger a deliberate reboot into
-// the bootloader. Standard 11-bit ID, very high arbitration priority,
-// well below the BMS namespace (0x12C+). On FDCAN2 -- same bus the
-// bootloader listens on, so the host stays on one bus for the whole
-// reboot-and-flash workflow.
+// the bootloader. Standard 11-bit ID, very high arbitration priority.
+// On FDCAN1 (accumulator bus) since v1.2.0 (#73) -- BmsRxTask was
+// retired with the FDCAN2 BMS path, and AcuCanTask is the only RX
+// consumer now. The bootloader itself still drives FDCAN2 after
+// reset, but the in-band trigger lives on the same bus the pit-tool
+// already uses for VCU telemetry.
 //
 // 4-byte payload magic exists so a stray same-ID frame can't
 // accidentally reboot the car. All four bytes must match exactly.

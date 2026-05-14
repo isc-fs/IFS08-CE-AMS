@@ -26,7 +26,6 @@
 #include "app/app_globals.h"
 #include "app/app_init_task.h"
 #include "app/bms_poll_task.h"
-#include "app/bms_rx_task.h"
 #include "app/can_frame.h"
 #include "app/current_task.h"
 #include "app/safety_task.h"
@@ -93,13 +92,6 @@ const osThreadAttr_t StateTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityHigh,
 };
-/* Definitions for BmsRxTask */
-osThreadId_t BmsRxTaskHandle;
-const osThreadAttr_t BmsRxTask_attributes = {
-  .name = "BmsRxTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityAboveNormal,
-};
 /* Definitions for BmsPollTask */
 osThreadId_t BmsPollTaskHandle;
 const osThreadAttr_t BmsPollTask_attributes = {
@@ -127,11 +119,6 @@ const osThreadAttr_t TelemetryTask_attributes = {
   .name = "TelemetryTask",
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityLow,
-};
-/* Definitions for bms_rx_queue */
-osMessageQueueId_t bms_rx_queueHandle;
-const osMessageQueueAttr_t bms_rx_queue_attributes = {
-  .name = "bms_rx_queue"
 };
 /* Definitions for acu_rx_queue */
 osMessageQueueId_t acu_rx_queueHandle;
@@ -178,7 +165,6 @@ void StartDefaultTask(void *argument);
 void StartAppInitTask(void *argument);
 void StartSafetyTask(void *argument);
 void StartStateTask(void *argument);
-void StartBmsRxTask(void *argument);
 void StartBmsPollTask(void *argument);
 void StartAcuCanTask(void *argument);
 void StartCurrentTask(void *argument);
@@ -272,9 +258,6 @@ int main(void)
   /* USER CODE END RTOS_TIMERS */
 
   /* Create the queue(s) */
-  /* creation of bms_rx_queue */
-  bms_rx_queueHandle = osMessageQueueNew (32, sizeof(CanFrame), &bms_rx_queue_attributes);
-
   /* creation of acu_rx_queue */
   acu_rx_queueHandle = osMessageQueueNew (16, sizeof(CanFrame), &acu_rx_queue_attributes);
 
@@ -297,9 +280,6 @@ int main(void)
 
   /* creation of StateTask */
   StateTaskHandle = osThreadNew(StartStateTask, NULL, &StateTask_attributes);
-
-  /* creation of BmsRxTask */
-  BmsRxTaskHandle = osThreadNew(StartBmsRxTask, NULL, &BmsRxTask_attributes);
 
   /* creation of BmsPollTask */
   BmsPollTaskHandle = osThreadNew(StartBmsPollTask, NULL, &BmsPollTask_attributes);
@@ -988,22 +968,6 @@ void StartStateTask(void *argument)
   ams_state_task_run(argument);
   for(;;) { osDelay(1); }
   /* USER CODE END StartStateTask */
-}
-
-/* USER CODE BEGIN Header_StartBmsRxTask */
-/**
-* @brief Function implementing the BmsRxTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartBmsRxTask */
-void StartBmsRxTask(void *argument)
-{
-  /* USER CODE BEGIN StartBmsRxTask */
-  ams_bms_rx_task_run(argument);
-  /* Unreachable: ams_bms_rx_task_run() never returns. */
-  for(;;) { osDelay(1); }
-  /* USER CODE END StartBmsRxTask */
 }
 
 /* USER CODE BEGIN Header_StartBmsPollTask */

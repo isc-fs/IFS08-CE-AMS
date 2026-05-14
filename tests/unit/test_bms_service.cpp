@@ -198,10 +198,6 @@ extern "C" void test_bms_ltc_is_healthy_false_after_staleness(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy update_from_frame is a no-op (returns false). Sanity check
-// to lock in that the old CAN data path is genuinely retired.
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
 // Temperature path helpers + tests
 // ---------------------------------------------------------------------------
 
@@ -327,11 +323,3 @@ extern "C" void test_bms_temp_short_buffer_rejected(void) {
         0, reply, sizeof(reply)));
 }
 
-extern "C" void test_bms_legacy_can_path_is_inert(void) {
-    CanFrame f = {};
-    f.id  = 0x12D;
-    f.dlc = 8;
-    f.bus = static_cast<std::uint8_t>(CanBus::Bms);
-    f.data[0] = 0x12; f.data[1] = 0x34;
-    TEST_ASSERT_FALSE(BmsService::instance().update_from_frame(f));
-}

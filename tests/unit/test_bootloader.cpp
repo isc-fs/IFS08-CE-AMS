@@ -19,7 +19,7 @@ ams::CanFrame make_trigger_frame() {
     ams::CanFrame f = {};
     f.id  = ams::config::kBlBootReqCanId;
     f.dlc = ams::config::kBlBootReqDlc;
-    f.bus = static_cast<std::uint8_t>(ams::CanBus::Bms);
+    f.bus = static_cast<std::uint8_t>(ams::CanBus::Acu);
     std::memcpy(f.data, ams::config::kBlBootReqPayload,
                 ams::config::kBlBootReqDlc);
     return f;
@@ -34,7 +34,7 @@ extern "C" void test_bootloader_trigger_exact_match(void) {
 
 extern "C" void test_bootloader_trigger_wrong_bus(void) {
     auto f = make_trigger_frame();
-    f.bus = static_cast<std::uint8_t>(ams::CanBus::Acu);
+    f.bus = static_cast<std::uint8_t>(ams::CanBus::Bms);
     TEST_ASSERT_FALSE(ams::Bootloader::matches_trigger(f));
 }
 

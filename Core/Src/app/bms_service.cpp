@@ -123,16 +123,6 @@ void BmsService::recompute_summaries_() noexcept {
     state_.avg_tempC       = (n_t > 0) ? static_cast<std::int16_t>(sum_t / static_cast<std::int32_t>(n_t)) : 0;
 }
 
-// ---------------------------------------------------------------------------
-// Legacy CAN entry point. The BMS bus moved to LTC6811-1 / isoSPI in
-// v1.2.0 (#67-#74) so this path no longer ingests live data; it is
-// retained only so BmsRxTask still compiles until #73 retires it.
-// ---------------------------------------------------------------------------
-bool BmsService::update_from_frame(const CanFrame& f) noexcept {
-    (void)f;
-    return false;
-}
-
 bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
                                           std::size_t         len,
                                           std::uint32_t       now_tick_ms) noexcept {
