@@ -9,9 +9,9 @@
 // least 5× margin even at the worst LSI corner. See docs/ARCHITECTURE.md
 // §1 invariant 4 and §6 (SafetyTask).
 //
-// Init must run BEFORE osKernelStart. main.c's USER CODE BEGIN 2 block
-// calls ams_watchdog_init() (declared in watchdog.h) right after
-// MX_*_Init() but before the scheduler.
+// Init runs in CubeMX-generated code (MX_IWDG1_Init() in main.c)
+// before osKernelStart, so the watchdog is already alive when the
+// scheduler boots and when this wrapper is first touched.
 
 #pragma once
 
@@ -21,12 +21,6 @@ namespace ams {
 
 class Watchdog {
 public:
-    // Configures IWDG1 (prescaler 32, reload 100 -> ~100 ms at LSI 32 kHz)
-    // and starts the counter. Once running the watchdog cannot be
-    // disabled until a reset; calling init() twice is a no-op aside from
-    // re-applying the prescaler/reload.
-    static void init() noexcept { ams_watchdog_init(); }
-
     // Refresh the down-counter. Must be called at least every ~50 ms
     // (worst-case LSI fast corner). SafetyTask calls this once per
     // 10 ms cycle on the clean path; on the fault path it deliberately

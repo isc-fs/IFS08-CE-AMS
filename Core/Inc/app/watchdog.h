@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: proprietary
  *
- * C-callable surface for the IWDG wrapper. Lets us call ams_watchdog_init
- * from main.c's USER CODE BEGIN 2 block (which CubeMX preserves across
- * regenerations) before osKernelStart, so the watchdog is alive even
- * before App_InitTask runs.
+ * C-callable surface for the IWDG refresh helper. The HAL handle and
+ * the one-shot init now live in CubeMX-generated code (MX_IWDG1_Init
+ * in main.c, ahead of osKernelStart). All application paths route
+ * refreshes through ams_watchdog_refresh() so there is a single owner.
  *
  * The C++ side (watchdog.hpp) is just a thin namespace wrapper over the
  * same handle.
@@ -16,7 +16,6 @@
 extern "C" {
 #endif
 
-void ams_watchdog_init(void);
 void ams_watchdog_refresh(void);
 
 #ifdef __cplusplus
