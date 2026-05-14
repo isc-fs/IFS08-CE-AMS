@@ -56,14 +56,6 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
 )
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${APP_SOURCES}
-
-    # IWDG HAL was not in the .ioc when this project was first
-    # generated; the .ioc now enables IWDG1 but the auto-generated
-    # cmake/stm32cubemx/CMakeLists.txt still lacks the entry until the
-    # next CubeMX regen. Wire it in explicitly so the build works in
-    # the meantime. Drop this line once a regen picks the file up
-    # automatically.
-    Drivers/STM32H7xx_HAL_Driver/Src/stm32h7xx_hal_iwdg.c
 )
 
 # Add include paths
