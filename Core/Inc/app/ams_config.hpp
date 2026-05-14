@@ -50,29 +50,15 @@ inline constexpr std::uint32_t kTelemetryPeriodMs = 500;
 // the encode/decode helpers in can_frame.hpp.
 // ---------------------------------------------------------------------------
 
-// 5 BMS slave modules. Each module has its own CANID; module N's CANID
-// is (kBmsVoltPollBase + N * kBmsModuleStride). The legacy protocol
-// then assigns offsets RELATIVE TO that per-module CANID:
-//
-//   offset  1..5   -> voltage response frames (frame_idx = offset - 1)
-//   offset 20      -> temperature poll request (TX from AMS)
-//   offset 21..25  -> temperature response frames (frame_idx = offset - 21)
-//
-// classify() in bms_service.cpp walks the 5 CANIDs and matches the
-// incoming id against the (canid, canid + 30) range with `m = id - canid`.
-// See docs/CAN_MAP.md for the full table.
+// 5 BMS slave modules. Each module is a pair of LTC6811-1 ICs on
+// the isoSPI daisy-chain (see kLtcsPerModule / kLtcChainLength
+// below). Module 0 == chain slots 0,1 ; module 4 == chain slots 8,9.
+// The legacy CAN-poll constants (CANID, stride, response-offset
+// ranges) were retired in v1.2.0 along with the FDCAN2 BMS path --
+// see commit history of #72 if archaeology is needed.
 inline constexpr std::uint8_t  kBmsModuleCount      = 5;
-inline constexpr std::uint16_t kBmsModuleStride     = 0x1E;
-inline constexpr std::uint16_t kBmsVoltPollBase     = 0x12C;  // module 0 CANID
-inline constexpr std::uint16_t kBmsTempPollOffset   = 20;     // CANID + 20
-inline constexpr std::uint8_t  kBmsVoltRespOffsetLo = 1;
-inline constexpr std::uint8_t  kBmsVoltRespOffsetHi = 5;
-inline constexpr std::uint8_t  kBmsTempRespOffsetLo = 21;
-inline constexpr std::uint8_t  kBmsTempRespOffsetHi = 25;
-inline constexpr std::uint16_t kBmsModuleAddrRange  = 30;     // legacy guard
-
-inline constexpr std::uint8_t  kCellsPerModule   = 19;
-inline constexpr std::uint8_t  kTempsPerModule   = 38;
+inline constexpr std::uint8_t  kCellsPerModule      = 19;
+inline constexpr std::uint8_t  kTempsPerModule      = 38;
 
 // Accumulator bus (FDCAN1).
 inline constexpr std::uint32_t kAcuRxDcBusId     = 0x100;   // extended
@@ -108,12 +94,21 @@ inline constexpr std::uint8_t  kCurrentFilterShift = 4;     // tau ~ 16 samples
 // IIR low-pass filter coefficient is encoded as a shift so the filter
 // is `filtered = filtered - (filtered >> shift) + (raw >> shift)`.
 
-// BMS poll payloads (TX from AMS -> BMS slaves on FDCAN2).
-// Voltage poll carries the cell-balancing target in mV (big-endian);
-// the legacy code sets this to the desired upper-balance limit. Send a
-// safe default that won't trigger aggressive balancing on bring-up;
-// real value tuned during commissioning (feat/18).
+// Cell-balancing target voltage (mV). Used by #74 (WRCFGA-driven
+// passive balancing). Anything below this stays untouched; cells
+// above get their dis-charge FET asserted by the LTC6811.
 inline constexpr std::uint16_t kBmsBalancingTargetmV = 3700;
+
+// LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",
+// 7 kHz first stage) is the canonical choice for race-pack
+// metrology: ~2.3 ms to convert all 12 cell channels with the
+// default filter. We round up to 3 ms in software (kAdcvSettleMs)
+// so jitter from the FreeRTOS tick doesn't clip the conversion.
+// ADAX (AUX) under the same mode finishes in ~200 us per channel
+// pair plus a settling allowance.
+inline constexpr std::uint8_t  kAdcMode          = 2;   // ams::ltc6811::AdcMode::Norm7kHz
+inline constexpr std::uint32_t kAdcvSettleMs     = 3;
+inline constexpr std::uint32_t kAdaxSettleMs     = 1;
 
 // ---------------------------------------------------------------------------
 // Backup-register usage. RTC_BKP_DR0 is owned by the bootloader (it

@@ -1,40 +1,51 @@
 // SPDX-License-Identifier: proprietary
 //
-// Periodically emits the BMS poll-request frames on FDCAN2:
+// Drives the LTC6811-1 daisy-chain to acquire cell voltages and, in a
+// follow-up branch (#71), cell temperatures via the per-LTC ADG731
+// 32:1 mux. Replaces the legacy FDCAN2 poll emitter; the wire-format
+// layer lives in ltc6811.hpp / ltc6820.hpp.
 //
-//   every 250 ms (kBmsPollVoltMs) -> 5 voltage polls,   id = CANID(m)
-//   every 500 ms (kBmsPollTempMs) -> 5 temperature polls, id = CANID(m) + 20
+// Cadence (unchanged from the legacy task):
+//   * kPollVDue every kBmsPollVoltMs (250 ms) -> ADCV + RDCVA/B/C/D
+//   * kPollTDue every kBmsPollTempMs (500 ms) -> 20-channel mux sweep
+//                                                (stub here, lands in #71)
 //
-// Mechanism: two osTimers drive bms_events (kPollVDue, kPollTDue) bits;
-// this task blocks on osEventFlagsWait and emits the polls when the
-// corresponding bit fires. Single producer on FDCAN2 TX (BmsPollTask),
-// so no TX queue or mutex around the HAL call.
+// Mechanism: two osTimers raise event-flag bits, this task wakes on
+// osEventFlagsWait. Single producer over the SPI bus, so no mutex
+// around the HAL_SPI calls.
 //
 // Per docs/ARCHITECTURE.md §2 task table.
-// Wire protocol: docs/CAN_MAP.md §"TX -- AMS to BMS slaves".
 
 #include "app/bms_poll_task.h"
 
 #include "ams_config.hpp"
 #include "ams_events.hpp"
 #include "app/app_globals.h"
-#include "current_service.hpp"
+#include "bms_service.hpp"
+#include "ltc6811.hpp"
+#include "ltc6820.hpp"
 
 #include "cmsis_os2.h"
-#include "main.h"
 
-extern "C" {
-extern FDCAN_HandleTypeDef hfdcan2;
-}
+#include <cstddef>
+#include <cstdint>
 
 namespace {
 
 osTimerId_t s_volt_timer = nullptr;
 osTimerId_t s_temp_timer = nullptr;
 
-// Telemetry: count TX failures so we surface FDCAN saturation in a
-// future telemetry frame. Volatile so a remote-debug session can read.
-volatile std::uint32_t g_bms_poll_tx_fail = 0;
+// Telemetry counters. Volatile so a remote-debug session can read
+// them via the symbol; not part of any task's hot path budget. The
+// PEC-error counter already lives in bms_service.cpp (per-IC, 10
+// entries); these are bus-level failures (HAL_OK != 0).
+volatile std::uint32_t g_ltc_spi_err_count = 0;
+
+// Round-trip timing for the voltage poll, both last-cycle and worst-
+// case-since-boot. Lets the HIL operator verify the issue's "complete
+// within 50 ms" acceptance criterion without a scope.
+volatile std::uint32_t g_bms_volt_poll_ms  = 0;
+volatile std::uint32_t g_bms_volt_poll_max = 0;
 
 void volt_timer_cb(void * /*arg*/) {
     osEventFlagsSet(bms_eventsHandle, ams::events::bms::kPollVDue);
@@ -44,59 +55,75 @@ void temp_timer_cb(void * /*arg*/) {
     osEventFlagsSet(bms_eventsHandle, ams::events::bms::kPollTDue);
 }
 
-// Encodes one frame and hands it to the FDCAN2 TX FIFO. The HAL queue
-// holds 16 entries (per AMS.ioc); 5 polls per cycle keeps us well
-// under depth.
-void send_poll(std::uint32_t id,
-               std::uint8_t  b0,
-               std::uint8_t  b1) {
-    FDCAN_TxHeaderTypeDef tx = {};
-    tx.Identifier          = id;
-    tx.IdType              = FDCAN_STANDARD_ID;
-    tx.TxFrameType         = FDCAN_DATA_FRAME;
-    tx.DataLength          = FDCAN_DLC_BYTES_2;
-    tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    tx.BitRateSwitch       = FDCAN_BRS_OFF;
-    tx.FDFormat            = FDCAN_CLASSIC_CAN;
-    tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-    tx.MessageMarker       = 0;
+// ---------------------------------------------------------------------------
+// Voltage poll: ADCV broadcast (kicks all 10 LTCs into a cell-V
+// conversion) followed by 4 register-group reads (RDCVA, RDCVB, RDCVC,
+// RDCVD) concatenated into a 320-byte buffer that BmsService digests
+// in one mutex-acquire.
+// ---------------------------------------------------------------------------
+void run_voltage_poll() {
+    using namespace ams;
 
-    std::uint8_t payload[2] = { b0, b1 };
+    auto& bus = ltc6820::Bus::default_instance();
 
-    if (HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan2, &tx, payload) != HAL_OK) {
-        ++g_bms_poll_tx_fail;
-    }
-}
-
-void send_voltage_polls() {
-    // Legacy parity: suppress balancing TX while a charger is on the
-    // bus. The slaves interpret the 2-byte payload as a balancing
-    // target -- we don't want passive balancing to fight the charger's
-    // active balance algorithm.
-    if (ams::CurrentService::instance().snapshot().charger_detected) {
+    // 1. ADCV broadcast. Discharge-permit = false during normal data
+    //    acquisition (#74 will flip it for balancing windows). All
+    //    cells channel-select = CellSel::All.
+    const auto adcv = ltc6811::pack_command(
+        ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::kAdcMode),
+                          /*discharge_permit=*/false,
+                          ltc6811::CellSel::All));
+    if (!bus.send_command(adcv.data())) {
+        ++g_ltc_spi_err_count;
         return;
     }
 
-    for (std::uint8_t m = 0; m < ams::config::kBmsModuleCount; ++m) {
-        const std::uint32_t canid =
-            static_cast<std::uint32_t>(ams::config::kBmsVoltPollBase) +
-            static_cast<std::uint32_t>(m) * ams::config::kBmsModuleStride;
+    // 2. ADC settling. Norm-7kHz mode converts all 12 channels in
+    //    ~2.3 ms; we round to 3 ms (config::kAdcvSettleMs). osDelay
+    //    rounds up to the next FreeRTOS tick (1 kHz) so worst-case
+    //    wait is 3-4 ms -- well below the 50 ms budget.
+    osDelay(config::kAdcvSettleMs);
 
-        send_poll(canid,
-                  static_cast<std::uint8_t>(ams::config::kBmsBalancingTargetmV >> 8),
-                  static_cast<std::uint8_t>(ams::config::kBmsBalancingTargetmV & 0xFF));
+    // 3. Read the four cell-voltage register groups into one
+    //    contiguous buffer that BmsService::update_from_ltc_response
+    //    can walk. Group layout:
+    //      [A: 10 segments][B: 10 segments][C: 10 segments][D: 10 segments]
+    constexpr std::size_t kSegBytes   = 8;
+    constexpr std::size_t kGroupBytes = config::kLtcChainLength * kSegBytes;
+    std::uint8_t          reply[4 * kGroupBytes] = {};
+
+    static constexpr std::uint16_t kRdcvCmds[4] = {
+        ltc6811::kCmdRDCVA, ltc6811::kCmdRDCVB,
+        ltc6811::kCmdRDCVC, ltc6811::kCmdRDCVD,
+    };
+    for (std::uint8_t g = 0; g < 4; ++g) {
+        const auto cmd = ltc6811::pack_command(kRdcvCmds[g]);
+        if (!bus.read_register_group(cmd.data(),
+                                     reply + g * kGroupBytes,
+                                     kGroupBytes)) {
+            ++g_ltc_spi_err_count;
+            return;  // partial reply -> don't poison BmsService state
+        }
     }
+
+    // 4. Hand the assembled chain response to BmsService. Per-IC PEC
+    //    is checked inside; bus-level failures already returned above.
+    const std::uint32_t now_ms = osKernelGetTickCount();
+    (void)BmsService::instance().update_from_ltc_response(
+        reply, sizeof(reply), now_ms);
 }
 
-void send_temperature_polls() {
-    for (std::uint8_t m = 0; m < ams::config::kBmsModuleCount; ++m) {
-        const std::uint32_t canid =
-            static_cast<std::uint32_t>(ams::config::kBmsVoltPollBase) +
-            static_cast<std::uint32_t>(m) * ams::config::kBmsModuleStride +
-            static_cast<std::uint32_t>(ams::config::kBmsTempPollOffset);
-
-        send_poll(canid, 0x00, 0x00);
-    }
+// ---------------------------------------------------------------------------
+// Temperature poll. Lands fully in #71 (ADG731 mux sweep + ADAX +
+// RDAUXA per channel). Stubbed here so the periodic timer fires and
+// the rest of the task structure is in place; right now it just
+// pumps the chain (idle wakeup) so the LTCs don't drop into T_SLEEP
+// (~2 s) when the operator has paused the voltage loop for debug.
+// ---------------------------------------------------------------------------
+void run_temperature_poll() {
+    ams::ltc6820::Bus::default_instance().wakeup();
+    // TODO(#71): ADG731 mux sweep + ADAX + RDAUXA, then
+    //            BmsService::update_temps_from_ltc_response(...).
 }
 
 }  // namespace
@@ -104,9 +131,6 @@ void send_temperature_polls() {
 extern "C" void ams_bms_poll_task_run(void *argument) {
     (void)argument;
 
-    // Create and start both periodic timers. Done inside the task so
-    // creation runs after osKernelStart and the timer-service daemon
-    // is alive.
     s_volt_timer = osTimerNew(&volt_timer_cb, osTimerPeriodic, nullptr, nullptr);
     s_temp_timer = osTimerNew(&temp_timer_cb, osTimerPeriodic, nullptr, nullptr);
 
@@ -132,7 +156,15 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
             continue;
         }
 
-        if (evt & ams::events::bms::kPollVDue) send_voltage_polls();
-        if (evt & ams::events::bms::kPollTDue) send_temperature_polls();
+        if (evt & ams::events::bms::kPollVDue) {
+            const std::uint32_t t0 = osKernelGetTickCount();
+            run_voltage_poll();
+            const std::uint32_t dt = osKernelGetTickCount() - t0;
+            g_bms_volt_poll_ms = dt;
+            if (dt > g_bms_volt_poll_max) g_bms_volt_poll_max = dt;
+        }
+        if (evt & ams::events::bms::kPollTDue) {
+            run_temperature_poll();
+        }
     }
 }
