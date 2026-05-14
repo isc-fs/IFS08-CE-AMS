@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: proprietary
+//
+// Emits the `bl_fwinfo_t` record the isc-fs/stm32-can-bootloader requires
+// at a fixed flash offset to consider the application valid. Without this
+// record, the bootloader rejects JUMP with `NO_VALID_APP` even though
+// FLASH_WRITE + FLASH_VERIFY have succeeded.
+//
+// Layout is taken verbatim from
+// isc-fs/stm32-can-bootloader/Core/Inc/bl_fwinfo.h. The record is pinned
+// at `BL_APP_BASE + 0x400` (= 0x08020400) by the `.firmware_info` section
+// declared in STM32H733XG_FLASH.ld.
+//
+// All version fields here are placeholders for the bench bring-up; a
+// follow-up commit should hook these into the build system so they get
+// populated from CMake (semver / git hash / timestamp) automatically.
+
+#include <cstdint>
+
+extern "C" {
+
+typedef struct {
+    uint32_t magic;
+    uint32_t record_version;
+    uint32_t fw_version_major;
+    uint32_t fw_version_minor;
+    uint32_t fw_version_patch;
+    uint32_t mcu_id;
+    uint8_t  git_hash[8];
+    uint64_t build_timestamp;
+    char     product_name[16];
+    uint32_t reserved[2];
+} bl_fwinfo_t;
+
+const bl_fwinfo_t __firmware_info
+    __attribute__((section(".firmware_info"), used)) = {
+    .magic            = 0xF14F1B00U,        // BL_FWINFO_MAGIC
+    .record_version   = 0x00010000U,        // record schema 1.0
+    .fw_version_major = 0,
+    .fw_version_minor = 1,
+    .fw_version_patch = 0,
+    .mcu_id           = 0x00000450U,        // STM32H7x3
+    .git_hash         = {0,0,0,0,0,0,0,0},
+    .build_timestamp  = 0,
+    .product_name     = "IFS08-CE-AMS",
+    .reserved         = {0, 0},
+};
+
+}  // extern "C"

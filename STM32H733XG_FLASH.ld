@@ -84,6 +84,18 @@ SECTIONS
     . = ALIGN(4);
   } >FLASH
 
+  /* Bootloader firmware-info record, pinned at flash offset 0x400 from
+   * the app base (= 0x08020400). The stm32-can-bootloader reads this
+   * struct to mark the app as valid; JUMP is rejected with NO_VALID_APP
+   * if magic or record_version don't match. Record contents are emitted
+   * by Core/Src/app/firmware_info.cpp. Layout in
+   *   isc-fs/stm32-can-bootloader/Core/Inc/bl_fwinfo.h
+   */
+  .firmware_info 0x08020400 :
+  {
+    KEEP(*(.firmware_info))
+  } >FLASH
+
   /* The program code and other data goes into FLASH */
   .text :
   {
