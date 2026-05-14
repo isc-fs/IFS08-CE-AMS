@@ -155,4 +155,16 @@ inline constexpr std::uint32_t kAmsTelemStatusId = 0x4A0u;  // state + cell-V ex
 inline constexpr std::uint32_t kAmsTelemPackId   = 0x4A1u;  // pack V + current
 inline constexpr std::uint32_t kAmsTelemTempsId  = 0x4A2u;  // temp extremes + dc bus + heartbeat
 
+// ---------------------------------------------------------------------------
+// LTC6811-1 + isoSPI BMS chain. New AMS PCB drives a chain of 10 LTCs
+// (5 BMS modules × 2 LTCs each) via SPI1 + LTC6820 isoSPI master. See
+// docs/BMS_LTC6811.md for the wire protocol and slot mapping.
+// ---------------------------------------------------------------------------
+inline constexpr std::uint8_t  kLtcsPerModule       = 2;
+inline constexpr std::uint8_t  kCellsPerLtcUpper    = 10;  // LTC_1 (top of module)
+inline constexpr std::uint8_t  kCellsPerLtcLower    =  9;  // LTC_2 (bottom of module)
+inline constexpr std::uint8_t  kLtcChainLength      = 10;  // kBmsModuleCount * kLtcsPerModule
+inline constexpr std::uint8_t  kTempsPerLtc         = 20;  // ADG731 channels populated
+inline constexpr std::uint8_t  kTempMuxChannelsUsed = 20;  // of 32 on ADG731
+
 }  // namespace ams::config
