@@ -143,4 +143,26 @@ std::array<std::uint8_t, 6> pack_adg731_select(std::uint8_t channel) noexcept {
     return p;
 }
 
+std::uint8_t count_pec_valid_segments(const std::uint8_t* bytes,
+                                      std::size_t         n_bytes,
+                                      std::uint8_t        max_chain) noexcept {
+    if (bytes == nullptr) {
+        return 0;
+    }
+    const std::size_t segments = n_bytes / 8;
+    const std::size_t cap      = (segments < max_chain) ? segments
+                                                        : static_cast<std::size_t>(max_chain);
+    std::uint8_t valid = 0;
+    for (std::size_t i = 0; i < cap; ++i) {
+        const std::uint8_t* seg = bytes + 8 * i;
+        const std::uint16_t expected =
+            static_cast<std::uint16_t>((seg[6] << 8) | seg[7]);
+        if (pec15(seg, 6) != expected) {
+            break;
+        }
+        ++valid;
+    }
+    return valid;
+}
+
 }  // namespace ams::ltc6811

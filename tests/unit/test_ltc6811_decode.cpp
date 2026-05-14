@@ -271,3 +271,76 @@ extern "C" void test_ltc6811_pack_adg731_channel_masked(void) {
     TEST_ASSERT_EQUAL_HEX8(p_low[0], p_high[0]);
     TEST_ASSERT_EQUAL_HEX8(p_low[1], p_high[1]);
 }
+
+// ---------------------------------------------------------------------------
+// count_pec_valid_segments -- chain length discovery walker
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Build a synthetic chain reply: N segments of 6 data bytes + 2 PEC.
+// Data bytes are arbitrary -- the walker only cares about PEC15
+// matching, so we fill each segment with a unique pattern to make
+// off-by-one bugs visible if a test ever asserts on the data side.
+void make_valid_chain(std::uint8_t* out, std::size_t n_segments) {
+    for (std::size_t i = 0; i < n_segments; ++i) {
+        std::uint8_t* seg = out + 8 * i;
+        for (std::size_t k = 0; k < 6; ++k) {
+            seg[k] = static_cast<std::uint8_t>(0xA0u + (i * 7u) + k);
+        }
+        const std::uint16_t pec = pec15(seg, 6);
+        seg[6] = static_cast<std::uint8_t>((pec >> 8) & 0xFFu);
+        seg[7] = static_cast<std::uint8_t>(pec & 0xFFu);
+    }
+}
+
+}  // namespace
+
+// All 10 ICs answer with PEC-clean payloads -> count is 10.
+extern "C" void test_ltc6811_chain_discovery_all_ten_valid(void) {
+    std::uint8_t buf[8 * 10] = {};
+    make_valid_chain(buf, 10);
+    TEST_ASSERT_EQUAL_UINT8(10u, count_pec_valid_segments(buf, sizeof(buf), 10));
+}
+
+// One missing module: 9 valid segments then a PEC-bad segment in
+// slot 10. Discovery stops at the first failure -> count is 9.
+extern "C" void test_ltc6811_chain_discovery_nine_then_bad(void) {
+    std::uint8_t buf[8 * 10] = {};
+    make_valid_chain(buf, 10);
+    // Corrupt the last segment's PEC.
+    buf[8 * 9 + 7] ^= 0x01u;
+    TEST_ASSERT_EQUAL_UINT8(9u, count_pec_valid_segments(buf, sizeof(buf), 10));
+}
+
+// 10 valid + trailing garbage past kLtcChainLength. The walker caps
+// at max_chain so the garbage is invisible -> count is 10.
+extern "C" void test_ltc6811_chain_discovery_ten_plus_trailing_garbage(void) {
+    std::uint8_t buf[8 * 12] = {};
+    make_valid_chain(buf, 10);
+    // Garbage in slots 10 and 11 -- random bytes, broken PECs.
+    for (std::size_t k = 8 * 10; k < sizeof(buf); ++k) buf[k] = 0x5Au;
+    TEST_ASSERT_EQUAL_UINT8(10u, count_pec_valid_segments(buf, sizeof(buf), 10));
+}
+
+// First segment already PEC-bad -> count is 0 (operator should see
+// "ltc_chain=0 expected=10" and latch ERROR immediately).
+extern "C" void test_ltc6811_chain_discovery_first_bad(void) {
+    std::uint8_t buf[8 * 10] = {};
+    make_valid_chain(buf, 10);
+    buf[7] ^= 0xFFu;  // shred PEC of segment 0
+    TEST_ASSERT_EQUAL_UINT8(0u, count_pec_valid_segments(buf, sizeof(buf), 10));
+}
+
+// Short buffer (less than max_chain * 8 bytes): walker stops at the
+// available capacity. 7 full segments here -> at most 7 reported.
+extern "C" void test_ltc6811_chain_discovery_short_buffer(void) {
+    std::uint8_t buf[8 * 7] = {};
+    make_valid_chain(buf, 7);
+    TEST_ASSERT_EQUAL_UINT8(7u, count_pec_valid_segments(buf, sizeof(buf), 10));
+}
+
+// Null pointer guard -- shouldn't crash, just reports 0.
+extern "C" void test_ltc6811_chain_discovery_null_safe(void) {
+    TEST_ASSERT_EQUAL_UINT8(0u, count_pec_valid_segments(nullptr, 80, 10));
+}

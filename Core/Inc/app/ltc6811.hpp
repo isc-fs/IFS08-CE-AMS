@@ -176,4 +176,26 @@ void build_write_frame(std::uint16_t                       cmd,
 // ---------------------------------------------------------------------------
 [[nodiscard]] std::array<std::uint8_t, 6> pack_adg731_select(std::uint8_t channel) noexcept;
 
+// ---------------------------------------------------------------------------
+// Chain length discovery.
+//
+// The LTC6811-1 daisy-chain has no built-in addressing -- a single read
+// command propagates through every IC and the slaves shift back N * 8
+// bytes (6 data + 2 PEC per IC) in chain order. The only way to
+// confirm "N ICs are alive and PEC-clean" is to issue a known low-
+// impact read (RDCFGA is the usual choice -- it never triggers an ADC)
+// and walk the reply counting consecutive PEC-valid 8-byte segments.
+//
+// count_pec_valid_segments stops on the first PEC-bad segment (or when
+// it hits max_chain) and returns the count of valid ones in front of
+// the failure. n_bytes is the size of the reply buffer (must be a
+// multiple of 8 in well-formed callers, but the helper rounds down
+// safely so a partial last segment is just ignored).
+//
+// This is pure logic, fully testable on host.
+// ---------------------------------------------------------------------------
+[[nodiscard]] std::uint8_t count_pec_valid_segments(const std::uint8_t* bytes,
+                                                    std::size_t         n_bytes,
+                                                    std::uint8_t        max_chain) noexcept;
+
 }  // namespace ams::ltc6811
