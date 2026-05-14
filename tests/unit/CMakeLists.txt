@@ -44,6 +44,7 @@ add_executable(ams_unit_tests
     test_safety_predicates.cpp
     test_sil_scenarios.cpp
     test_state_machine.cpp
+    test_telemetry_encoders.cpp
     test_vehicle_service.cpp
     unity_runner.cpp
 )

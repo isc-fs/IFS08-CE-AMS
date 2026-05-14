@@ -149,4 +149,10 @@ inline constexpr std::uint8_t  kBlBootReqDlc        = 4;
 // ORIGIN and the bootloader's BL_APP_BASE.
 inline constexpr std::uint32_t kAppFlashBase    = 0x08020000u;
 
+// AMS telemetry TX on FDCAN1. Three single-purpose 8-byte frames at
+// 500 ms cadence each. See docs/CAN_MAP.md for the byte layouts.
+inline constexpr std::uint32_t kAmsTelemStatusId = 0x4A0u;  // state + cell-V extremes
+inline constexpr std::uint32_t kAmsTelemPackId   = 0x4A1u;  // pack V + current
+inline constexpr std::uint32_t kAmsTelemTempsId  = 0x4A2u;  // temp extremes + dc bus + heartbeat
+
 }  // namespace ams::config
