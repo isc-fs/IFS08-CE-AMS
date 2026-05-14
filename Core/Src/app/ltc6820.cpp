@@ -2,6 +2,7 @@
 
 #include "ltc6820.hpp"
 
+#include "ltc6811.hpp"
 #include "stm32h7xx_hal.h"
 
 // SPI1 isn't yet enabled in AMS.ioc (the CubeMX regen will add
@@ -65,6 +66,27 @@ Bus& Bus::default_instance() noexcept {
     // configure() then wires it to hspi1 + PA4.
     static Bus s_instance;
     return s_instance;
+}
+
+bool Bus::write_chain_command(std::uint16_t cmd,
+                              const std::uint8_t per_ic_data[][6]) noexcept {
+    std::uint8_t frame[4 + 8 * config::kLtcChainLength];
+    ltc6811::build_write_frame(cmd, per_ic_data, frame, sizeof(frame));
+    return transfer(frame, nullptr, sizeof(frame));
+}
+
+bool Bus::stcomm() noexcept {
+    // STCOMM = command frame + 3 bytes (24 SCK pulses) of dummy
+    // clocks per IC in the daisy-chain. The LTC uses those clocks to
+    // shift the COMM register contents out of its GPIO-SPI port to
+    // the attached slave; data on MOSI is ignored, but the bus must
+    // keep ticking SCK or the mux receives nothing.
+    constexpr std::size_t kDummyBytes = 3u * config::kLtcChainLength;
+    std::uint8_t frame[4 + kDummyBytes];
+    const auto cmd = ltc6811::pack_command(ltc6811::kCmdSTCOMM);
+    std::memcpy(frame, cmd.data(), 4);
+    std::memset(frame + 4, 0xFFu, kDummyBytes);
+    return transfer(frame, nullptr, sizeof(frame));
 }
 
 void Bus::cs_low() noexcept {

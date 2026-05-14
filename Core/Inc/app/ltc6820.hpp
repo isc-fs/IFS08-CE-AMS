@@ -104,6 +104,20 @@ class Bus {
                              std::uint8_t*      out,
                              std::size_t        out_capacity) noexcept;
 
+    // Drive a broadcast WRITE command: cmd frame + per-IC 6-byte
+    // payload + per-IC PEC, packed by ams::ltc6811::build_write_frame.
+    // Used by WRCOMM (mux address load), WRCFGA (balancing config),
+    // etc. per_ic_data must point to kLtcChainLength rows of 6 bytes.
+    bool write_chain_command(std::uint16_t        cmd,
+                             const std::uint8_t   per_ic_data[][6]) noexcept;
+
+    // STCOMM: shift the COMM register out of every LTC's GPIO SPI
+    // port to the attached slave (ADG731 mux). The LTC needs the
+    // master to keep clocking SCK for 24 cycles per IC after the
+    // command, which we provide by sending 3 * kLtcChainLength
+    // dummy bytes after the 4-byte command frame.
+    bool stcomm() noexcept;
+
    private:
     SPI_HandleTypeDef* hspi_ = nullptr;
     CsPin              cs_   = {};

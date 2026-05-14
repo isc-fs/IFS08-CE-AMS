@@ -94,6 +94,26 @@ public:
                                   std::uint32_t       now_tick_ms) noexcept;
 
     // ------------------------------------------------------------------
+    // Temperature path. Called once per mux step in the 20-channel
+    // sweep, with the RDAUXA reply for the chain
+    // (kLtcChainLength * 8 bytes; 6 data + 2 PEC per IC). AUX1 of
+    // each IC carries the buffered ADG731 output for the channel
+    // currently selected, so one call writes one column of
+    // cell_tempC -- specifically:
+    //
+    //   slot 0..19  on cell_tempC[m]  <- LTC_1 of module m (chain_idx 2m)
+    //   slot 20..39 on cell_tempC[m]  <- LTC_2 of module m (chain_idx 2m+1)
+    //
+    // channel_idx is the 0..19 temperature-table index (NOT the raw
+    // ADG731 channel; that's hidden behind config::kAdg731ChannelMap
+    // in BmsPollTask). Out-of-range or PEC-failed readings keep the
+    // previous value (so unpopulated NTCs don't disturb min/max/avg).
+    // Returns true on PEC-clean decode of at least one IC.
+    bool update_temperature(std::uint8_t        channel_idx,
+                            const std::uint8_t* chain_response,
+                            std::size_t         len) noexcept;
+
+    // ------------------------------------------------------------------
     // Legacy CAN data path. Retained as a no-op until BmsRxTask gets
     // retired in #73; returns false unconditionally so callers (the
     // soon-to-be-deleted task) don't see writes appear out of nowhere.

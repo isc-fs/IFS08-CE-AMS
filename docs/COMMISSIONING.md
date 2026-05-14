@@ -89,6 +89,51 @@ within FreeRTOS scheduling jitter.
 
 ---
 
+## 3b. NTC thermistor calibration (LTC6811 + ADG731)
+
+200 NTCs (5 modules × 40 per module = 20 per LTC × 2 LTCs) are
+selected through the ADG731 32:1 mux on each BMS_LITE board,
+buffered onto LTC6811 GPIO1, sampled with ADAX(GPIO1), and converted
+into °C in `BmsService::update_temperature` using the Beta model:
+
+```
+R_ntc = kNtcSeriesR * V_aux / (kNtcVrefMv - V_aux)
+1/T   = 1/T0 + (1/B) * ln(R_ntc / R_25)
+T_°C  = T - 273.15
+```
+
+`ams_config.hpp` ships placeholder values matching the BMS_LITE BOM
+(Murata NCP15XH103J, β = 3380 K, R₂₅ = 10 kΩ, series resistor 10 kΩ,
+LTC6811 VREF2 ≈ 3.0 V). Verify on the bench before relying on
+`max_tempC`:
+
+1. Bring the pack to a known soak temperature (use the ambient probe
+   on the same board if you have one — or 25 °C in still air after a
+   30-minute warm-up).
+2. Read `BmsState.cell_tempC[m][t]` for every (m, t) via the
+   telemetry frame on FDCAN1 or directly via SWD.
+3. The median across all 200 NTCs should sit within ±2 °C of the
+   reference. If it doesn't, tune `kNtcBeta` first (typical
+   correction is +/-5%), then `kNtcR25` (typical +/-2%).
+4. Re-run the soak after each tweak. Two soaks at the two extremes
+   (e.g. 25 °C and 60 °C with a hot-air gun on one cell) gives a
+   two-point fit that pins both β and R₂₅.
+
+`kAdg731ChannelMap` (20 entries) is the lookup from temperature
+index `t` (0..19) to ADG731 channel (0..31). Current map matches the
+schematic walk of `pcbs/BMS_LITE/LTC_1.kicad_sch` (commit `<#71>`):
+S1..S10 → ch 0..9 → NTC_1..NTC_10, S17..S26 → ch 16..25 → NTC_11..NTC_20.
+
+> **BMS_LITE Rev A caveat**: the LTC_2 schematic shows only 10 of
+> 20 mux channels (S1..S10 → NTC_21..NTC_30) labelled. If your board
+> mirrors LTC_1 in copper but not yet in schematic, all 20 slots
+> work; if 10 channels are physically open, the second half of
+> `cell_tempC[m][20..39]` will read as "skip" (sentinel) on every
+> sweep and stay at the 25 °C ctor default. Confirm with a continuity
+> meter on one assembled board before flashing v1.0.0.
+
+---
+
 ## 4. BMS freshness window
 
 `kBmsStaleMs` defaults to 1500 ms. The slave's typical response is

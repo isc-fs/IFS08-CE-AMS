@@ -58,7 +58,7 @@ inline constexpr std::uint32_t kTelemetryPeriodMs = 500;
 // see commit history of #72 if archaeology is needed.
 inline constexpr std::uint8_t  kBmsModuleCount      = 5;
 inline constexpr std::uint8_t  kCellsPerModule      = 19;
-inline constexpr std::uint8_t  kTempsPerModule      = 38;
+inline constexpr std::uint8_t  kTempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 
 // Accumulator bus (FDCAN1).
 inline constexpr std::uint32_t kAcuRxDcBusId     = 0x100;   // extended
@@ -161,5 +161,53 @@ inline constexpr std::uint8_t  kCellsPerLtcLower    =  9;  // LTC_2 (bottom of m
 inline constexpr std::uint8_t  kLtcChainLength      = 10;  // kBmsModuleCount * kLtcsPerModule
 inline constexpr std::uint8_t  kTempsPerLtc         = 20;  // ADG731 channels populated
 inline constexpr std::uint8_t  kTempMuxChannelsUsed = 20;  // of 32 on ADG731
+
+// ADG731 channel index (0..31) for each of the 20 temperature
+// indices we sweep. Extracted from pcbs/BMS_LITE/LTC_1.kicad_sch
+// (#71 schematic walk): NTC_1..NTC_10 sit on S1..S10, NTC_11..NTC_20
+// sit on S17..S26, with S11..S16 and S27..S31 unpopulated. The
+// 0-indexed channel passed to pack_adg731_select is one less than
+// the schematic's "S<n>" pin number. LTC_2's mux (U5) mirrors this
+// map -- some channels may be physically unconnected on the current
+// BMS_LITE revision; cell_tempC slot 20..39 will read open-circuit
+// in that case, see docs/COMMISSIONING.md §3.
+inline constexpr std::uint8_t kAdg731ChannelMap[kTempsPerLtc] = {
+    0,  1,  2,  3,  4,  5,  6,  7,  8,  9,    // S1..S10  -> NTC_1..NTC_10
+    16, 17, 18, 19, 20, 21, 22, 23, 24, 25,   // S17..S26 -> NTC_11..NTC_20
+};
+
+// NTC + voltage-divider parameters (COMMISSION before v1.0.0).
+//
+// Each NTC is wired between the ADG731 'S' input and the LTC ground
+// reference, with a pull-up resistor between V_REF (LTC6811 VREF2 ~
+// 3.0 V, buffered by U6) and the same 'S' node. The selected channel
+// is steered to the LTC's GPIO1 input, read via RDAUXA (AUX1 in
+// 100-uV units). Thermistor resistance is recovered from the
+// observed AUX voltage:
+//
+//   R_ntc = kNtcSeriesR * V_aux / (kNtcVrefMv - V_aux)
+//
+// Temperature is then derived via the Beta model:
+//
+//   1/T = 1/T0 + (1/B) * ln(R_ntc / R0)
+//
+// with T0 = 298.15 K (25 degC), R0 = kNtcR25.
+//
+// Placeholder values match the BMS_LITE BOM (Murata NCP15XH103J,
+// B = 3380 K, R25 = 10 kOhm, series resistor 10 kOhm). Real bench
+// calibration during BMS_LITE bring-up may shift these slightly --
+// procedure in docs/COMMISSIONING.md §3.
+inline constexpr std::uint32_t kNtcBeta      = 3380;   // K
+inline constexpr std::uint32_t kNtcR25       = 10000;  // Ohm
+inline constexpr std::uint32_t kNtcSeriesR   = 10000;  // Ohm
+inline constexpr std::uint16_t kNtcVrefMv    = 3000;   // LTC6811 VREF2
+inline constexpr float         kNtcT0Kelvin  = 298.15f;
+
+// Plausibility window for accepted NTC readings. Anything outside
+// this range is dropped (slot left at its previous value) so an
+// unpopulated mux channel can't drive max_tempC into orbit and trip
+// safety::kForceError on a clean pack.
+inline constexpr std::int16_t kNtcMinValidC = -40;
+inline constexpr std::int16_t kNtcMaxValidC = 150;
 
 }  // namespace ams::config
