@@ -28,9 +28,11 @@ green on the same firmware SHA.
 | Target board | STM32H733ZGTx (custom AMS PCB or Nucleo-H733ZG with the AMS pinout broken out) |
 | Programmer | ST-Link V3 or V2-1 over SWD; `STM32_Programmer_CLI` on the host PATH |
 | USB-CAN adapter | SocketCAN-compatible (canable, PCAN-USB FD with `pcan-driver`, Kvaser with kernel driver). Two channels preferred (one per bus); single-channel is OK if the test plan is run in two halves |
-| FDCAN1 wiring | PD0/PD1 on the target, terminated 120 Ω at each end of the bus |
-| FDCAN2 wiring | PB12/PB13, terminated 120 Ω. Bootloader also lives on this bus |
-| BMS slave emulator | At minimum a script that emits the 5-module poll responses on FDCAN2 with controllable cell V/T values. The host PC running `python-can` is sufficient |
+| FDCAN1 wiring | PD0/PD1 on the target, terminated 120 Ω at each end. Carries ACU traffic, AMS telemetry, **and the bootloader-trigger frame** (v1.2.0+; the trigger moved off FDCAN2 in #73). |
+| FDCAN2 wiring | PB12/PB13, terminated 120 Ω. Reserved for the bootloader's flash workflow only; the app does not start FDCAN2 in v1.2.0. |
+| BMS_LITE stack or LTC emulator | Real pack of 5 BMS_LITE modules (10 LTC6811-1, isoSPI daisy-chained) wired into the AMS SPI1 + LTC6820 master port; OR an LTC6811 emulator (e.g. Analog's eval kit, or a host-controlled rig that synthesises the chain replies) on the same connector. |
+| isoSPI cabling | Twisted-pair to the first BMS_LITE; transformer-coupled on both ends. Must withstand cable pulls (HIL-057). |
+| Logic analyser on SPI1 | PA4 (CS), PA5/6/7 (SCK/MISO/MOSI). Several Block D + Block F tests need it. |
 | ADC current input | Analog source on PF11 (ADC1 ch2). A bench DAC or a calibrated voltage source 0–3.3 V |
 | GPIO inputs | Switch / signal generator on PE9 (`DIGITAL1` / SDC) and PG7 (`Charge_Button`) |
 | GPIO output read-back | DMM or logic analyser on PD3 (`RELAY_AIR_N`), PD4 (`RELAY_AIR_P`), PD5 (`RELAY_PRECHARGE`), PF13 (`AMS_OK`), PB9 (`TIM17_CH1` fan PWM) |
@@ -61,11 +63,13 @@ populated for realism, but no high-voltage source / battery pack.
 - **AMS image** built from the firmware SHA under test (default:
   latest `dev`). `scripts/check_flash_layout.py build/AMS.elf` must
   PASS before the image is flashed.
-- **BMS slave emulator**: a small `python-can` script that responds to
-  poll IDs at `0x12C + m * 0x1E` (voltage poll) and `0x140 + m * 0x1E`
-  (temp poll) with the response frames documented in
-  [`CAN_MAP.md`](CAN_MAP.md). Cell V and temp values are tunable per
-  test.
+- **BMS source**: either the real BMS_LITE pack (5 modules, 10 LTC6811-1,
+  20 NTCs / module) or an LTC6811 chain emulator. The emulator must
+  respond to the AMS-issued commands (ADCV → settle → RDCV[A-D];
+  WRCOMM → STCOMM → ADAX(Gpio1) → RDAUXA; WRCFGA / RDCFGA) with
+  PEC-correct replies, and must allow per-IC value injection for the
+  Block D + Block F tests. Wire format reference:
+  [`BMS_LTC6811.md`](BMS_LTC6811.md).
 
 ---
 
@@ -199,18 +203,23 @@ spec, not just the .elf on the host.
 | Fail mode | Garbage → the FLASH_WRITE chunking got out of order or skipped sectors. |
 | Duration | 5 min |
 
-### HIL-009 — FDCAN filter admits all expected RX frames
+### HIL-009 — LTC6820 wakeup pulse + chain-length discovery on boot
 
-**Goal**: prove the `HAL_FDCAN_ConfigGlobalFilter` calls in
-`App_InitTask` admit every RX frame the firmware expects on both buses.
+**Goal**: prove `App_InitTask` wakes the LTC6811 daisy-chain and
+discovers exactly `kLtcChainLength = 10` ICs before the safety
+supervisor's first tick. Replaces the legacy FDCAN2 filter test
+(v1.2.0+ the BMS no longer rides on CAN, so the only filter that
+matters is FDCAN1's, exercised passively by every other test in this
+block).
 
 | | |
 |---|---|
-| Steps | 1. Attach GDB, set a breakpoint in `HAL_FDCAN_RxFifo0Callback`.<br>2. From the host, inject one frame of every documented RX type:<br>&nbsp;&nbsp;FDCAN1 — `0x100`, `0x600`, `0x18FF50E7`<br>&nbsp;&nbsp;FDCAN2 — every `CANID(m)+1..5` and `CANID(m)+21..25` for m∈{0..4}, plus the boot-trigger `0x002`<br>3. Confirm the breakpoint fires for each frame. |
-| Pass | Every injected frame triggers the callback. |
-| Fail mode | Any frame missed → the global filter is rejecting it, or wrong bus mapping. |
-| Capture | `candump` + GDB breakpoint counts. |
-| Duration | 20 min |
+| Preconditions | Real BMS_LITE stack of 5 modules wired into the AMS isoSPI port, OR a 10-IC LTC6811 emulator. PA4 CS available on a logic analyser. |
+| Steps | 1. Attach LA to PA4 (CS) and SPI1 SCK; arm on falling-edge of CS, 5 ms timebase.<br>2. Power-cycle the AMS. Wait 2 s.<br>3. Read GDB-visible `g_state_telemetry` (should be `'S'` = Start) and `BmsService::instance().snapshot().ltc_online_mask`. |
+| Pass | LA shows ten CS-low pulses ≥ 10 µs each on power-up (the chain wakeup train). After the train, one RDCFGA round-trip clocks ~84 bytes. `ltc_online_mask` reads `0x3FF` (all 10 ICs PEC-clean). `g_state_telemetry == 'S'`. |
+| Fail mode | Fewer than 10 wakeup pulses → `kLtcChainLength` mismatch in code. RDCFGA absent → `App_InitTask` hit the early-exit. Mask not `0x3FF` → ERROR latched; HIL-056 covers that failure mode in its own test. |
+| Capture | LA screenshot of CS + SCK; GDB transcript. |
+| Duration | 15 min |
 
 ---
 
@@ -272,14 +281,14 @@ supervisor responds within one period.
 ### HIL-014 — Cell undervoltage trips ERROR
 
 **Goal**: a single cell below `kCellUVmV` (2800 mV) trips the predicate
-set within one BmsRxTask cycle + one SafetyTask period.
+set within one V-poll cycle + one SafetyTask period.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run with healthy emulated BMS.<br>2. BMS emulator sends next voltage frame for module 2 with cell[5] = 2700 mV.<br>3. Within 30 ms of the frame, sample PD3/4/5 + read UART. |
-| Pass | Pins LOW within 30 ms (one BMS RX + one Safety period). UART says `s=E`. |
-| Fail mode | Pins stay HIGH after 50 ms → threshold value mismatch, or `BmsService::update_from_frame` ignored the value. |
-| Capture | `candump` + GPIO scope. |
+| Steps | 1. AMS in Run with healthy LTC6811 chain (real BMS_LITE pack or emulator).<br>2. Force module 2 / cell 5 to ~2700 mV on the emulator's next ADCV cycle (or, on a real pack, GDB-inject `cell_mV[2][5] = 2700` directly into `BmsService` between two polls).<br>3. Within 280 ms of the injection (one V-poll period + one Safety period), sample PD3/4/5 + read UART. |
+| Pass | Pins LOW within 280 ms. UART says `s=E`. |
+| Fail mode | Pins stay HIGH after 500 ms → threshold value mismatch, or `BmsService::update_from_ltc_response` dropped the value via PEC. |
+| Capture | LA + GPIO scope. |
 | Duration | 5 min |
 
 ### HIL-015 — Cell overvoltage trips ERROR
@@ -294,10 +303,10 @@ Same shape; temp frame with temp[10] = 65 °C (above `kCellOTC` = 60).
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Emulator stops responding to module 3 polls.<br>3. Wait for `kBmsStaleMs` (1500 ms) + 50 ms slack. |
-| Pass | Pins LOW within 1.6 s of the last module-3 frame. UART says `s=E`. |
-| Fail mode | Pins stay HIGH after 2 s → freshness check broken or `last_rx_tick[3]` not being updated. |
-| Duration | 5 min |
+| Steps | 1. AMS in Run.<br>2. Disconnect module 3's isoSPI input (cable pull) so chain slots 6 and 7 stop replying with PEC-clean data.<br>3. Wait for `kBmsStaleMs` (1500 ms) + one V-poll period (250 ms). |
+| Pass | Pins LOW within ~1.8 s of the cable pull. UART says `s=E`. `g_ltc_pec_err_count[6]` and `[7]` climb, but `last_rx_tick[3]` stops advancing — that's what trips the freshness predicate. |
+| Fail mode | Pins stay HIGH after 2.5 s → freshness check broken, or `update_from_ltc_response` is advancing `last_rx_tick` even on PEC-fail. |
+| Duration | 10 min |
 
 ### HIL-018 — Current sensor staleness trips ERROR
 
@@ -415,39 +424,67 @@ frames continuously. SDC asserted (PE9 HIGH).
 
 **Block precondition**: HIL-009 (filters) and HIL-020 (basic FSM transitions) passed.
 
-### HIL-030 — BMS voltage poll cadence
+### HIL-030 — ADCV broadcast cadence on SPI1
+
+**Goal**: confirm `BmsPollTask::run_voltage_poll` issues an ADCV
+broadcast every 250 ms, well within the budget.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. `candump -tA can1` (FDCAN2) for 5 s. Filter for IDs `0x12C`, `0x14A`, `0x168`, `0x186`, `0x1A4`. |
-| Pass | Each of the 5 IDs appears ~5 times per second (250 ms cadence ± 50 ms). |
-| Fail mode | Slower → BmsPollTask priority issue or timer mis-configured. |
-| Duration | 5 min |
-
-### HIL-031 — BMS temperature poll cadence
-
-Same shape as HIL-030; IDs `0x140`, `0x15E`, `0x17C`, `0x19A`, `0x1B8`; cadence 500 ms ± 100 ms.
-
-### HIL-032 — BMS voltage response parsing
-
-| | |
-|---|---|
-| Steps | 1. Emulator sends voltage frame for module 0 frame_idx 0 with cells = [3700, 3711, 3722, 3733] mV.<br>2. Attach GDB, dump `BmsService::instance().snapshot().cell_mV[0][0..3]`. |
-| Pass | Values match exactly. |
-| Fail mode | Endianness flip or wrong cell-index mapping. |
+| Steps | 1. AMS in Run.<br>2. LA on PA4 (CS) + SPI1 SCK for 5 s. Decode SPI as 8-bit MSB-first, Mode 3.<br>3. Look for the ADCV command (first two bytes match `adcv_cmd(Norm7kHz, false, All)` = `0x0360`). |
+| Pass | ADCV appears 4× per second (cadence 250 ms ± 25 ms). After each ADCV the bus is silent for ~3 ms, then four RDCV*-shaped 84-byte reads happen back-to-back. `g_bms_volt_poll_ms` (GDB) sits ≤ 10 ms; `g_bms_volt_poll_max` ≤ 15 ms across the run. |
+| Fail mode | Slower / irregular → BmsPollTask priority inversion, osTimer mis-configured, or one of the four `read_register_group` calls is failing and aborting the cycle. |
+| Capture | LA screenshot; GDB snapshot of `g_bms_volt_poll_ms` / `_max`. |
 | Duration | 10 min |
 
-### HIL-033 — BMS temperature response parsing
+### HIL-031 — Temperature mux-sweep cadence
 
-Same shape; temp frame module 2 idx 0, temps `[25, -5, 60, -20, 0, 40, -10, 30]` °C; verify `cell_tempC[2][0..7]`.
-
-### HIL-034 — Unknown BMS frame counter
+**Goal**: confirm the 20-channel ADG731 sweep runs every 500 ms and
+that all 20 mux selections actually leave the LTC's GPIO port.
 
 | | |
 |---|---|
-| Steps | 1. Send a frame with ID `0x200` (not in any module's range) on FDCAN2.<br>2. GDB-read `g_bms_rx_dropped_unknown` before / after. |
-| Pass | Counter incremented by 1. |
-| Duration | 5 min |
+| Steps | 1. AMS in Run.<br>2. LA on PA4 + SCK for 5 s.<br>3. For each 500 ms window, count complete `WRCOMM → STCOMM → ADAX(Gpio1) → RDAUXA` cycles. |
+| Pass | 20 cycles per window, ≥ 9 windows over 5 s (= 500 ms cadence ± 100 ms). Each cycle:<br>· WRCOMM transmits `cmd(2) + PEC(2) + 8 × kLtcChainLength = 84 B`<br>· STCOMM transmits `cmd(2) + PEC(2) + 30 dummy B = 34 B`<br>· ADAX is 4 B<br>· RDAUXA is `cmd(4) + 80 B` = 84 B. |
+| Fail mode | Fewer than 20 cycles/window → one mux step is stalling or aborting. Investigate which channel via `g_ltc_spi_err_count`. |
+| Capture | LA + `g_ltc_spi_err_count` before / after. |
+| Duration | 15 min |
+
+### HIL-032 — RDCV[A-D] decode round-trip
+
+**Goal**: a synthesised cell-voltage chain reply lands in
+`BmsService::snapshot().cell_mV` at the right slot.
+
+| | |
+|---|---|
+| Steps | 1. With the BMS emulator (or a real pack at known voltages) producing `cell_mV[2][7] = 3711`, `cell_mV[4][18] = 3733`, AMS in Run.<br>2. GDB-read `BmsService::instance().snapshot().cell_mV[2][7]` and `[4][18]`. |
+| Pass | Within ±5 mV (LTC6811 LSB is 100 µV, decoder rounds to mV). `ltc_online_mask` = `0x3FF`. |
+| Fail mode | Wrong slot → cell mapping in `update_from_ltc_response` is off; cross-check against `BMS_LTC6811.md §2`. Wrong value → endianness / 100 µV→mV conversion error. |
+| Duration | 10 min |
+
+### HIL-033 — RDAUXA decode round-trip (temperature)
+
+**Goal**: feed a known AUX1 voltage on one LTC channel and confirm
+the °C value lands in `cell_tempC`.
+
+| | |
+|---|---|
+| Steps | 1. With a calibrated bench DAC (or pot) drive the LTC's GPIO1 input on module 2 LTC_1 directly with 1.5 V (= 25 °C nominal under the placeholder Beta-model constants).<br>2. AMS in Run; wait 1 s for a full temperature sweep.<br>3. GDB-read `cell_tempC[2][k]` for the temp-index `k` whose `kAdg731ChannelMap[k]` matches the mux address you selected. |
+| Pass | Reads 25 °C ± 2 °C. |
+| Fail mode | Wrong slot → channel-index mapping (`kAdg731ChannelMap`) wrong or LTC_1 vs LTC_2 swap. Wrong value → β / R₂₅ / V_ref off; tune per `COMMISSIONING.md §3b`. |
+| Duration | 20 min |
+
+### HIL-034 — PEC-error counter rises on injected corruption
+
+**Goal**: corrupting a single RDCV* reply on the wire increments
+`g_ltc_pec_err_count[ic]` but does NOT cause a state transition.
+
+| | |
+|---|---|
+| Steps | 1. AMS in Run; healthy chain.<br>2. With a benchtop LTC6811 emulator, schedule one cell-voltage reply for IC 4 to be returned with its last PEC byte XOR `0x01`.<br>3. GDB-read `g_ltc_pec_err_count[4]` before / after, and `g_state_telemetry`. |
+| Pass | `g_ltc_pec_err_count[4]` incremented by exactly 1. `g_state_telemetry` unchanged (still `'R'`). `last_rx_tick[2]` (module 2 = IC 4's module) did NOT advance for that cycle; next clean cycle advances it normally. |
+| Fail mode | State transitioned → PEC error is incorrectly tripping `FORCE_ERROR`. Counter didn't move → decoder isn't checking PEC. |
+| Duration | 10 min |
 
 ### HIL-035 — ACU 0x100 DC bus parsing
 
@@ -489,12 +526,12 @@ Same shape; temp frame module 2 idx 0, temps `[25, -5, 60, -20, 0, 40, -10, 30]`
 | Pass | Frame appears every 250 ms ± 50 ms. Payload [1] approximately 17 (= 17 A & 0xFF). |
 | Duration | 5 min |
 
-### HIL-040 — Charger-suppress: TX 0x12C and BMS poll stop in Charge
+### HIL-040 — Charger-suppress: TX 0x12C stops in Charge; isoSPI polling continues
 
 | | |
 |---|---|
-| Steps | 1. AMS in Charge (after HIL-021 / HIL-037).<br>2. `candump` FDCAN1 and FDCAN2 for 2 s. |
-| Pass | No 0x12C ext frames on FDCAN1 (suppressed when charging). BMS voltage polls on FDCAN2 also stop (legacy parity for "no balancing during charge"). 0x450 (current) still emits every 250 ms. |
+| Steps | 1. AMS in Charge (after HIL-021 / HIL-037).<br>2. `candump` FDCAN1 for 2 s. LA on PA4 / SCK for the same 2 s. |
+| Pass | No 0x12C ext frames on FDCAN1 (legacy min-V telemetry suppressed when charging). 0x450 (current) still emits every 250 ms. isoSPI traffic continues unaffected — ADCV cadence (HIL-030) and mux sweep (HIL-031) are unchanged; balancing now lives on the LTC chain so the legacy "no FDCAN2 BMS poll during charge" rule no longer applies. |
 | Duration | 5 min |
 
 ---
@@ -511,24 +548,24 @@ frame, opens AIRs, reboots, BL takes over.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Probe PD3/4/5 + UART.<br>3. `cansend can1 002#B007AD11` (FDCAN2). |
-| Pass | Within 15 ms: PD3/4/5 all LOW (Relays::open_all fired). Within 1 s: BL DISCOVER reply on FDCAN2 confirms BL is alive. |
-| Fail mode | Pins stay HIGH → boot-trigger not matching, BmsRxTask not dispatching, or `request_reboot` is not actually running.<br>BL doesn't respond → BL didn't see the BKP0R magic, or BL is in auto-jump and hands back to app. |
-| Capture | Logic analyser on PD3/4/5 + NRST + `candump` of FDCAN2. |
+| Steps | 1. AMS in Run.<br>2. Probe PD3/4/5 + UART.<br>3. `cansend can0 002#B007AD11` (FDCAN1 — the trigger moved off FDCAN2 in v1.2.0 (#73)). |
+| Pass | Within 15 ms: PD3/4/5 all LOW (Relays::open_all fired). Within 1 s: BL DISCOVER reply on FDCAN2 confirms BL is alive (the BL still operates on FDCAN2 after the magic-reset; only the in-band trigger moved). |
+| Fail mode | Pins stay HIGH → boot-trigger not matching, AcuCanTask not dispatching, or `request_reboot` is not actually running.<br>BL doesn't respond → BL didn't see the BKP0R magic, or BL is in auto-jump and hands back to app. |
+| Capture | Logic analyser on PD3/4/5 + NRST + `candump` of FDCAN1 (trigger) and FDCAN2 (BL reply). |
 | Duration | 10 min |
 
 ### HIL-042 — Wrong-bus trigger ignored
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Send the exact `002#B007AD11` payload **on FDCAN1** instead of FDCAN2. |
+| Steps | 1. AMS in Run.<br>2. Send the exact `002#B007AD11` payload **on FDCAN2** (the app no longer listens on FDCAN2 in v1.2.0 (#73); only the bootloader claims the bus post-reset). |
 | Pass | No reboot, no relay change, UART continues to emit Run telemetry. |
-| Fail mode | Reboot happens → the `CanFrame::bus` check in `matches_trigger` is broken. |
+| Fail mode | Reboot happens → the `CanFrame::bus` check in `matches_trigger` is broken, or FDCAN2 RX-FIFO0 notification got re-activated somewhere in app code. |
 | Duration | 5 min |
 
 ### HIL-043 — Wrong-payload trigger ignored
 
-Parametric. Repeat with each of these payloads on FDCAN2 id 0x002, DLC=4:
+Parametric. Repeat with each of these payloads on FDCAN1 id 0x002, DLC=4:
 
 | Payload | Description |
 |---|---|
@@ -607,15 +644,12 @@ so AIRs are open for the entire reset window.
 | Pass | All 10 round-trips succeed; no hung state requires manual power-cycle. |
 | Duration | 30 min |
 
-### HIL-052 — BMS bus fuzz
+### HIL-052 — isoSPI fuzz (DEPRECATED for v1.2.0+)
 
-| | |
-|---|---|
-| Steps | 1. AMS in Run.<br>2. `python-can` sends 10 000 random standard-ID frames on FDCAN2 with random payloads over 60 s.<br>3. Throughout, watch UART + GPIO. |
-| Pass | AMS stays in Run (no fault from a malformed frame). `g_bms_rx_dropped_unknown` increments accordingly. No hardfault. |
-| Fail mode | Any reset, any spontaneous transition → `BmsService` or `Bootloader::matches_trigger` has a corner case that does the wrong thing on random input. |
-| Capture | UART log + GDB attach if a reset occurs. |
-| Duration | 65 min |
+> Originally a CAN-bus fuzz on FDCAN2; the BMS no longer rides on CAN
+> in v1.2.0. The equivalent stress is HIL-058 (PEC-error storm) plus
+> HIL-057 (cable pull). Kept here under the legacy ID so historic
+> sign-offs stay readable; do not re-run.
 
 ### HIL-053 — ACU bus fuzz
 
@@ -637,12 +671,92 @@ Same shape on FDCAN1 with extended + standard IDs.
 | Pass | The very first LOW edge trips ERROR (HIL-019). Subsequent edges do nothing — ERROR is sticky. AMS does not glitch, oscillate, or reset spontaneously. |
 | Duration | 10 min |
 
+### HIL-056 — Chain-length mismatch on boot
+
+**Goal**: missing module on power-up trips ERROR before the safety
+supervisor's first tick. This is the boot-time invariant the v1.2.0
+firmware enforces in `App_InitTask`.
+
+| | |
+|---|---|
+| Preconditions | Real BMS_LITE pack OR LTC6811 emulator. |
+| Steps | 1. Disconnect module 5's isoSPI input cable (or program the emulator to leave chain slots 8 + 9 silent).<br>2. Power-cycle the AMS. Wait 1 s.<br>3. Read GDB-visible `g_state_telemetry`, `RTC->BKP1R`, and PD3/4/5. |
+| Pass | `g_state_telemetry == 'E'` (= Error). `RTC->BKP1R == 0xA115EE51`. PD3/4/5 all LOW within 1 s of power-on. Re-attach the cable + power-cycle once more → backup-domain power gone → comes up in Start (latch cleared). |
+| Fail mode | Boot to Start with 8 ICs discovered → `count_pec_valid_segments` is forgiving where it shouldn't be. Stays in Start past 2 s → `App_InitTask` skipped the chain-length gate. |
+| Capture | GDB transcript + LA on PA4 + UART log. |
+| Duration | 15 min |
+
+### HIL-057 — isoSPI cable unplugged mid-Run
+
+**Goal**: complement to HIL-017. Yanking the chain while running
+trips ERROR through the freshness predicate (not through the boot
+gate, which is one-shot).
+
+| | |
+|---|---|
+| Steps | 1. AMS in Run, all 5 modules online.<br>2. Pull the master-end isoSPI cable.<br>3. Within `kBmsStaleMs + 250 ms` = 1750 ms, sample PD3/4/5 + UART. |
+| Pass | Pins LOW within 1.8 s; UART says `s=E`. `g_ltc_pec_err_count[*]` and `g_ltc_spi_err_count` both rise during the window. |
+| Fail mode | Pins stay HIGH past 2.5 s → freshness predicate broken or `last_rx_tick` is being touched by something other than a clean poll. |
+| Duration | 10 min |
+
+### HIL-058 — PEC-error storm: counters climb, no spurious state change
+
+**Goal**: confirm the architecture's "transient PEC noise must not
+trip FORCE_ERROR" invariant against a flood of bad PECs.
+
+| | |
+|---|---|
+| Steps | 1. AMS in Run. Healthy chain.<br>2. With an LTC6811 emulator (or signal-injection rig that XORs one byte on every reply), corrupt **every** RDCV*/RDAUXA reply for 5 s.<br>3. Throughout: GDB-snapshot `g_state_telemetry` every 100 ms; record `g_ltc_pec_err_count` totals. |
+| Pass | `g_state_telemetry` stays `'R'` for the first ~1.5 s (= `kBmsStaleMs`), then transitions to `'E'` via the freshness predicate (no module's `last_rx_tick` could advance). `g_ltc_pec_err_count[*]` total climbs by ~80 (= 4 groups × 10 ICs × ~2 polls). No hardfault, no IWDG reset. |
+| Fail mode | Transition to `'E'` happens earlier than 1.5 s → some path other than freshness is tripping. Hardfault → driver doesn't tolerate corrupt input. |
+| Duration | 15 min |
+
+### HIL-059 — ADG731 mux address bit-order
+
+**Goal**: confirm `ltc6811::pack_adg731_select` matches the
+datasheet's 8-bit serial format (EN bit, A4..A0, don't-cares).
+
+| | |
+|---|---|
+| Steps | 1. Connect a calibrated bench resistor (e.g. 10 kΩ, gives V_aux ≈ 1.5 V) to the LTC_1 mux input wired to ADG731 channel 5 (= S6 on the schematic, → temp-index 5 in `kAdg731ChannelMap`).<br>2. AMS in Run. Wait 1 s for a full mux sweep.<br>3. GDB-read `cell_tempC[m][5]` for the module whose LTC_1 carries the rigged channel. |
+| Pass | Reads ~25 °C (matches the 10 kΩ NTC-equivalent at room temperature). |
+| Fail mode | Reads 25 °C on the wrong slot index (e.g. slot 4 or 6) → mux-address packing has a bit-flip vs the ADG731 truth table. |
+| Capture | LA on the LTC GPIO/COMM pin during STCOMM; verify the 8-bit shift contains `1<<7 | (5<<1)` = `0x8A`. |
+| Duration | 20 min |
+
+### HIL-060 — Balancing FET activation in Charge
+
+**Goal**: the full WRCFGA→RDCFGA round-trip — an unbalanced cell in
+Charge gets its DCC bit set, observable on the next round-trip read.
+
+| | |
+|---|---|
+| Steps | 1. AMS in Charge (after HIL-021/HIL-037), all modules healthy.<br>2. With the emulator, set `cell_mV[2][7] = 4150` while every other cell sits at 4100 mV. Wait 2 s (one balance window + one V-poll).<br>3. Issue an RDCFGA over the chain (via GDB invoking `Bus::read_register_group(pack_command(kCmdRDCFGA), …)`).<br>4. Decode the reply: chain slot 4 (module 2 LTC_1) should have `DCC[8]` set in CFGR4. |
+| Pass | DCC bit for cell channel 8 of chain slot 4 reads `1`. Other DCC bits across the chain read `0`. `g_balance_cycles_active` is incrementing. |
+| Fail mode | DCC bit set on the wrong cell channel → cell-to-DCC mapping in `maybe_run_balance_update` is off (cross-check §8 of `BMS_LTC6811.md`). Bit unset → balance policy lockout (check `max_tempC`, `kBalanceDeltaMv`). |
+| Duration | 25 min |
+
+### HIL-061 — Balancing inhibited above kBalanceTempMax
+
+**Goal**: thermal-lockout rule — even with imbalance, no DCC bits
+should be set once `max_tempC > kBalanceTempMax`.
+
+| | |
+|---|---|
+| Steps | 1. Start from HIL-060's state: one cell at 4150 mV, DCC bit set.<br>2. Heat one NTC on any module past `kBalanceTempMax` (default 50 °C) with a hot-air gun. Wait for the next temperature sweep + balance window (1 s).<br>3. RDCFGA round-trip; decode DCC bits across the chain. |
+| Pass | All DCC bits read `0`. UART continues `s=C`. `g_balance_cycles_total` keeps incrementing (we did send a WRCFGA), but `g_balance_cycles_active` does NOT increase during the heated window. |
+| Fail mode | DCC bit still set → `compute_mask`'s thermal lockout isn't firing, or `max_tempC` isn't being recomputed. |
+| Duration | 20 min |
+
 ---
 
 ## Acceptance criteria
 
-For the v1.1.0-bootloader hardware-acceptance gate (issues #53 and
-#54), the following tests **must** pass on the same firmware SHA:
+Two gates apply to this document, stacked on top of each other.
+
+### v1.1.0-bootloader gate (issues #53 and #54)
+
+The following tests **must** pass on the same firmware SHA:
 
 | Test | Why it's mandatory |
 |---|---|
@@ -677,6 +791,30 @@ HIL-030–040, HIL-044, HIL-051–055) is **strongly recommended** but
 not a hard gate. A test marked recommended that fails is a bug; the
 build is still releasable only if the responsible engineer signs off
 on the residual risk.
+
+### v1.2.0-ltc6811 gate (LTC6811 BMS migration)
+
+On top of the v1.1.0 mandatory list (the legacy CAN-bound BMS tests
+that survived the rewrite stay applicable — they're now expressed in
+isoSPI terms), the following v1.2.0 tests **must** pass on the same
+SHA before the milestone tag goes on `main`:
+
+| Test | Why it's mandatory |
+|---|---|
+| HIL-009 | Wakeup pulse train + chain-length discovery (10 ICs) |
+| HIL-030 | ADCV cadence stays inside the 50 ms budget |
+| HIL-031 | 20-channel mux sweep runs in full |
+| HIL-032 | RDCV[A-D] cells land in the right slot |
+| HIL-033 | RDAUXA + Beta-model produces a sane temperature |
+| HIL-056 | Missing module on boot trips ERROR before relays could close |
+| HIL-057 | Cable yank mid-Run trips ERROR via freshness |
+| HIL-058 | PEC-error storm does NOT trip FORCE_ERROR (transient noise resilience) |
+| HIL-060 | WRCFGA → RDCFGA round-trip confirms balancing FET path works |
+
+HIL-034 (PEC error counter), HIL-059 (ADG731 bit-order), HIL-061
+(balancing thermal lockout) are **strongly recommended** for the
+v1.2.0 gate but not hard blockers — they validate behaviours that
+also fail-safe through the existing freshness / lockout paths.
 
 ---
 
