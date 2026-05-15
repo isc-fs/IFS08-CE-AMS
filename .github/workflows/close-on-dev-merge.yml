@@ -37,13 +37,31 @@ jobs:
             /* GitHub's own closing keywords:
                  close, closes, closed, fix, fixes, fixed,
                  resolve, resolves, resolved
-               Followed by an optional colon and `#N`. */
-            const pattern = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
+               Followed by an optional colon and `#N`.
+
+               GitHub's native parser only matches one issue per
+               keyword, so "Closes #75, #76, #77" auto-closes #75
+               only. This workflow used to inherit that limitation;
+               we now also consume comma- and "and"-separated lists
+               that immediately follow the anchor match ("Closes #1,
+               #2 and #3", "Fixes #4, and #5", etc.). The sticky-y
+               flag on the continuation regex forces it to match at
+               the exact position the previous match ended -- a
+               stray "#99" later in the text doesn't get pulled in. */
+            const anchor       = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
+            const continuation = /\s*(?:,\s*and|,|and)\s*#(\d+)/giy;
 
             const text = `${title}\n${body}`;
             const numbers = new Set();
-            for (const m of text.matchAll(pattern)) {
+            let m;
+            while ((m = anchor.exec(text)) !== null) {
               numbers.add(parseInt(m[1], 10));
+              continuation.lastIndex = anchor.lastIndex;
+              let cm;
+              while ((cm = continuation.exec(text)) !== null) {
+                numbers.add(parseInt(cm[1], 10));
+                anchor.lastIndex = continuation.lastIndex;
+              }
             }
 
             if (numbers.size === 0) {
