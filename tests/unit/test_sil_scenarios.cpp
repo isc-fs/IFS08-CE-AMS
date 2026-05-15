@@ -24,8 +24,11 @@ struct Harness {
     ams::CurrentState cur{};
     ams::VehicleState veh{};
     bool              sdc_closed       = true;
-    std::uint32_t     now              = 1000;
-    std::uint32_t     state_entry_tick = 1000;
+    // Start past kSafetyBootGraceMs (2000) so the safety predicates
+    // are active. Scenarios that need the grace itself live in
+    // test_safety_predicates.cpp.
+    std::uint32_t     now              = 3000;
+    std::uint32_t     state_entry_tick = 3000;
     ams::fsm::State   state            = ams::fsm::State::Start;
 
     Harness() {

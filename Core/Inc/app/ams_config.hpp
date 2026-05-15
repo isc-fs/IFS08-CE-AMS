@@ -38,6 +38,22 @@ inline constexpr std::uint8_t  kAllModulesMask = 0x1F;  // 5 modules present
 // ---------------------------------------------------------------------------
 
 inline constexpr std::uint32_t kSafetyPeriodMs    =  10;
+
+// Window after osKernelStart during which SafetyTask suppresses the
+// freshness / range predicates that depend on external data sources
+// (BMS responses, ADC samples, VCU heartbeat). At t=0 every service's
+// `last_*_tick` is 0; without a grace, the first SafetyTask iteration
+// would fault and withhold the watchdog refresh -> IWDG reset within
+// ~100 ms. The immediate-safety predicates (FORCE_ERROR, SDC open)
+// remain active during the grace; only data-presence predicates are
+// suppressed. Must be >= the longest service warm-up:
+//   - BmsPollTask first voltage poll: kBmsPollVoltMs (250 ms)
+//   - CurrentTask first ADC sample:   kCurrentPeriodMs (50 ms)
+//   - AcuCanTask first VCU 0x100:     uncontrolled, but typically
+//                                     present from the vehicle bus
+// 2000 ms gives generous margin for all of the above and slow CAN
+// startup; tune down if a faster boot becomes critical.
+inline constexpr std::uint32_t kSafetyBootGraceMs = 2000;
 inline constexpr std::uint32_t kStatePeriodMs     =  20;
 inline constexpr std::uint32_t kCurrentPeriodMs   =  50;
 inline constexpr std::uint32_t kAcuHeartbeatMs    = 100;
