@@ -106,10 +106,10 @@ const osThreadAttr_t AcuCanTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
-/* Definitions for CurrentTask */
-osThreadId_t CurrentTaskHandle;
-const osThreadAttr_t CurrentTask_attributes = {
-  .name = "CurrentTask",
+/* Definitions for CurrentSensorTask */
+osThreadId_t CurrentSensorTaskHandle;
+const osThreadAttr_t CurrentSensorTask_attributes = {
+  .name = "CurrentSensorTask",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
@@ -167,7 +167,7 @@ void StartSafetyTask(void *argument);
 void StartStateTask(void *argument);
 void StartBmsPollTask(void *argument);
 void StartAcuCanTask(void *argument);
-void StartCurrentTask(void *argument);
+void StartCurrentSensorTask(void *argument);
 void StartTelemetryTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -296,8 +296,8 @@ int main(void)
   /* creation of AcuCanTask */
   AcuCanTaskHandle = osThreadNew(StartAcuCanTask, NULL, &AcuCanTask_attributes);
 
-  /* creation of CurrentTask */
-  CurrentTaskHandle = osThreadNew(StartCurrentTask, NULL, &CurrentTask_attributes);
+  /* creation of CurrentSensorTask */
+  CurrentSensorTaskHandle = osThreadNew(StartCurrentSensorTask, NULL, &CurrentSensorTask_attributes);
 
   /* creation of TelemetryTask */
   TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
@@ -1005,20 +1005,20 @@ void StartAcuCanTask(void *argument)
   /* USER CODE END StartAcuCanTask */
 }
 
-/* USER CODE BEGIN Header_StartCurrentTask */
+/* USER CODE BEGIN Header_StartCurrentSensorTask */
 /**
-* @brief Function implementing the CurrentTask thread.
+* @brief Function implementing the CurrentSensorTask thread.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_StartCurrentTask */
-void StartCurrentTask(void *argument)
+/* USER CODE END Header_StartCurrentSensorTask */
+void StartCurrentSensorTask(void *argument)
 {
-  /* USER CODE BEGIN StartCurrentTask */
-  ams_current_task_run(argument);
-  /* Unreachable: ams_current_task_run() never returns. */
+  /* USER CODE BEGIN StartCurrentSensorTask */
+  ams_current_sensor_task_run(argument);
+  /* Unreachable: ams_current_sensor_task_run() never returns. */
   for(;;) { osDelay(1); }
-  /* USER CODE END StartCurrentTask */
+  /* USER CODE END StartCurrentSensorTask */
 }
 
 /* USER CODE BEGIN Header_StartTelemetryTask */
