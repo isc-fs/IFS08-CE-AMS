@@ -92,7 +92,51 @@ phases:
       - name: feat/19-flash-relocation
         scope: app at 0x08020000, BKP1R for ErrorLatch, CI flash-layout guard
       - name: feat/20-bootloader-trigger
-        scope: CAN-triggered jump to bootloader (FDCAN2 id 0x002 + 4 B magic)
+        scope: CAN-triggered jump to bootloader (FDCAN1 id 0x002 + 4 B magic)
+
+  - number: 7
+    title: LTC6811-1 BMS migration
+    tag: v1.2.0-ltc6811
+    branches:
+      - name: feat/67-ltc6811-driver
+        scope: PEC15 + LTC6811 register-group encoders/decoders + chain discovery
+      - name: feat/68-ltc6820-bus
+        scope: LTC6820 isoSPI master wrapper around HAL_SPI + CS pulse train
+      - name: feat/69-chain-discovery
+        scope: LTC chain wakeup + length discovery on boot
+      - name: feat/70-bms-via-ltc6811
+        scope: replace BmsService data source with LTC6811-1 register groups
+      - name: feat/71-temp-acquisition
+        scope: NTC temperature acquisition via ADG731 mux (200 NTCs)
+      - name: feat/72-bms-poll-task-rewrite
+        scope: rewrite BmsPollTask to drive LTC6811 over isoSPI
+      - name: feat/73-retire-bms-rx-task
+        scope: retire BmsRxTask + bms_rx_queue, move boot-trigger to FDCAN1
+      - name: feat/74-cell-balancing
+        scope: passive cell balancing via WRCFGA DCC bits
+
+  - number: 8
+    title: Simplification refactor
+    tag: v1.3.0-flatten
+    branches:
+      - name: fix/13-safety-boot-grace
+        scope: kSafetyBootGraceMs 2 s gate to stop IWDG reset loop at first iter
+      - name: fix/14-iwdg-latch-loop
+        scope: refresh watchdog on latched path so chip stays alive for diag
+      - name: fix/15-hil-stub-clear-latch
+        scope: ErrorLatch::clear() + skip LTC discovery under AMS_BMS_HIL_STUB
+      - name: fix/17-hil-stub-pre-scheduler-clear
+        scope: pre-scheduler RTC_BKP_DR1 wipe to win the race with SafetyTask
+      - name: fix/18-pin-map-schematic
+        scope: align pin map with v1.2 daughterboard (PB4-7); retire SDC predicate
+      - name: feat/16-bl-jump-reason-node-id
+        scope: jump-reason log in BKP2R + node ID in firmware_info.reserved[0]
+      - name: refactor/19-services-to-globals
+        scope: phase 1+2 - drop service mutexes + relocate HIL_STUB to data source
+      - name: refactor/19-phase3-main-task
+        scope: phase 3 - collapse SafetyTask + StateTask + TelemetryTask into MainTask
+      - name: refactor/19-phase5-current-rename
+        scope: phase 5 - rename CurrentTask -> CurrentSensorTask
 
 sidequests:
   - title: Workflow polish

@@ -59,10 +59,11 @@ Required for merge:
    `close-on-dev-merge.yml` workflow needs it to auto-close on merge.
 2. **CI green** — build, unit tests, SIL tests (once they exist).
 3. **One approving review** from another team member.
-4. **`safety-critical` label** if the PR touches `SafetyTask`,
-   `RelayDriver`, the FSM, or any safety predicate. PRs with this label
-   need explicit confirmation that `docs/ARCHITECTURE.md` invariants still
-   hold.
+4. **`safety-critical` label** if the PR touches `MainTask`
+   (the consolidated safety + FSM + telemetry task in
+   `safety_task.cpp`), `RelayDriver`, the FSM, or any safety
+   predicate. PRs with this label need explicit confirmation that
+   `docs/ARCHITECTURE.md` invariants still hold.
 
 ---
 
@@ -143,15 +144,17 @@ This is the only file in the repo with a hard review bar.
 
 - The PR description must list every safety predicate added, removed, or
   changed.
-- The IWDG-feed point in `SafetyTask::step` must remain on the clean path
-  only — feeding on the fault path defeats the whole watchdog design.
-- New predicates that depend on a producer's freshness MUST live behind
-  the boot-grace gate (`now_tick < kSafetyBootGraceMs`) so the chip
-  doesn't latch ERROR at t = 0 (invariant 7 in
+- The IWDG-feed point in `MainTask` is on the clean path **and** on
+  the latched-fault path (the latter stays alive so the operator
+  can read telemetry from a latched state — see invariant 5 in
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1, and PR #107
+  for the loop bug this avoids). Don't move it.
+- New predicates that depend on a producer's freshness MUST live
+  behind the boot-grace gate (`now_tick < kSafetyBootGraceMs`) so
+  the chip doesn't latch ERROR at t = 0 (invariant 7 in
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1).
-- New predicates that are immediate (event flags, GPIO inputs) must
-  stay outside the grace gate so SDC-open and FORCE_ERROR trip on the
-  first iteration.
+- New predicates that are immediate (`force_error_set`) must stay
+  outside the grace gate so they trip on the first iteration.
 - Two approving reviews from team members familiar with FS safety rules,
   not one.
 - A captured FSM-transition trace from SIL is attached as evidence.
@@ -167,7 +170,8 @@ Full rules in `docs/ARCHITECTURE.md` § 11. Highlights:
 - No runtime heap allocation after `osKernelStart`.
 - One service per file pair, singleton via `instance()`.
 - `enum class` for FSM states, `constexpr` for every constant.
-- `ScopedMutex` always — no raw `osMutexAcquire`.
+- Single-writer / many-reader shared state — no mutexes in app
+  code (refactor/19 phase 1).
 - Task entry points are `extern "C"`.
 
 ---

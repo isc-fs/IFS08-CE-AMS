@@ -288,8 +288,10 @@ Source: `BMS_MOD::parse()` `class_bms.cpp:170`,
 ## TX — AMS telemetry (FDCAN1)
 
 Three single-purpose 8-byte frames emitted every **500 ms** by
-`TelemetryTask`. Bench tools and the VCU consume these instead of
-the legacy UART telemetry line (the UART path was dropped in feat/22).
+`MainTask` (the consolidated SafetyTask + StateTask + TelemetryTask
+since refactor/19 phase 3). Bench tools and the VCU consume these
+instead of the legacy UART telemetry line (the UART path was
+dropped in feat/22).
 
 Encoders are pure-logic in
 [`Core/Inc/app/telemetry_encoders.hpp`](../Core/Inc/app/telemetry_encoders.hpp);
@@ -303,7 +305,7 @@ Standard 11-bit. DLC 8. Cadence 500 ms.
 | Byte | Field | Notes |
 |:---:|---|---|
 | 0 | `state` | `ams::fsm::State` enum (0..5: Start, Precharge, Transition, Run, Charge, Error) |
-| 1 | `ams_ok` | GPIO PF13 read-back; 0 or 1 |
+| 1 | `ams_ok` | GPIO PB4 read-back; 0 or 1 |
 | 2 | `module_online_mask` | Low byte of `BmsState.module_online_mask`. 0x1F = all 5 modules healthy |
 | 3 | reserved | 0 |
 | 4-5 | `min_cell_mV` | Big-endian uint16, mV |
@@ -329,7 +331,7 @@ Standard 11-bit. DLC 8. Cadence 500 ms.
 | 2 | `avg_tempC` | Signed int8, °C |
 | 3-4 | `dc_bus_V` | Little-endian uint16, V (from `VehicleState.dc_bus_V`) |
 | 5-6 | reserved | 0 |
-| 7 | `heartbeat` | Wraparound 8-bit counter, increments per TelemetryTask cycle. Useful for detecting dropped frames on the receiver. |
+| 7 | `heartbeat` | Wraparound 8-bit counter, increments per MainTask telemetry cycle (500 ms). Useful for detecting dropped frames on the receiver. |
 
 ---
 

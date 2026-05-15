@@ -34,8 +34,8 @@ green on the same firmware SHA.
 | isoSPI cabling | Twisted-pair to the first BMS_LITE; transformer-coupled on both ends. Must withstand cable pulls (HIL-057). |
 | Logic analyser on SPI1 | PA4 (CS), PA5/6/7 (SCK/MISO/MOSI). Several Block D + Block F tests need it. |
 | ADC current input | Analog source on PF11 (ADC1 ch2). A bench DAC or a calibrated voltage source 0–3.3 V |
-| GPIO inputs | Switch / signal generator on PE9 (`DIGITAL1` / SDC) and PG7 (`Charge_Button`) |
-| GPIO output read-back | DMM or logic analyser on PD3 (`RELAY_AIR_N`), PD4 (`RELAY_AIR_P`), PD5 (`RELAY_PRECHARGE`), PF13 (`AMS_OK`), PB9 (`TIM17_CH1` fan PWM) |
+| GPIO inputs | Switch / signal generator on PG7 (`Charge_Button`). The legacy `DIGITAL1` SDC sense on PE9 was retired in PR #117 — the AMS no longer GPIO-senses the SDC. |
+| GPIO output read-back | DMM or logic analyser on PB6 (`RELAY_AIR_N`), PB5 (`RELAY_AIR_P`), PB7 (`RELAY_PRECHARGE`), PB4 (`AMS_OK`), PB9 (`TIM17_CH1` fan PWM). Pin map aligned with the v1.2 daughterboard schematic in PR #117. |
 | Power | 5 V or 3.3 V regulated rail to the target; VBAT-only test capability for HIL-006 |
 
 **HV must not be connected.** Every test below validates the MCU's
@@ -51,7 +51,7 @@ populated for realism, but no high-voltage source / battery pack.
 | `python-can` | Drive the BMS emulator and inject ACU-bus stimuli |
 | `cansend` / `candump` | Quick one-off frames and bus capture |
 | `screen` or `picocom` | UART2 telemetry capture (default 115200 8N1) |
-| `arm-none-eabi-gdb` + OpenOCD | Fault-injection (hang SafetyTask, etc.), backtrace on hardfault |
+| `arm-none-eabi-gdb` + OpenOCD | Fault-injection (hang MainTask, etc.), backtrace on hardfault |
 | `scripts/check_flash_layout.py` | Pre-flight sanity for any custom build |
 
 ### 1.3 Fixture firmware
@@ -104,10 +104,10 @@ holds without any software involvement.
 
 | | |
 |---|---|
-| Steps | 1. Erase the entire flash with `STM32_Programmer_CLI -e all`.<br>2. Power-cycle the board.<br>3. Within 50 ms of power-on, measure PD3, PD4, PD5. |
+| Steps | 1. Erase the entire flash with `STM32_Programmer_CLI -e all`.<br>2. Power-cycle the board.<br>3. Within 50 ms of power-on, measure PB6, PB5, PB7. |
 | Pass | All three pins read 0 V (LOW). |
 | Fail mode | Any pin asserted → either the GPIOs are not in their reset state (HW issue) or a stray default-flashed image is closing relays. |
-| Capture | Multimeter / logic-analyser sample on PD3/4/5. |
+| Capture | Multimeter / logic-analyser sample on PB5/6/7. |
 | Duration | 2 min |
 
 ### HIL-002 — Bootloader programmed and responsive
@@ -145,7 +145,7 @@ comes up in `Start`.
 |---|---|
 | Preconditions | HIL-003 passed (app flashed). |
 | Steps | 1. `screen /dev/cu.usbmodemX 115200` attached.<br>2. Hard-reset the target.<br>3. Wait 2 s. |
-| Pass | UART emits `AMS s=S …` line (state=Start = 'S') within 1 s of reset. PD3/4/5 read LOW (relays open per HIL-001 + initial fan duty 0 % per state_task `kFanDuty[Start]`). |
+| Pass | UART emits `AMS s=S …` line (state=Start = 'S') within 1 s of reset. PB5/6/7 read LOW (relays open per HIL-001 + initial fan duty 0 % per state_task `kFanDuty[Start]`). |
 | Fail mode | UART silent → app crashed or VTOR misaligned. Pull SWD, read stack, check `SCB->VTOR`. |
 | Capture | UART log file, GPIO read-back. |
 | Duration | 2 min |
@@ -227,26 +227,26 @@ block).
 
 **Block precondition**: HIL-004 passed (AMS boots and runs).
 
-### HIL-010 — SafetyTask 10 ms cadence
+### HIL-010 — MainTask 10 ms cadence
 
-**Goal**: SafetyTask actually runs at its declared 10 ms period.
+**Goal**: MainTask actually runs at its declared 10 ms period.
 
 | | |
 |---|---|
-| Steps | 1. (One-time firmware tweak in a debug build, or via the existing telemetry timestamp) Capture `osKernelGetTickCount` deltas across SafetyTask iterations.<br>2. Run for 60 s. |
+| Steps | 1. (One-time firmware tweak in a debug build, or via the existing telemetry timestamp) Capture `osKernelGetTickCount` deltas across MainTask iterations.<br>2. Run for 60 s. |
 | Pass | Mean period = 10 ms ± 1 ms; max period ≤ 12 ms; no period > 15 ms. |
 | Fail mode | Long periods → priority inversion, or another task hogging CPU. |
 | Capture | Time-series log of periods. |
 | Duration | 10 min |
 
-### HIL-011 — IWDG resets the chip if SafetyTask hangs
+### HIL-011 — IWDG resets the chip if MainTask hangs
 
 **Goal**: invariant 4 — watchdog discipline enforces a HW reset within
-~100 ms if SafetyTask stops feeding it.
+~100 ms if MainTask stops feeding it.
 
 | | |
 |---|---|
-| Steps | 1. Attach GDB. Set a breakpoint inside `SafetyTask::run()`.<br>2. Hit the breakpoint, halt the CPU.<br>3. Wait 200 ms in wall-clock time.<br>4. Continue. |
+| Steps | 1. Attach GDB. Set a breakpoint inside `MainTask::run()`.<br>2. Hit the breakpoint, halt the CPU.<br>3. Wait 200 ms in wall-clock time.<br>4. Continue. |
 | Pass | The chip resets within ~100 ms of the halt. After resume, the reset is observable (UART shows fresh boot line; reset-cause register has IWDG bit set). |
 | Fail mode | Chip continues running past 200 ms → watchdog disabled (check `hiwdg` init), or refresh path is on the wrong branch. |
 | Capture | GDB transcript + reset-cause register read. |
@@ -255,15 +255,15 @@ block).
 ### HIL-012 — Watchdog reset re-opens relays
 
 **Goal**: after a watchdog reset (from HIL-011 or any synthetic), the
-chip boots through `MX_GPIO_Init` and re-asserts PD3/4/5 to PIN_RESET
+chip boots through `MX_GPIO_Init` and re-asserts PB5/6/7 to PIN_RESET
 within milliseconds.
 
 | | |
 |---|---|
-| Steps | 1. Start in Run (need a full happy-path setup, see Block C). Verify PD3/4 are HIGH.<br>2. Halt SafetyTask via GDB. Wait for IWDG reset.<br>3. Probe PD3/4/5 immediately after reset. |
+| Steps | 1. Start in Run (need a full happy-path setup, see Block C). Verify PB5/PB6 are HIGH.<br>2. Halt MainTask via GDB. Wait for IWDG reset.<br>3. Probe PB5/6/7 immediately after reset. |
 | Pass | All three read LOW within 20 ms of the reset edge. |
 | Fail mode | Pins stay HIGH → MX_GPIO_Init isn't writing them before pin direction is configured, or boot is slow. |
-| Capture | Logic analyser on PD3/4/5 + a reset-edge signal (e.g. NRST). |
+| Capture | Logic analyser on PB5/6/7 + a reset-edge signal (e.g. NRST). |
 | Duration | 10 min |
 
 ### HIL-013 — FORCE_ERROR event flag opens AIRs
@@ -273,19 +273,19 @@ supervisor responds within one period.
 
 | | |
 |---|---|
-| Steps | 1. Bring AMS up to Run.<br>2. Via GDB, call `osEventFlagsSet(safety_eventsHandle, 0x1)` (kForceError = bit 0).<br>3. Within 15 ms, read PD3/4/5. |
+| Steps | 1. Bring AMS up to Run.<br>2. Via GDB, call `osEventFlagsSet(safety_eventsHandle, 0x1)` (kForceError = bit 0).<br>3. Within 15 ms, read PB5/6/7. |
 | Pass | All three pins are LOW. UART next line says `s=E`. `RTC->BKP1R` reads `0xA115EE51`. |
-| Fail mode | Pins still HIGH after 50 ms → SafetyTask not consuming the flag, or relay write path broken. |
+| Fail mode | Pins still HIGH after 50 ms → MainTask not consuming the flag, or relay write path broken. |
 | Duration | 5 min |
 
 ### HIL-014 — Cell undervoltage trips ERROR
 
 **Goal**: a single cell below `kCellUVmV` (2800 mV) trips the predicate
-set within one V-poll cycle + one SafetyTask period.
+set within one V-poll cycle + one MainTask period.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run with healthy LTC6811 chain (real BMS_LITE pack or emulator).<br>2. Force module 2 / cell 5 to ~2700 mV on the emulator's next ADCV cycle (or, on a real pack, GDB-inject `cell_mV[2][5] = 2700` directly into `BmsService` between two polls).<br>3. Within 280 ms of the injection (one V-poll period + one Safety period), sample PD3/4/5 + read UART. |
+| Steps | 1. AMS in Run with healthy LTC6811 chain (real BMS_LITE pack or emulator).<br>2. Force module 2 / cell 5 to ~2700 mV on the emulator's next ADCV cycle (or, on a real pack, GDB-inject `cell_mV[2][5] = 2700` directly into `BmsService` between two polls).<br>3. Within 280 ms of the injection (one V-poll period + one Safety period), sample PB5/6/7 + read UART. |
 | Pass | Pins LOW within 280 ms. UART says `s=E`. |
 | Fail mode | Pins stay HIGH after 500 ms → threshold value mismatch, or `BmsService::update_from_ltc_response` dropped the value via PEC. |
 | Capture | LA + GPIO scope. |
@@ -312,34 +312,39 @@ Same shape; temp frame with temp[10] = 65 °C (above `kCellOTC` = 60).
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Inject a constant voltage on PF11 ≈ 2.5 V (zero current) for the warm-up.<br>3. Halt CurrentTask via GDB (it's the only writer to `last_update_tick`).<br>4. Wait `kIStaleMs` (200 ms) + 50 ms. |
+| Steps | 1. AMS in Run.<br>2. Inject a constant voltage on PF11 ≈ 2.5 V (zero current) for the warm-up.<br>3. Halt CurrentSensorTask via GDB (it's the only writer to `last_update_tick`).<br>4. Wait `kIStaleMs` (200 ms) + 50 ms. |
 | Pass | Pins LOW within 300 ms. UART says `s=E`. |
 | Fail mode | Pins stay HIGH → freshness threshold mis-applied. |
 | Duration | 5 min |
 
-### HIL-019 — SDC open trips ERROR
+### HIL-019 — *(retired)* SDC open trips ERROR
+
+The `sdc_closed` GPIO-sense predicate was retired in PR #117: the
+v1.2 daughterboard doesn't route a dedicated SDC sense input
+(invariant 8 in [`ARCHITECTURE.md`](ARCHITECTURE.md) §1). The AMS is
+*part of* the SDC via `AMS_OK` (PB4), not a sensor of it. The
+equivalent coverage now lives in HIL-014 (`force_error_set` trips
+ERROR) and HIL-013 (cell undervoltage) — pick either to verify the
+"any-state → Error via predicate" path.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run with PE9 HIGH (SDC closed).<br>2. Drive PE9 LOW.<br>3. Within 30 ms, sample PD3/4/5. |
-| Pass | Pins LOW within 30 ms. UART says `s=E`. |
-| Steps cont. | 4. Drive PE9 HIGH again. |
-| Pass | Pins stay LOW (ERROR is sticky). UART continues to say `s=E`. |
-| Duration | 5 min |
+| Status | Retired — no longer applicable on v1.2 daughterboard |
+| Replacement | HIL-014 (force-error injection) or HIL-013 (cell predicate) |
 
 ---
 
 ## Block C — FSM
 
 **Block precondition**: Block B passed. BMS emulator emits healthy
-frames continuously. SDC asserted (PE9 HIGH).
+frames continuously.
 
 ### HIL-020 — Start → Precharge on start button
 
 | | |
 |---|---|
-| Steps | 1. Verify AMS in Start (`s=S`).<br>2. Send 0x600 standard frame with byte 0 = 1 on FDCAN1.<br>3. Within 50 ms, read PD3 and PD5; UART next line. |
-| Pass | PD3 (AIR-) HIGH, PD5 (Precharge) HIGH, PD4 (AIR+) LOW. UART says `s=P`. |
+| Steps | 1. Verify AMS in Start (`s=S`).<br>2. Send 0x600 standard frame with byte 0 = 1 on FDCAN1.<br>3. Within 50 ms, read PB6 and PB7; UART next line. |
+| Pass | PB6 (AIR-) HIGH, PB7 (Precharge) HIGH, PB5 (AIR+) LOW. UART says `s=P`. |
 | Fail mode | Wrong pin state → relay-action flag mismatch in `state_machine.hpp`. |
 | Duration | 5 min |
 
@@ -348,7 +353,7 @@ frames continuously. SDC asserted (PE9 HIGH).
 | | |
 |---|---|
 | Steps | 1. AMS in Start.<br>2. Send extended frame `0x18FF50E7` on FDCAN1 (any payload).<br>3. Within 50 ms, sample pins; UART. |
-| Pass | PD3 HIGH, PD4 HIGH, PD5 LOW. UART says `s=C`. |
+| Pass | PB6 HIGH, PB5 HIGH, PB7 LOW. UART says `s=C`. |
 | Duration | 5 min |
 
 ### HIL-022 — Precharge → Transition on DC bus target
@@ -356,7 +361,7 @@ frames continuously. SDC asserted (PE9 HIGH).
 | | |
 |---|---|
 | Steps | 1. AMS in Precharge (after HIL-020 sequence).<br>2. Emit 0x100 ext frame on FDCAN1 with `dc_bus_V` = 350 (≥ 0.95 × pack_V, where pack is healthy at ~356 V from emulator).<br>3. Within 50 ms, sample pins. |
-| Pass | PD4 HIGH (AIR+ closed), PD5 LOW (Precharge open), PD3 still HIGH. UART says `s=T`. |
+| Pass | PB5 HIGH (AIR+ closed), PB7 LOW (Precharge open), PB6 still HIGH. UART says `s=T`. |
 | Duration | 5 min |
 
 ### HIL-023 — Precharge timeout → ERROR
@@ -372,7 +377,7 @@ frames continuously. SDC asserted (PE9 HIGH).
 | | |
 |---|---|
 | Steps | 1. AMS in Transition (after HIL-022).<br>2. Keep 0x100 emitting `dc_bus_V` ≥ 350.<br>3. Wait `kTransitionHoldMs` (100 ms) + 30 ms.<br>4. Sample pins + UART. |
-| Pass | PD3 HIGH, PD4 HIGH, PD5 LOW. UART says `s=R`. Fan duty PB9 PWM = 40 % (measure with scope). |
+| Pass | PB6 HIGH, PB5 HIGH, PB7 LOW. UART says `s=R`. Fan duty PB9 PWM = 40 % (measure with scope). |
 | Duration | 5 min |
 
 ### HIL-025 — Transition voltage drop → ERROR
@@ -388,7 +393,7 @@ frames continuously. SDC asserted (PE9 HIGH).
 | | |
 |---|---|
 | Steps | 1. AMS in Run.<br>2. Send `0x18FF50E7` charger-detect frame.<br>3. Wait 200 ms.<br>4. Sample pins + UART. |
-| Pass | Pins unchanged from Run state (PD3 HIGH, PD4 HIGH, PD5 LOW). UART continues `s=R`. |
+| Pass | Pins unchanged from Run state (PB6 HIGH, PB5 HIGH, PB7 LOW). UART continues `s=R`. |
 | Fail mode | UART shows `s=C` → the Run→Charge transition wasn't fully removed in `fsm::step`. |
 | Duration | 5 min |
 
@@ -404,7 +409,7 @@ frames continuously. SDC asserted (PE9 HIGH).
 
 | | |
 |---|---|
-| Steps | 1. Trip ERROR via any predicate (e.g. HIL-019).<br>2. Clear the fault (re-assert SDC).<br>3. Wait 5 s. |
+| Steps | 1. Trip ERROR via any predicate (HIL-013 cell UV or HIL-014 force-error).<br>2. Clear the fault (restore healthy cell value or clear `force_error_set`).<br>3. Wait 5 s. |
 | Pass | UART continues `s=E`. Pins all LOW. |
 | Duration | 5 min |
 
@@ -548,10 +553,10 @@ frame, opens AIRs, reboots, BL takes over.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Probe PD3/4/5 + UART.<br>3. `cansend can0 002#B007AD11` (FDCAN1 — the trigger moved off FDCAN2 in v1.2.0 (#73)). |
-| Pass | Within 15 ms: PD3/4/5 all LOW (Relays::open_all fired). Within 1 s: BL DISCOVER reply on FDCAN2 confirms BL is alive (the BL still operates on FDCAN2 after the magic-reset; only the in-band trigger moved). |
+| Steps | 1. AMS in Run.<br>2. Probe PB5/6/7 + UART.<br>3. `cansend can0 002#B007AD11` (FDCAN1 — the trigger moved off FDCAN2 in v1.2.0 (#73)). |
+| Pass | Within 15 ms: PB5/6/7 all LOW (Relays::open_all fired). Within 1 s: BL DISCOVER reply on FDCAN2 confirms BL is alive (the BL still operates on FDCAN2 after the magic-reset; only the in-band trigger moved). |
 | Fail mode | Pins stay HIGH → boot-trigger not matching, AcuCanTask not dispatching, or `request_reboot` is not actually running.<br>BL doesn't respond → BL didn't see the BKP0R magic, or BL is in auto-jump and hands back to app. |
-| Capture | Logic analyser on PD3/4/5 + NRST + `candump` of FDCAN1 (trigger) and FDCAN2 (BL reply). |
+| Capture | Logic analyser on PB5/6/7 + NRST + `candump` of FDCAN1 (trigger) and FDCAN2 (BL reply). |
 | Duration | 10 min |
 
 ### HIL-042 — Wrong-bus trigger ignored
@@ -595,8 +600,8 @@ so AIRs are open for the entire reset window.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run. PD3/4 HIGH.<br>2. Send the trigger.<br>3. Capture PD3/4/5 + NRST on a logic analyser with µs resolution. |
-| Pass | PD3/4/5 fall to LOW **at least 5 ms before** NRST asserts (the `osDelay(10)` in `request_reboot` enforces this). |
+| Steps | 1. AMS in Run. PB5/PB6 HIGH.<br>2. Send the trigger.<br>3. Capture PB5/6/7 + NRST on a logic analyser with µs resolution. |
+| Pass | PB5/6/7 fall to LOW **at least 5 ms before** NRST asserts (the `osDelay(10)` in `request_reboot` enforces this). |
 | Fail mode | Pins fall after NRST → the order in `request_reboot` is wrong. |
 | Capture | LA trace. |
 | Duration | 10 min |
@@ -617,7 +622,7 @@ so AIRs are open for the entire reset window.
 | Steps | 1. AMS in Run.<br>2. From host, hammer FDCAN2 with 100 frames of `002#B007AD12` (one byte off) over 1 s.<br>3. Send one valid `002#B007AD11`. |
 | Pass | The 100 malformed frames cause **zero** reboots. The single valid frame reboots within 15 ms. |
 | Fail mode | Any malformed frame causes a reboot → magic check is incomplete. |
-| Capture | UART (count of bad-frame counter increments) + LA on PD3/4/5. |
+| Capture | UART (count of bad-frame counter increments) + LA on PB5/6/7. |
 | Duration | 10 min |
 
 ---
@@ -630,10 +635,10 @@ so AIRs are open for the entire reset window.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run with healthy BMS, healthy current sensor, SDC closed.<br>2. UART log + `candump` to file for 30 minutes. |
-| Pass | No resets. UART line cadence stays at 500 ms ± 20 ms across the entire run. No `g_*_dropped_*` counter increases beyond a low background (< 1 per minute). State remains `s=R`. |
+| Steps | 1. AMS in Run with healthy BMS, healthy current sensor.<br>2. Capture telemetry frames 0x4A0/4A1/4A2 + `candump` to file for 30 minutes. |
+| Pass | No resets. Telemetry frame cadence stays at 500 ms ± 20 ms across the entire run. No `g_*_dropped_*` counter increases beyond a low background (< 1 per minute). State byte in 0x4A0 remains `0x03` (Run). |
 | Fail mode | Reset → check reset-cause reg (IWDG? brownout? hardfault?). Drift in cadence → priority inversion. |
-| Capture | UART log file (≥ 3000 lines). CAN trace. |
+| Capture | CAN trace (≥ 30 min of telemetry). |
 | Duration | 35 min |
 
 ### HIL-051 — Boot-trigger reliability
@@ -663,13 +668,18 @@ Same shape on FDCAN1 with extended + standard IDs.
 | Pass | AMS resets (BOR pinned the chip), boots fresh, comes up in Start (or Error if `BKP1R` survived — VBAT-dependent). |
 | Duration | 10 min |
 
-### HIL-055 — SDC chatter
+### HIL-055 — *(retired)* SDC chatter
+
+Retired alongside HIL-019: no SDC GPIO-sense input on the v1.2
+daughterboard. The equivalent "predicate-thrash" coverage is now
+HIL-013-chatter (rapidly toggling a cell voltage across the UV
+threshold), HIL-014-chatter (toggling `force_error_set`), and the
+balance-on/off boundary in HIL-022/023.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Drive PE9 with a 100 Hz square wave (5 ms HIGH, 5 ms LOW) for 5 s.<br>3. Observe. |
-| Pass | The very first LOW edge trips ERROR (HIL-019). Subsequent edges do nothing — ERROR is sticky. AMS does not glitch, oscillate, or reset spontaneously. |
-| Duration | 10 min |
+| Status | Retired — no SDC GPIO sense on v1.2 daughterboard |
+| Replacement | HIL-014 force-error chatter, or HIL-013 cell-UV chatter |
 
 ### HIL-056 — Chain-length mismatch on boot
 
@@ -680,8 +690,8 @@ firmware enforces in `App_InitTask`.
 | | |
 |---|---|
 | Preconditions | Real BMS_LITE pack OR LTC6811 emulator. |
-| Steps | 1. Disconnect module 5's isoSPI input cable (or program the emulator to leave chain slots 8 + 9 silent).<br>2. Power-cycle the AMS. Wait 1 s.<br>3. Read GDB-visible `g_state_telemetry`, `RTC->BKP1R`, and PD3/4/5. |
-| Pass | `g_state_telemetry == 'E'` (= Error). `RTC->BKP1R == 0xA115EE51`. PD3/4/5 all LOW within 1 s of power-on. Re-attach the cable + power-cycle once more → backup-domain power gone → comes up in Start (latch cleared). |
+| Steps | 1. Disconnect module 5's isoSPI input cable (or program the emulator to leave chain slots 8 + 9 silent).<br>2. Power-cycle the AMS. Wait 1 s.<br>3. Read GDB-visible `g_state_telemetry`, `RTC->BKP1R`, and PB5/6/7. |
+| Pass | `g_state_telemetry == 'E'` (= Error). `RTC->BKP1R == 0xA115EE51`. PB5/6/7 all LOW within 1 s of power-on. Re-attach the cable + power-cycle once more → backup-domain power gone → comes up in Start (latch cleared). |
 | Fail mode | Boot to Start with 8 ICs discovered → `count_pec_valid_segments` is forgiving where it shouldn't be. Stays in Start past 2 s → `App_InitTask` skipped the chain-length gate. |
 | Capture | GDB transcript + LA on PA4 + UART log. |
 | Duration | 15 min |
@@ -694,7 +704,7 @@ gate, which is one-shot).
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run, all 5 modules online.<br>2. Pull the master-end isoSPI cable.<br>3. Within `kBmsStaleMs + 250 ms` = 1750 ms, sample PD3/4/5 + UART. |
+| Steps | 1. AMS in Run, all 5 modules online.<br>2. Pull the master-end isoSPI cable.<br>3. Within `kBmsStaleMs + 250 ms` = 1750 ms, sample PB5/6/7 + UART. |
 | Pass | Pins LOW within 1.8 s; UART says `s=E`. `g_ltc_pec_err_count[*]` and `g_ltc_spi_err_count` both rise during the window. |
 | Fail mode | Pins stay HIGH past 2.5 s → freshness predicate broken or `last_rx_tick` is being touched by something other than a clean poll. |
 | Duration | 10 min |
@@ -772,7 +782,7 @@ The following tests **must** pass on the same firmware SHA:
 | HIL-012 | Watchdog reset re-opens relays |
 | HIL-013 | FORCE_ERROR opens AIRs |
 | HIL-014 | Cell UV trips |
-| HIL-019 | SDC open trips |
+| HIL-019 | *(retired)* SDC sense predicate removed in PR #117; covered by HIL-013 / HIL-014 |
 | HIL-020 | Start → Precharge |
 | HIL-021 | Start → Charge |
 | HIL-024 | Transition → Run |
