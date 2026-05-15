@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// Pack current measurement service. Single-writer (CurrentTask via
+// Pack current measurement service. Single-writer (CurrentSensorTask via
 // update_from_adc); many readers (SafetyTask, StateTask, AcuCanTask,
 // TelemetryTask). Synchronisation: docs/ARCHITECTURE.md §3.
 
@@ -25,7 +25,7 @@ class CurrentService {
 public:
     static CurrentService& instance() noexcept;
 
-    // Called by CurrentTask only. Converts raw ADC counts to mA,
+    // Called by CurrentSensorTask only. Converts raw ADC counts to mA,
     // updates the filter, refreshes the timestamp.
     void update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept;
 

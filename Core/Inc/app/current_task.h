@@ -1,8 +1,9 @@
 /* SPDX-License-Identifier: proprietary
  *
- * C-callable entry point for CurrentTask. main.c's
- *   USER CODE BEGIN StartCurrentTask
- * block calls this.
+ * C-callable entry point for CurrentSensorTask. main.c's
+ *   USER CODE BEGIN StartCurrentSensorTask
+ * block calls this. (File still called current_task.h to keep this
+ * commit free of file renames; renamed in spirit only.)
  */
 
 #ifndef AMS_CURRENT_TASK_H
@@ -12,7 +13,7 @@
 extern "C" {
 #endif
 
-void ams_current_task_run(void *argument);
+void ams_current_sensor_task_run(void *argument);
 
 #ifdef __cplusplus
 }

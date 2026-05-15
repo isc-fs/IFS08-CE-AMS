@@ -48,7 +48,7 @@ inline constexpr std::uint32_t kSafetyPeriodMs    =  10;
 // remain active during the grace; only data-presence predicates are
 // suppressed. Must be >= the longest service warm-up:
 //   - BmsPollTask first voltage poll: kBmsPollVoltMs (250 ms)
-//   - CurrentTask first ADC sample:   kCurrentPeriodMs (50 ms)
+//   - CurrentSensorTask first ADC sample: kCurrentPeriodMs (50 ms)
 //   - AcuCanTask first VCU 0x100:     uncontrolled, but typically
 //                                     present from the vehicle bus
 // 2000 ms gives generous margin for all of the above and slow CAN

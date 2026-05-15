@@ -32,7 +32,7 @@ volatile std::uint32_t g_current_adc_fail = 0;
 
 }  // namespace
 
-extern "C" void ams_current_task_run(void *argument) {
+extern "C" void ams_current_sensor_task_run(void *argument) {
     (void)argument;
 
     // Calibrate before first use. Single-ended, linearity calibration
