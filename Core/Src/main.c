@@ -867,7 +867,6 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
@@ -879,7 +878,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(AMS_OK_GPIO_Port, AMS_OK_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOD, RELAY_AIR_N_Pin|RELAY_AIR_P_Pin|RELAY_PRECHARGE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, RELAY_AIR_N_Pin|RELAY_AIR_P_Pin|RELAY_PRECHARGE_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : LTC6820_CS_Pin */
   GPIO_InitStruct.Pin = LTC6820_CS_Pin;
@@ -888,31 +887,26 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(LTC6820_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : AMS_OK_Pin */
-  GPIO_InitStruct.Pin = AMS_OK_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(AMS_OK_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : DIGITAL1_Pin */
-  GPIO_InitStruct.Pin = DIGITAL1_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(DIGITAL1_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pin : Charge_Button_Pin */
   GPIO_InitStruct.Pin = Charge_Button_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(Charge_Button_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : RELAY_AIR_N_Pin RELAY_AIR_P_Pin RELAY_PRECHARGE_Pin */
-  GPIO_InitStruct.Pin = RELAY_AIR_N_Pin|RELAY_AIR_P_Pin|RELAY_PRECHARGE_Pin;
+  /*Configure GPIO pins on GPIOB:
+   *   PB4 = AMS_OK            (push-pull output)
+   *   PB5 = RELAY_AIR_P       (push-pull output)
+   *   PB6 = RELAY_AIR_N       (push-pull output)
+   *   PB7 = RELAY_PRECHARGE   (push-pull output)
+   * PB4 is the JTAG-NJTRST function after reset; we're using SWD (only
+   * PA13/PA14), so PB4 is free for GPIO once HAL_GPIO_Init reprograms
+   * its AFR + MODER -- no extra SYSCFG dance needed on H7.
+   */
+  GPIO_InitStruct.Pin = AMS_OK_Pin|RELAY_AIR_P_Pin|RELAY_AIR_N_Pin|RELAY_PRECHARGE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

@@ -38,7 +38,6 @@ ams::safety::Inputs make_nominal(ams::BmsState& bms,
     veh.last_dc_bus_tick = now - 50;
 
     return { bms, cur, veh,
-             /*sdc_closed=*/true,
              /*force_error_set=*/false,
              now };
 }
@@ -60,15 +59,6 @@ extern "C" void test_predicates_force_error(void) {
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
     in.force_error_set = true;
-    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
-}
-
-extern "C" void test_predicates_sdc_open(void) {
-    ams::BmsState     bms;
-    ams::CurrentState cur;
-    ams::VehicleState veh;
-    auto in = make_nominal(bms, cur, veh, 10000);
-    in.sdc_closed = false;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -150,7 +140,6 @@ extern "C" void test_predicates_boot_grace_suppresses_data_predicates(void) {
     // last_*_ticks, and the bug is exactly about ticks at zero.
     const ams::safety::Inputs in = {
         bms, cur, veh,
-        /*sdc_closed=*/true,
         /*force_error_set=*/false,
         /*now_tick=*/500u,  // half a second in -- well inside grace
     };
@@ -164,21 +153,7 @@ extern "C" void test_predicates_boot_grace_does_not_suppress_force_error(void) {
     ams::VehicleState veh{};
     const ams::safety::Inputs in = {
         bms, cur, veh,
-        /*sdc_closed=*/true,
         /*force_error_set=*/true,
-        /*now_tick=*/100u,
-    };
-    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
-}
-
-extern "C" void test_predicates_boot_grace_does_not_suppress_sdc_open(void) {
-    ams::BmsState     bms{};
-    ams::CurrentState cur{};
-    ams::VehicleState veh{};
-    const ams::safety::Inputs in = {
-        bms, cur, veh,
-        /*sdc_closed=*/false,
-        /*force_error_set=*/false,
         /*now_tick=*/100u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -193,7 +168,6 @@ extern "C" void test_predicates_after_grace_zero_ticks_faults(void) {
     ams::VehicleState veh{};
     const ams::safety::Inputs in = {
         bms, cur, veh,
-        /*sdc_closed=*/true,
         /*force_error_set=*/false,
         /*now_tick=*/ams::config::kSafetyBootGraceMs + 1u,
     };

@@ -32,7 +32,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
     veh.last_dc_bus_tick = 9950;
     veh.dc_bus_V         = 350;
     return { current, bms, cur, veh,
-             /*sdc_closed*/true, /*force*/false,
+             /*force*/false,
              /*now*/10000, /*entry*/9800 };
 }
 
@@ -107,7 +107,9 @@ extern "C" void test_fsm_run_and_charge_are_terminal(void) {
 extern "C" void test_fsm_any_state_to_error_on_fault(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
-    in.sdc_closed = false;
+    // Trip via force_error_set since the SDC predicate was retired
+    // in #18 (no GPIO-sensed SDC on the v1.2 daughterboard).
+    in.force_error_set = true;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);

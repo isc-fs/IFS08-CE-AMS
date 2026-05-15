@@ -33,7 +33,6 @@ struct Inputs {
     const BmsState&     bms;
     const CurrentState& current_sensor;
     const VehicleState& vehicle;
-    bool                sdc_closed;
     bool                force_error_set;
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;
@@ -66,7 +65,7 @@ struct Output {
     // Any fault from the predicate set forces ERROR + opens AIRs.
     const safety::Inputs pred = {
         in.bms, in.current_sensor, in.vehicle,
-        in.sdc_closed, in.force_error_set, in.now_tick,
+        in.force_error_set, in.now_tick,
     };
     if (safety::evaluate_fault(pred)) {
         return { State::Error,

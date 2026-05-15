@@ -73,12 +73,12 @@ void SafetyTask::run() noexcept {
         const auto bms_snap     = BmsService::instance().snapshot();
         const auto current_snap = CurrentService::instance().snapshot();
         const auto vehicle_snap = VehicleService::instance().snapshot();
-        const bool sdc_closed   =
-            HAL_GPIO_ReadPin(DIGITAL1_GPIO_Port, DIGITAL1_Pin) == GPIO_PIN_SET;
 
+        // SDC line is not GPIO-sensed: the AMS is part of the SDC via
+        // AMS_OK, not a sensor of it. No DIGITAL1 input on the v1.2
+        // daughterboard (see ams_config.hpp + schematic).
         const safety::Inputs ev = {
             bms_snap, current_snap, vehicle_snap,
-            sdc_closed,
             flagged_error,
             osKernelGetTickCount(),
         };
