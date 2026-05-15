@@ -35,6 +35,26 @@ Everything else exists to enforce these:
    (`0xB00710AD`); the two registers must never share a word.
 6. **Shared sensor state has one writer.** Each domain has its own
    mutex; readers `snapshot()` under the lock and work off a copy.
+7. **Boot-grace window suppresses data-presence predicates for
+   `kSafetyBootGraceMs` (2 s) after `osKernelStart`.** At t = 0 every
+   service's `last_*_tick` is 0; without a grace the first SafetyTask
+   iteration would fault on freshness and withhold the watchdog
+   refresh, triggering an IWDG reset within ~100 ms — a latch-loop
+   the chip cannot escape. The window covers BmsPollTask's first
+   voltage poll (250 ms), CurrentTask's first ADC sample (50 ms),
+   and AcuCanTask's first VCU 0x100 (uncontrolled but typically
+   present). **Immediate-safety predicates stay active during the
+   grace**: `FORCE_ERROR` and SDC-open still trip instantly. Only
+   data-dependent predicates wait. See
+   [`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)
+   line 48 and the inline comment on `kSafetyBootGraceMs` in
+   [`ams_config.hpp`](../Core/Inc/app/ams_config.hpp).
+
+> The HIL bench rig uses the `AMS_BMS_HIL_STUB` build flag to
+> deliberately violate invariants 5 and parts of 1 / 7 (the BMS-
+> side predicates). It is **never compiled into a flight build**.
+> Full semantics in [`HIL_STUB.md`](HIL_STUB.md); a flight-release
+> SHA check that proves the flag is absent is documented there too.
 
 ---
 
@@ -353,12 +373,13 @@ sequenceDiagram
     init->>init: osThreadExit
   and
     safe->>safe: ErrorLatch is_set
+    Note over safe: For t < kSafetyBootGraceMs (2 s)<br/>data-presence predicates are suppressed.<br/>FORCE_ERROR + SDC-open still trip instantly.
     loop every 10 ms
       safe->>safe: snapshot all services
-      alt fault
+      alt fault (any active predicate)
         safe->>HW: Relays open_all + ErrorLatch set
         Note over safe,HW: NO IWDG refresh, HW reset follows
-      else clean
+      else clean (incl. inside boot grace)
         safe->>HW: service relay-action flags
         safe->>HW: HAL_IWDG_Refresh
       end
@@ -603,6 +624,7 @@ IFS08-CE-AMS/
 │   ├── BMS_LTC6811.md                # isoSPI BMS wire protocol
 │   ├── CAN_MAP.md                    # vehicle / ACU CAN protocol
 │   ├── COMMISSIONING.md              # bench / on-vehicle calibration
+│   ├── HIL_STUB.md                   # AMS_BMS_HIL_STUB build flag (bench only)
 │   └── HIL_TESTS.md                  # bench acceptance plan
 ├── tests/
 │   └── unit/
@@ -641,6 +663,12 @@ Different entry points by goal:
   safety supervisor".
 - **Bringing up new hardware**:
   [`COMMISSIONING.md`](COMMISSIONING.md).
+- **Working on the LTC6811 / isoSPI path**:
+  [`BMS_LTC6811.md`](BMS_LTC6811.md) is the source of truth for the
+  wire protocol, cell + temp mappings, PEC15, and balancing.
+- **Setting up a bench rig with no real BMS chain**:
+  [`HIL_STUB.md`](HIL_STUB.md) explains the `AMS_BMS_HIL_STUB` build
+  flag and how to verify a flight image isn't stub-built.
 
 ---
 

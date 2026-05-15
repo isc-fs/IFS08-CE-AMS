@@ -170,6 +170,43 @@ Procedure:
 
 ---
 
+## 3d. SafetyTask boot-grace window
+
+`kSafetyBootGraceMs` defaults to 2000 ms. While `now_tick <
+kSafetyBootGraceMs`, the data-presence predicates inside
+[`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)
+return `false` unconditionally. The watchdog is fed normally during
+this window, so the chip stays alive while BmsPollTask, CurrentTask,
+and AcuCanTask are still spinning up their first sample.
+
+**Immediate-safety predicates stay active during the grace** —
+`FORCE_ERROR` (event-flag) and SDC-open (PE9 input) still trip a
+fault on the very first SafetyTask iteration. The grace only
+suppresses the freshness / range checks that would always fail at
+t = 0 because no service has published yet.
+
+Defaults are sized for the slowest startup path among the data
+producers:
+
+| Producer | First write to its service |
+|---|---|
+| BmsPollTask voltage poll | ~250 ms (kBmsPollVoltMs) |
+| CurrentTask ADC sample | 50 ms (kCurrentPeriodMs) |
+| AcuCanTask VCU 0x100 ingest | depends on the vehicle bus; typically present immediately |
+| BmsPollTask temperature sweep | ~500 ms (kBmsPollTempMs) |
+
+2000 ms covers the worst of these plus a comfortable margin for a
+slow CAN bus startup. Tune down only if a faster Start state matters
+more than the margin; tune up if a planned producer takes longer
+than 2 s to publish on a bench / vehicle.
+
+> Setting `kSafetyBootGraceMs = 0` reverts to the pre-v1.2.0
+> behaviour, where the very first SafetyTask iteration faulted on
+> freshness and the chip entered a watchdog-reset loop. Don't do
+> this — the loop is unrecoverable without reflashing.
+
+---
+
 ## 4. BMS freshness window
 
 `kBmsStaleMs` defaults to 1500 ms. The slave's typical response is
@@ -223,8 +260,9 @@ vehicle:
 2. Press start button with healthy pack → reach `Run` within 2 s
 3. Charger plug-in from `Run` → `Charge`, fan to 75 %
 4. Manual SDC open during `Run` → AIRs open within 50 ms (scope)
-5. Force-open any BMS slave (unplug its CAN cable) → `Error` within
-   `kBmsStaleMs + 20 ms`, AIRs open, backup register flag set
+5. Force-open any BMS module (pull its isoSPI cable from the chain) →
+   `Error` within `kBmsStaleMs + one V-poll period`, AIRs open, backup
+   register flag set
 6. Power-cycle after step 5 → AMS comes up in `Error`, AIRs stay
    open, requires the manual reset procedure (TBD: define gesture)
 7. 30-minute UART log capture with the line format from
