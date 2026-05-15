@@ -51,8 +51,11 @@ struct Inputs {
     // hasn't yet reported -- equivalent fault, fewer special cases.
     if (in.now_tick < config::kSafetyBootGraceMs) return false;
 
-#if !defined(AMS_BMS_HIL_STUB)
-    // BMS module-online mask + freshness.
+    // BMS module-online mask + freshness. Under -DAMS_BMS_HIL_STUB the
+    // BmsPollTask seeds these fields with nominal-healthy values every
+    // 250 ms (see bms_service.hpp::seed_for_hil_stub), so this block
+    // is HIL-agnostic -- the predicate doesn't know or care whether
+    // the data came from a real LTC chain or from the stub seeder.
     if (in.bms.module_online_mask != config::kAllModulesMask) return true;
     for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
         if (in.now_tick - in.bms.last_rx_tick[m] > config::kBmsStaleMs) return true;
@@ -63,13 +66,6 @@ struct Inputs {
     if (in.bms.max_cell_mV > config::kCellOVmV)      return true;
     if (in.bms.min_tempC   < config::kCellUTC)       return true;
     if (in.bms.max_tempC   > config::kCellOTC)       return true;
-#else
-    // HIL-only build: bench has no LTC6811 chain, only the CAN bus and
-    // the DIGITAL1/SDC line. Bypass every BMS-derived predicate so the
-    // operator can exercise SDC, force-error, current, and VCU paths
-    // without the BMS perpetually tripping. NEVER define on flight HW.
-    (void)in.bms;
-#endif
 
     // Current sensor: not faulted, fresh, within absolute limit.
     if (in.current.sensor_fault)                                       return true;

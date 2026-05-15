@@ -2,13 +2,10 @@
 
 #include "current_service.hpp"
 
-#include "scoped_mutex.hpp"
 
-#include "cmsis_os2.h"
 
 #include <cstdlib>
 
-extern "C" osMutexId_t current_mutexHandle;  // created in main.c
 
 namespace ams {
 
@@ -43,8 +40,6 @@ std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
 void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept {
     const std::int32_t mA = adc_to_mA(raw);
 
-    ScopedMutex lock(current_mutexHandle);
-    if (!lock.acquired()) return;
 
     state_.raw_mA           = mA;
     state_.last_update_tick = now_tick;
@@ -61,20 +56,14 @@ void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) 
 }
 
 void CurrentService::set_charger_detected(bool detected) noexcept {
-    ScopedMutex lock(current_mutexHandle);
-    if (!lock.acquired()) return;
     state_.charger_detected = detected;
 }
 
 CurrentState CurrentService::snapshot() const noexcept {
-    ScopedMutex lock(current_mutexHandle);
-    if (!lock.acquired()) return state_;
     return state_;
 }
 
 bool CurrentService::is_healthy(std::uint32_t now_tick) const noexcept {
-    ScopedMutex lock(current_mutexHandle);
-    if (!lock.acquired()) return false;
     if (state_.sensor_fault)                                            return false;
     if (state_.last_update_tick == 0)                                   return false;
     if (now_tick - state_.last_update_tick > config::kIStaleMs)         return false;

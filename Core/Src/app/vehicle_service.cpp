@@ -4,11 +4,8 @@
 
 #include "ams_config.hpp"
 #include "current_service.hpp"
-#include "scoped_mutex.hpp"
 
-#include "cmsis_os2.h"
 
-extern "C" osMutexId_t vehicle_mutexHandle;  // created in main.c
 
 namespace ams {
 
@@ -34,8 +31,6 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
     switch (f.id) {
     case config::kAcuRxDcBusId: {
         if (f.dlc < 2) return false;
-        ScopedMutex lock(vehicle_mutexHandle);
-        if (!lock.acquired()) return false;
         state_.dc_bus_V         = decode_dc_bus_V(f.data);
         state_.last_dc_bus_tick = f.timestamp_ms;
         return true;
@@ -43,8 +38,6 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
 
     case config::kAcuRxStartBtnId: {
         if (f.dlc < 1) return false;
-        ScopedMutex lock(vehicle_mutexHandle);
-        if (!lock.acquired()) return false;
         state_.start_button       = decode_start_button(f.data);
         state_.last_start_btn_tick = f.timestamp_ms;
         return true;
@@ -64,8 +57,6 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
 }
 
 VehicleState VehicleService::snapshot() const noexcept {
-    ScopedMutex lock(vehicle_mutexHandle);
-    if (!lock.acquired()) return state_;
     return state_;
 }
 
