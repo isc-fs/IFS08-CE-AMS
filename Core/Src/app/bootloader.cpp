@@ -10,7 +10,7 @@
 
 namespace ams {
 
-void Bootloader::request_reboot() noexcept {
+void Bootloader::request_reboot(config::JumpReason reason) noexcept {
     // 1) Pack-safe state first. The reset itself runs MX_GPIO_Init
     // which will drive PD3/4/5 to PIN_RESET, but that path is non-
     // deterministic (~ms gap). Doing it here closes the gap.
@@ -21,10 +21,15 @@ void Bootloader::request_reboot() noexcept {
     // kbps -- a full 8-byte frame is < 200 us on the wire.
     osDelay(10);
 
-    // 3) Hand the bootloader its magic in the backup-domain word it
-    // checks on every reset.
+    // 3) Stamp the jump reason and hand the bootloader its magic in
+    // the backup-domain words it checks on every reset. Reason
+    // first, magic last -- if a reset interrupts us mid-sequence,
+    // we'd rather end up in app-mode with a stale reason than in
+    // BL-mode with no reason at all (post-mortem can still proceed).
     HAL_PWR_EnableBkUpAccess();
-    (&RTC->BKP0R)[config::kBlBootReqReg] = config::kBlBootReqMagic;
+    (&RTC->BKP0R)[config::kBkpJumpReasonReg] =
+        static_cast<std::uint32_t>(reason);
+    (&RTC->BKP0R)[config::kBlBootReqReg]     = config::kBlBootReqMagic;
 
     // 4) Trigger HW reset. NVIC_SystemReset issues a DSB + writes
     // AIRCR, then spins; the CPU resets within a few cycles. The

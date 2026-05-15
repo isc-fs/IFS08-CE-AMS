@@ -231,6 +231,24 @@ int main(void)
    * runs before osKernelStart and so satisfies the "watchdog alive in
    * the pre-scheduler window" invariant. SafetyTask owns the refresh
    * cadence (10 ms period; ~100 ms reload at nominal LSI). */
+
+#if defined(AMS_BMS_HIL_STUB)
+  /* HIL-only: wipe ErrorLatch (RTC_BKP_DR1) before any task can run.
+   * App_InitTask used to do this in PR #110 but lost the race --
+   * SafetyTask is osPriorityRealtime, App_InitTask is osPriorityHigh,
+   * so SafetyTask ran first after osKernelStart() and read the stale
+   * backup register before the clear executed. Running here, before
+   * osKernelInitialize(), is unraceable: no tasks exist yet.
+   *
+   * Direct register access (no ErrorLatch:: from C); equivalent to:
+   *   HAL_PWR_EnableBkUpAccess();
+   *   RTC->BKP1R = 0;
+   * The PWR clock is already enabled by SystemClock_Config() upstream.
+   *
+   * Bench-only by design; NEVER define AMS_BMS_HIL_STUB on flight HW. */
+  HAL_PWR_EnableBkUpAccess();
+  (&RTC->BKP0R)[1] = 0u;
+#endif
   /* USER CODE END 2 */
 
   /* Init scheduler */

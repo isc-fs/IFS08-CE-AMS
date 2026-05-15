@@ -167,6 +167,31 @@ inline constexpr std::uint32_t kBlBootReqCanId      = 0x002u;
 inline constexpr std::uint8_t  kBlBootReqPayload[4] = { 0xB0, 0x07, 0xAD, 0x11 };
 inline constexpr std::uint8_t  kBlBootReqDlc        = 4;
 
+// Jump-reason log. Bootloader::request_reboot() stamps this word into
+// RTC_BKP_DR2 right before NVIC_SystemReset so the post-mortem (BL
+// `read-dtc` / next app boot) can tell apart a CAN-triggered jump
+// from a fault-triggered jump etc. Cleared on POR by the BL preamble,
+// preserved across IWDG / NVIC resets (same backup-domain semantics
+// as the boot magic and error latch).
+//
+// Slot 0: BL boot-request magic. Slot 1: AMS ErrorLatch. Slot 2:
+// jump reason. Slot 3+ reserved for future use.
+inline constexpr std::uint32_t kBkpJumpReasonReg = 2;
+
+enum class JumpReason : std::uint32_t {
+    kNone           = 0x00000000u,
+    kCanTrigger     = 0x4A554D50u,  // 'JUMP' -- pit-tool sent the boot frame
+    kFaultLatch     = 0x46415554u,  // 'FAUT' -- safety supervisor forced it
+    kManualRequest  = 0x4D414E55u,  // 'MANU' -- operator-issued, no fault
+};
+
+// AMS node ID on the stm32-can-bootloader multi-node bus. Must match
+// the value the BL was compiled with (-DBL_NODE_ID=<n>). Embedded in
+// the firmware_info `reserved[0]` slot so the pit-tool can verify at
+// flash time that the app it's writing matches the BL it's talking
+// to. Changing this requires re-building both halves.
+inline constexpr std::uint32_t kAmsNodeId = 0x02u;
+
 // Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
 // ORIGIN and the bootloader's BL_APP_BASE.
 inline constexpr std::uint32_t kAppFlashBase    = 0x08020000u;

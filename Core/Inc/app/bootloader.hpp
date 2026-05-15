@@ -34,10 +34,13 @@ namespace ams {
 
 class Bootloader {
 public:
-    // Open all relays, drain TX, write BL_BOOT_REQ_MAGIC to BKP0R,
-    // NVIC_SystemReset. Never returns. HAL-dependent; lives in
-    // bootloader.cpp and is exercised at HIL, not at unit level.
-    [[noreturn]] static void request_reboot() noexcept;
+    // Open all relays, drain TX, stamp the jump reason into BKP2R,
+    // write BL_BOOT_REQ_MAGIC to BKP0R, NVIC_SystemReset. Never
+    // returns. The reason word is preserved across the reset and
+    // can be read by the BL (or by the next app boot, if the BL
+    // forwards control without clearing it).
+    [[noreturn]] static void request_reboot(
+        config::JumpReason reason = config::JumpReason::kManualRequest) noexcept;
 
     // True iff a CanFrame matches the boot-request trigger. Pure
     // logic, inlined in the header so the host unit-test build can
