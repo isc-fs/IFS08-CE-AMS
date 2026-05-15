@@ -53,6 +53,10 @@ void test_predicates_bms_stale(void);
 void test_predicates_current_overlimit(void);
 void test_predicates_current_stale(void);
 void test_predicates_vcu_stale(void);
+void test_predicates_boot_grace_suppresses_data_predicates(void);
+void test_predicates_boot_grace_does_not_suppress_force_error(void);
+void test_predicates_boot_grace_does_not_suppress_sdc_open(void);
+void test_predicates_after_grace_zero_ticks_faults(void);
 
 // test_state_machine.cpp
 void test_fsm_start_waits_without_button(void);
@@ -164,6 +168,10 @@ int main(void) {
     RUN_TEST(test_predicates_current_overlimit);
     RUN_TEST(test_predicates_current_stale);
     RUN_TEST(test_predicates_vcu_stale);
+    RUN_TEST(test_predicates_boot_grace_suppresses_data_predicates);
+    RUN_TEST(test_predicates_boot_grace_does_not_suppress_force_error);
+    RUN_TEST(test_predicates_boot_grace_does_not_suppress_sdc_open);
+    RUN_TEST(test_predicates_after_grace_zero_ticks_faults);
 
     RUN_TEST(test_fsm_start_waits_without_button);
     RUN_TEST(test_fsm_start_transitions_to_precharge_on_button);
