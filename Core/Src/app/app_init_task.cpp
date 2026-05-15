@@ -12,7 +12,6 @@
 #include "app/app_init_task.h"
 
 #include "ams_config.hpp"
-#include "ams_events.hpp"
 #include "app_globals.h"
 #include "error_latch.hpp"
 #include "ltc6811.hpp"
@@ -103,16 +102,14 @@ void ams_app_init_task_run(void *argument)
 
     if (discovered != ams::config::kLtcChainLength) {
         // Sticky-latch the fault in backup RAM (survives the watchdog
-        // reset that may follow), open all relays, and post the
-        // event so SafetyTask + StateTask see ERROR on their first
-        // tick. Equivalent to the BMS-stale / SDC-open path -- once
-        // here, only a clean power-cycle clears it.
+        // reset that may follow) and open all relays. MainTask will
+        // see ErrorLatch::is_set()==true on its first iteration and
+        // come up already latched. Refactor/19 phase 3 retired the
+        // safety_eventsHandle event-flag set that used to live here;
+        // there's no longer a separate consumer that would react to
+        // it independently of the latch.
         ams::ErrorLatch::set();
         ams::Relays::open_all();
-        if (safety_eventsHandle != nullptr) {
-            osEventFlagsSet(safety_eventsHandle,
-                            ams::events::safety::kForceError);
-        }
     }
 #else
     // HIL stub: no LTC chain on the bench. Skipping discovery avoids
