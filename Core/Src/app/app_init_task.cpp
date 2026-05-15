@@ -39,6 +39,18 @@ void ams_app_init_task_run(void *argument)
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
 
+#if defined(AMS_BMS_HIL_STUB)
+    // HIL-only: VBAT-backed RTC_BKP_DR1 outlives long power-offs on
+    // the bench (carrier has a coin cell + bulk caps), and the bench
+    // has no SWD to clear it externally. The whole point of the stub
+    // build is "real BMS safety doesn't apply here" -- a stale latch
+    // from a previous session has the same semantic, so wipe it on
+    // every boot. NEVER compiled into flight HW: this defeats the
+    // sticky-error contract that protects against intermittent
+    // pre-charge / SDC events surviving a brown-out.
+    ams::ErrorLatch::clear();
+#endif
+
     // FDCAN1 (accumulator + boot-trigger bus). FDCAN2 is left
     // initialised but unstarted -- the bootloader claims it after the
     // BL_BOOT_REQ_MAGIC reset, and the app no longer listens on it
@@ -73,6 +85,7 @@ void ams_app_init_task_run(void *argument)
     //    ERROR and refuse to leave it until the operator power-
     //    cycles with the chain healthy.
     // ----------------------------------------------------------------
+#if !defined(AMS_BMS_HIL_STUB)
     auto& ltc_bus = ams::ltc6820::Bus::default_instance();
     ltc_bus.configure(&hspi1,
                       ams::ltc6820::CsPin{ LTC6820_CS_GPIO_Port, LTC6820_CS_Pin });
@@ -101,6 +114,12 @@ void ams_app_init_task_run(void *argument)
                             ams::events::safety::kForceError);
         }
     }
+#else
+    // HIL stub: no LTC chain on the bench. Skipping discovery avoids
+    // the guaranteed-fail path that would re-latch + post kForceError
+    // right after we just cleared the latch above.
+    (void)hspi1;
+#endif
 
     // Task is single-shot. CMSIS-RTOS v2: terminate self.
     osThreadExit();
