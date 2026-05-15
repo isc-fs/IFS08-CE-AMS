@@ -58,11 +58,10 @@ extern "C" void ams_state_task_run(void *argument) {
         const auto bms  = ams::BmsService::instance().snapshot();
         const auto cur  = ams::CurrentService::instance().snapshot();
         const auto veh  = ams::VehicleService::instance().snapshot();
-        const bool sdc  =
-            HAL_GPIO_ReadPin(DIGITAL1_GPIO_Port, DIGITAL1_Pin) == GPIO_PIN_SET;
 
+        // SDC line not GPIO-sensed -- see comment in safety_task.cpp.
         const ams::fsm::Inputs in = {
-            state, bms, cur, veh, sdc,
+            state, bms, cur, veh,
             /*force_error_set=*/false,
             osKernelGetTickCount(),
             state_entry_tick,

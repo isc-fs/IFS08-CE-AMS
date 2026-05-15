@@ -61,18 +61,16 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define LTC6820_CS_Pin GPIO_PIN_4
 #define LTC6820_CS_GPIO_Port GPIOA
-#define AMS_OK_Pin GPIO_PIN_13
-#define AMS_OK_GPIO_Port GPIOF
-#define DIGITAL1_Pin GPIO_PIN_9
-#define DIGITAL1_GPIO_Port GPIOE
+#define AMS_OK_Pin GPIO_PIN_4
+#define AMS_OK_GPIO_Port GPIOB
 #define Charge_Button_Pin GPIO_PIN_7
 #define Charge_Button_GPIO_Port GPIOG
-#define RELAY_AIR_N_Pin GPIO_PIN_3
-#define RELAY_AIR_N_GPIO_Port GPIOD
-#define RELAY_AIR_P_Pin GPIO_PIN_4
-#define RELAY_AIR_P_GPIO_Port GPIOD
-#define RELAY_PRECHARGE_Pin GPIO_PIN_5
-#define RELAY_PRECHARGE_GPIO_Port GPIOD
+#define RELAY_AIR_P_Pin GPIO_PIN_5
+#define RELAY_AIR_P_GPIO_Port GPIOB
+#define RELAY_AIR_N_Pin GPIO_PIN_6
+#define RELAY_AIR_N_GPIO_Port GPIOB
+#define RELAY_PRECHARGE_Pin GPIO_PIN_7
+#define RELAY_PRECHARGE_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

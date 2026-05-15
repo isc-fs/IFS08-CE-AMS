@@ -45,7 +45,6 @@ void test_bootloader_trigger_trailing_bytes_ignored(void);
 // test_safety_predicates.cpp
 void test_predicates_nominal_no_fault(void);
 void test_predicates_force_error(void);
-void test_predicates_sdc_open(void);
 void test_predicates_cell_undervoltage(void);
 void test_predicates_cell_overvoltage(void);
 void test_predicates_cell_overtemp(void);
@@ -55,7 +54,6 @@ void test_predicates_current_stale(void);
 void test_predicates_vcu_stale(void);
 void test_predicates_boot_grace_suppresses_data_predicates(void);
 void test_predicates_boot_grace_does_not_suppress_force_error(void);
-void test_predicates_boot_grace_does_not_suppress_sdc_open(void);
 void test_predicates_after_grace_zero_ticks_faults(void);
 
 // test_state_machine.cpp
@@ -121,7 +119,6 @@ void test_sil_nominal_startup_to_run(void);
 void test_sil_precharge_timeout_to_error(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
-void test_sil_sdc_open_is_sticky(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -160,7 +157,6 @@ int main(void) {
 
     RUN_TEST(test_predicates_nominal_no_fault);
     RUN_TEST(test_predicates_force_error);
-    RUN_TEST(test_predicates_sdc_open);
     RUN_TEST(test_predicates_cell_undervoltage);
     RUN_TEST(test_predicates_cell_overvoltage);
     RUN_TEST(test_predicates_cell_overtemp);
@@ -170,7 +166,6 @@ int main(void) {
     RUN_TEST(test_predicates_vcu_stale);
     RUN_TEST(test_predicates_boot_grace_suppresses_data_predicates);
     RUN_TEST(test_predicates_boot_grace_does_not_suppress_force_error);
-    RUN_TEST(test_predicates_boot_grace_does_not_suppress_sdc_open);
     RUN_TEST(test_predicates_after_grace_zero_ticks_faults);
 
     RUN_TEST(test_fsm_start_waits_without_button);
@@ -231,7 +226,6 @@ int main(void) {
     RUN_TEST(test_sil_precharge_timeout_to_error);
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
-    RUN_TEST(test_sil_sdc_open_is_sticky);
 
     return UNITY_END();
 }

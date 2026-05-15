@@ -23,7 +23,6 @@ struct Harness {
     ams::BmsState     bms{};
     ams::CurrentState cur{};
     ams::VehicleState veh{};
-    bool              sdc_closed       = true;
     // Start past kSafetyBootGraceMs (2000) so the safety predicates
     // are active. Scenarios that need the grace itself live in
     // test_safety_predicates.cpp.
@@ -57,7 +56,7 @@ struct Harness {
 
     ams::fsm::Output step() {
         const ams::fsm::Inputs in = {
-            state, bms, cur, veh, sdc_closed,
+            state, bms, cur, veh,
             /*force_error_set=*/false,
             now, state_entry_tick,
         };
@@ -156,22 +155,8 @@ extern "C" void test_sil_charger_path(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 5: SDC opens during Run -> Error and Error is sticky even
-// after SDC closes again (operator must reset).
+// (Former scenario 5 -- "SDC opens during Run" -- removed in #18 along
+// with the sdc_closed predicate. The AMS no longer GPIO-senses the SDC
+// line; equivalent "sticky Error" coverage lives in the kForceError +
+// BMS-stale paths above.)
 // ---------------------------------------------------------------------------
-extern "C" void test_sil_sdc_open_is_sticky(void) {
-    Harness h;
-    h.state = ams::fsm::State::Run;
-    h.advance(20);
-
-    h.sdc_closed = false;
-    auto out = h.step();
-    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-
-    // Operator closes SDC again. State stays Error (sticky).
-    h.sdc_closed = true;
-    for (int i = 0; i < 5; ++i) {
-        h.advance(20);
-        TEST_ASSERT_EQUAL(ams::fsm::State::Error, h.step().next);
-    }
-}

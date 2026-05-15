@@ -23,16 +23,20 @@ struct Inputs {
     const BmsState&     bms;
     const CurrentState& current;
     const VehicleState& vehicle;
-    bool                sdc_closed;      // PE9 / DIGITAL1 reads HIGH
     bool                force_error_set; // safety_events kForceError pending
     std::uint32_t       now_tick;
 };
 
 [[nodiscard]] inline bool evaluate_fault(const Inputs& in) noexcept {
-    // Immediate-safety predicates apply from t=0 -- a stuck task or an
-    // open SDC at boot is never OK to tolerate.
+    // The AMS does not sense the SDC line directly: it IS part of the
+    // SDC via the AMS_OK output. There's no dedicated DIGITAL1 input on
+    // the v1.2 daughterboard (PE9 was a holdover from the legacy bare-
+    // metal port and the schematic doesn't route it). If we ever add an
+    // SDC-feedback input back, it returns here.
+    //
+    // Immediate-safety predicates apply from t=0 -- a stuck task at
+    // boot is never OK to tolerate.
     if (in.force_error_set) return true;
-    if (!in.sdc_closed)     return true;
 
     // Boot grace: suppress the data-presence predicates while services
     // are still warming up. Every service initialises its `last_*_tick`
