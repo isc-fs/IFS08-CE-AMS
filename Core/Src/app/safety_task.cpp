@@ -87,9 +87,19 @@ void SafetyTask::run() noexcept {
 
         if (fault) {
             latch_error_();
-            // Deliberately NOT refreshing the watchdog -- HW reset
-            // within one IWDG window (<= ~100 ms) brings us back up
-            // with relays open per the MX_GPIO_Init contract.
+            // Keep refreshing the watchdog after latching. The relays
+            // are already open (latch_error_ called Relays::open_all on
+            // entry) and ErrorLatch::set() persists the state across a
+            // power cycle, so the bus is safe. What we DON'T want is a
+            // self-sustained IWDG reset loop: ErrorLatch survives an
+            // IWDG reset (RTC backup registers are not POR-cleared), so
+            // if we withhold the refresh here we boot -> is_set()==true
+            // -> latch_error_() -> continue -> reset, every 100 ms,
+            // forever. Telemetry never gets a cycle to emit. The fix is
+            // to stay alive in the latched state so the operator can
+            // read telemetry, drive ForceError off, and explicitly
+            // reset via the bootloader path.
+            Watchdog::refresh();
             continue;
         }
 
