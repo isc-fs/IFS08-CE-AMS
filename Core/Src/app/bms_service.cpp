@@ -253,4 +253,27 @@ bool BmsService::is_healthy(std::uint32_t now_tick) const noexcept {
     return true;
 }
 
+#if defined(AMS_BMS_HIL_STUB)
+void BmsService::seed_for_hil_stub(std::uint32_t now_tick) noexcept {
+    // Plausible nominal values that pass every BMS predicate:
+    //   * module_online_mask = all 5 modules present (0x1F)
+    //   * last_rx_tick refreshed to now -> freshness check passes
+    //   * cell V/T arrays filled with mid-range values -> range checks pass
+    //   * summaries recomputed from arrays so derived fields agree
+    state_.module_online_mask = config::kAllModulesMask;
+    state_.ltc_online_mask    = static_cast<std::uint16_t>(
+        (1u << config::kLtcChainLength) - 1u);
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        state_.last_rx_tick[m] = now_tick;
+        for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
+            state_.cell_mV[m][c] = 3750;  // mid-pack nominal
+        }
+        for (std::uint8_t t = 0; t < config::kTempsPerModule; ++t) {
+            state_.cell_tempC[m][t] = 25;  // ambient
+        }
+    }
+    recompute_summaries_();
+}
+#endif
+
 }  // namespace ams
