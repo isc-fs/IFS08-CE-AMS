@@ -111,7 +111,8 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             // request_reboot() never returns -- it opens all relays,
             // writes BL_BOOT_REQ_MAGIC into BKP0R, and resets.
             if (ams::Bootloader::matches_trigger(frame)) {
-                ams::Bootloader::request_reboot();
+                ams::Bootloader::request_reboot(
+                    ams::config::JumpReason::kCanTrigger);
             }
             if (!ams::VehicleService::instance().update_from_frame(frame)) {
                 ++g_acu_rx_dropped_unknown;

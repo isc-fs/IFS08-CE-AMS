@@ -14,6 +14,8 @@
 // follow-up commit should hook these into the build system so they get
 // populated from CMake (semver / git hash / timestamp) automatically.
 
+#include "ams_config.hpp"
+
 #include <cstdint>
 
 extern "C" {
@@ -42,7 +44,11 @@ const bl_fwinfo_t __firmware_info
     .git_hash         = {0,0,0,0,0,0,0,0},
     .build_timestamp  = 0,
     .product_name     = "IFS08-CE-AMS",
-    .reserved         = {0, 0},
+    // reserved[0]: AMS node ID on the stm32-can-bootloader multi-node
+    // bus. Pit-tool reads this at flash time and refuses to flash if
+    // it doesn't match the BL it just discovered (see kAmsNodeId
+    // commentary in ams_config.hpp). reserved[1] still free.
+    .reserved         = { ams::config::kAmsNodeId, 0 },
 };
 
 }  // extern "C"
