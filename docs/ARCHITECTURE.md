@@ -19,36 +19,51 @@ Everything else exists to enforce these:
 
 1. **If the pack is unsafe, AIRs open within one safety period
    (10 ms).** "Unsafe" = any of the predicates in
-   [`Core/Inc/app/safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp).
+   [`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp).
 2. **Relays default to open** on any reset, fault, or uninitialised
    state. CubeMX-generated `MX_GPIO_Init` writes `PIN_RESET` to
-   PD3 / PD4 / PD5 **before** configuring them as outputs.
-3. **No single stuck task can prevent an AIR open.** `SafetyTask`
+   PB5 / PB6 / PB7 **before** configuring them as outputs.
+3. **No single stuck task can prevent an AIR open.** `MainTask`
    runs at `osPriorityRealtime`, has direct GPIO write access via
-   `ams::Relays`, and owns the watchdog refresh.
-4. **The watchdog is fed only on `SafetyTask`'s clean path.** A
-   stuck supervisor → IWDG timeout (≈100 ms) → hardware reset →
-   relays default open.
+   `ams::Relays`, and owns the watchdog refresh. The same task
+   owns FSM step, predicate evaluation, relay drive, and
+   telemetry emission — one timeline, no cross-task race.
+4. **The watchdog is fed only on `MainTask`'s clean path** (and on
+   the latched-fault path; see invariant 5). A stuck supervisor →
+   IWDG timeout (≈100 ms) → hardware reset → relays default open.
 5. **ERROR is latched across resets** via `RTC->BKP1R` (magic
    `0xA115EE51`). Cleared only by full backup-domain power loss.
    `BKP0R` is reserved for the bootloader's boot-request handshake
-   (`0xB00710AD`); the two registers must never share a word.
-6. **Shared sensor state has one writer.** Each domain has its own
-   mutex; readers `snapshot()` under the lock and work off a copy.
+   (`0xB00710AD`), `BKP2R` is reserved for the jump-reason ASCII
+   tag; no two registers share a word. Once latched, MainTask keeps
+   refreshing the watchdog (relays already open, latch persists) so
+   the chip stays alive for diagnosis instead of self-resetting in a
+   100 ms loop. See PR #107 for the loop bug this avoids.
+6. **Shared sensor state has one writer per service.** Single-writer
+   / many-reader contract — Cortex-M7 32-bit aligned loads/stores
+   are atomic. Multi-field reads can briefly observe a mid-update
+   snapshot, but the predicate and telemetry are tolerant of
+   one-cycle staleness. No mutex required; the old per-service
+   mutex was retired in refactor/19 phase 1 (PR #119).
 7. **Boot-grace window suppresses data-presence predicates for
-   `kSafetyBootGraceMs` (2 s) after `osKernelStart`.** At t = 0 every
-   service's `last_*_tick` is 0; without a grace the first SafetyTask
-   iteration would fault on freshness and withhold the watchdog
-   refresh, triggering an IWDG reset within ~100 ms — a latch-loop
-   the chip cannot escape. The window covers BmsPollTask's first
-   voltage poll (250 ms), CurrentTask's first ADC sample (50 ms),
-   and AcuCanTask's first VCU 0x100 (uncontrolled but typically
-   present). **Immediate-safety predicates stay active during the
-   grace**: `FORCE_ERROR` and SDC-open still trip instantly. Only
-   data-dependent predicates wait. See
+   `kSafetyBootGraceMs` (2 s) after `osKernelStart`.** At t = 0
+   every service's `last_*_tick` is 0; without a grace the first
+   MainTask iteration would fault on freshness and withhold the
+   watchdog refresh, triggering an IWDG reset within ~100 ms. The
+   window covers BmsPollTask's first voltage poll (250 ms),
+   CurrentSensorTask's first ADC sample (50 ms), and AcuCanTask's
+   first VCU 0x100 (uncontrolled but typically present).
+   **Immediate-safety predicates stay active during the grace**:
+   `force_error_set` still trips instantly. Only data-dependent
+   predicates wait. See
    [`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)
-   line 48 and the inline comment on `kSafetyBootGraceMs` in
+   and the inline comment on `kSafetyBootGraceMs` in
    [`ams_config.hpp`](../Core/Inc/app/ams_config.hpp).
+8. **The AMS does not sense the SDC line.** It IS part of the SDC
+   via the ``AMS_OK`` output (PB4) — opening that output opens the
+   SDC. The legacy ``DIGITAL1`` (PE9) input was retired in PR #117
+   because the v1.2 daughterboard doesn't route it; the
+   ``sdc_closed`` predicate is gone.
 
 > The HIL bench rig uses the `AMS_BMS_HIL_STUB` build flag to
 > deliberately violate invariants 5 and parts of 1 / 7 (the BMS-
@@ -98,33 +113,74 @@ system toolchain (Clang on macOS, GCC on Linux/CI).
 
 ## 3. Task architecture
 
-9 tasks total (incl. CMSIS-RTOS-mandated `defaultTask` and the
-FreeRTOS timer-service daemon). All declared in
-[`AMS.ioc`](../AMS.ioc) so CubeMX regenerates them every time.
+**6 live tasks** post-refactor/19 (PRs #119 + #120 + #121), plus
+CMSIS `defaultTask` and the FreeRTOS timer-service daemon. The
+collapsed `StateTask` and `TelemetryTask` thread handles are still
+declared by CubeMX-generated `MX_FREERTOS_Init` for compatibility,
+but their entry points immediately `osThreadExit()` — TCB and stack
+return to the heap, no CPU consumed.
 
 | Task | Priority (enum / value) | Period | Stack (words) | Implementation |
 |---|---|---|---|---|
 | `App_InitTask` | High (40) | once | 512 | [`app_init_task.cpp`](../Core/Src/app/app_init_task.cpp) |
-| `SafetyTask` | Realtime (48) | 10 ms | 512 | [`safety_task.cpp`](../Core/Src/app/safety_task.cpp) |
-| `StateTask` | High (40) | 20 ms | 1024 | [`state_task.cpp`](../Core/Src/app/state_task.cpp) |
-| `BmsPollTask` | Normal (24) | 250 ms / 500 ms (isoSPI poll) | 256 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
-| `AcuCanTask` | AboveNormal (32) | mixed (RX event + 250/500 ms TX; also dispatches the boot-trigger frame on FDCAN1) | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
-| `CurrentTask` | AboveNormal (32) | 50 ms | 256 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
-| `TelemetryTask` | Low (8) | 500 ms | 512 | [`telemetry_task.cpp`](../Core/Src/app/telemetry_task.cpp) |
-| `defaultTask` | Low (8) | — | 128 | (placeholder, CMSIS) |
+| `MainTask` *(thread name still "SafetyTask")* | Realtime (48) | 10 ms | 512 | [`safety_task.cpp`](../Core/Src/app/safety_task.cpp) |
+| `BmsPollTask` | Normal (24) | 250 ms / 500 ms (isoSPI poll + balance WRCFGA) | 256 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
+| `AcuCanTask` | AboveNormal (32) | RX-queue-driven (FDCAN1; dispatches boot-trigger 0x002) | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
+| `CurrentSensorTask` | AboveNormal (32) | 50 ms | 256 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
+| `defaultTask` | Low (8) | — | 128 | (CMSIS placeholder) |
 | Timer service | Normal | callback-driven | 256 | FreeRTOS daemon |
+| `StateTask` *(retired)* | High (40) | n/a | 1024 | self-exiting stub; logic now in `MainTask` |
+| `TelemetryTask` *(retired)* | Low (8) | n/a | 512 | self-exiting stub; logic now in `MainTask` |
 
-`BmsPollTask` owns the LTC6811 isoSPI conversation end-to-end —
-ADCV/RDCV[A-D] every 250 ms and the 20-channel WRCOMM/STCOMM/ADAX/
-RDAUXA sweep every 500 ms. The legacy `BmsRxTask` was retired in
-v1.2.0 (#73) once the BMS data path moved off FDCAN2; the
-bootloader-trigger frame it used to dispatch now rides on FDCAN1
-and is handled inside `AcuCanTask`.
+### MainTask body
 
-`SafetyTask` is the only Realtime-priority task in the system. Its
+One timeline, tick-gated cadences:
+
+```cpp
+for (;;) {
+    osDelayUntil(last_wake += 10);
+    snapshot bms / current / vehicle
+    fault = error_latched || evaluate_fault(...)
+    if (fault) {
+        if (!error_latched) latch (open relays + set ErrorLatch + fan off)
+        refresh watchdog                       // stay alive for diag
+    } else {
+        every 20 ms: fsm::step() → apply relay actions inline
+        refresh watchdog
+    }
+    every 500 ms: emit telemetry frames 0x4A0/0x4A1/0x4A2
+}
+```
+
+No event-flag ping-pong: the FSM's output bitmask is consumed
+inline by the same task that produced it. The old `safety_events`
+event group is still declared by CubeMX (cosmetic cleanup
+deferred) but no one reads or writes it.
+
+### BmsPollTask body
+
+Owns the LTC6811 isoSPI conversation end-to-end and the balance
+DCC writes (`maybe_run_balance_update` runs every
+`kBalanceUpdatePolls` voltage cycles, inline after RDCV[A-D],
+sharing the same `LTC6820::Bus`). Single owner of the chain — no
+bus mutex, no producer/consumer queue. Under `-DAMS_BMS_HIL_STUB`
+the body collapses to a 250 ms loop that seeds a nominal-healthy
+`BmsState` via `BmsService::seed_for_hil_stub` and never touches
+SPI — the real LTC/SPI path is compiled out, not guarded at
+runtime. See [`HIL_STUB.md`](HIL_STUB.md) for details.
+
+The legacy `BmsRxTask` was retired in v1.2.0 (#73) once the BMS
+data path moved off FDCAN2; the bootloader-trigger frame it used
+to dispatch now rides on FDCAN1 and is handled inside `AcuCanTask`.
+
+### Why MainTask is realtime
+
+`MainTask` is the only Realtime-priority task in the system. Its
 period of 10 ms is the hard contract: worst-case latency from
 "sensor reads out of range" to "AIRs open" is bounded by
-`producer_period + 10 ms + GPIO_write < 15 ms`.
+`producer_period + 10 ms + GPIO_write < 15 ms`. The producer tasks
+(`BmsPollTask`, `CurrentSensorTask`, `AcuCanTask`) all run at
+strictly lower priority, so they cannot preempt MainTask.
 
 ---
 
@@ -137,8 +193,7 @@ flowchart TD
     FDCAN2[FDCAN2<br/>bootloader-claimed post-reset only]
     SPI1[SPI1 master + PA4 CS<br/>via LTC6820]
     ADC1[ADC1 ch2 PF11]
-    GPIOD[GPIOD PD3/4/5 relays]
-    GPIOE9[GPIOE PE9 SDC]
+    GPIOB[GPIOB<br/>PB4 AMS_OK<br/>PB5/6/7 relays]
     TIM17[TIM17_CH1 PB9 fan]
     FDCAN1TX[FDCAN1 TX telemetry<br/>0x4A0/0x4A1/0x4A2]
     IWDG[IWDG1 ~100 ms]
@@ -156,29 +211,25 @@ flowchart TD
 
   subgraph Queues
     acu_rx[(acu_rx_queue 16)]
-    sa_evt[[safety_events]]
     bms_evt[[bms_events]]
   end
 
-  subgraph Services["Services (mutex-protected)"]
-    BmsSvc[BmsService<br/>bms_mutex]
-    CurSvc[CurrentService<br/>current_mutex]
-    VehSvc[VehicleService<br/>vehicle_mutex]
+  subgraph State["Shared state (volatile, single-writer)"]
+    BmsSvc[BmsService<br/>volatile BmsState]
+    CurSvc[CurrentService<br/>volatile CurrentState]
+    VehSvc[VehicleService<br/>volatile VehicleState]
   end
 
   subgraph Tasks
     AcuT[AcuCanTask]
-    BmsPollT[BmsPollTask]
-    CurT[CurrentTask]
-    StateT[StateTask]
-    SafeT[SafetyTask]
-    TeleT[TelemetryTask]
+    BmsPollT[BmsPollTask<br/>+ balance WRCFGA]
+    CurT[CurrentSensorTask]
+    MainT[MainTask<br/>safety + FSM + telemetry]
   end
 
   FDCAN1 --> RX1 --> acu_rx --> AcuT --> VehSvc
   AcuT -.charger.-> CurSvc
   AcuT -- "boot-trigger 0x002 → request_reboot" --> FDCAN1
-  AcuT -- "0x12C / 0x450" --> FDCAN1
 
   SPI1 <-->|"ADCV/RDCV* (V)<br/>WRCOMM+STCOMM+ADAX+RDAUXA (T)<br/>WRCFGA (balance)"| Chain
   BmsPollT -- "isoSPI conversation" --> SPI1
@@ -186,17 +237,12 @@ flowchart TD
 
   ADC1 --> CurT --> CurSvc
 
-  BmsSvc & CurSvc & VehSvc --> StateT
-  BmsSvc & CurSvc & VehSvc --> SafeT
-  BmsSvc & CurSvc & VehSvc --> TeleT
+  BmsSvc & CurSvc & VehSvc --> MainT
 
-  StateT -- safety_events --> sa_evt --> SafeT
-  StateT -- fan duty --> TIM17
-  SafeT -- relays --> GPIOD
-  SafeT -- refresh --> IWDG
-  GPIOE9 --> SafeT
-  GPIOE9 --> StateT
-  TeleT --> FDCAN1TX
+  MainT -- relays (inline) --> GPIOB
+  MainT -- fan duty --> TIM17
+  MainT -- refresh --> IWDG
+  MainT --> FDCAN1TX
 
   bms_evt -- pollV / pollT --> BmsPollT
 
@@ -209,24 +255,37 @@ flowchart TD
   classDef safe  fill:#ef4444,stroke:#7f1d1d,color:#fef2f2
   classDef dim   fill:#475569,stroke:#1e293b,color:#cbd5e1
 
-  class FDCAN1,SPI1,ADC1,GPIOD,GPIOE9,TIM17,FDCAN1TX,IWDG hw
+  class FDCAN1,SPI1,ADC1,GPIOB,TIM17,FDCAN1TX,IWDG hw
   class FDCAN2 dim
   class LTC,MUX chain
   class RX1 isr
-  class acu_rx,sa_evt,bms_evt queue
+  class acu_rx,bms_evt queue
   class BmsSvc,CurSvc,VehSvc svc
-  class AcuT,BmsPollT,CurT,StateT,TeleT task
-  class SafeT safe
+  class AcuT,BmsPollT,CurT task
+  class MainT safe
 ```
 
 **Legend** — hardware (slate, FDCAN2 dimmed because the app no longer
 drives it) · LTC6811 chain + ADG731 mux (cyan) · ISRs (orange) ·
-queues & event groups (amber) · services (blue) · tasks (green) ·
-`SafetyTask` (red, the only realtime-priority task in the system).
+queues & event groups (amber) · shared state (blue) · tasks (green) ·
+`MainTask` (red, the only realtime-priority task in the system).
 
-Arrows are direction of value flow; mutex / queue producers always
-go through the labelled primitive. The only direct GPIO writes
-happen in `SafetyTask` (relays + watchdog) and `App_InitTask`
+What changed from pre-refactor/19:
+
+- **No service mutexes.** Single-writer / many-reader → `volatile`
+  state, atomic 32-bit accesses. Old `bms_mutex` / `current_mutex` /
+  `vehicle_mutex` handles still declared by CubeMX but unused.
+- **No `safety_events` event group consumer.** FSM output bitmask
+  is consumed inline by MainTask. Handle still declared by CubeMX
+  but unused.
+- **One realtime task instead of two-cooperating-tasks.**
+  Safety + FSM + Telemetry collapsed; no ping-pong, no priority
+  race surface.
+- **HIL stub lives in `BmsPollTask`**, not in the predicate. The
+  safety predicate is HIL-agnostic — same code on flight and bench.
+
+Arrows are direction of value flow. The only direct GPIO writes
+happen in `MainTask` (relays + watchdog + fan) and `App_InitTask`
 (one-shot driver bring-up + LTC chain wakeup / length discovery).
 
 The BMS transport is now isoSPI end-to-end; see
@@ -240,9 +299,10 @@ ADG731 channel mapping that drives the temperature sweep.
 
 Six states. Transitions live in pure code at
 [`state_machine.hpp`](../Core/Inc/app/state_machine.hpp) so they're
-unit-tested in isolation; `StateTask` is the thin wrapper that
-calls `fsm::step()` at 20 ms cadence and posts the returned
-relay-action flags to `safety_events`.
+unit-tested in isolation; `MainTask` calls `fsm::step()` every 20 ms
+on its 10 ms cadence and consumes the returned relay-action bitmask
+inline (the old event-flag handoff to a separate `SafetyTask` was
+retired in PR #120).
 
 **Two mutually exclusive contexts:**
 
@@ -316,9 +376,10 @@ stateDiagram-v2
 **Legend** — idle (slate) · bring-up (amber) · running (green) ·
 charging (cyan) · error (red).
 
-Edge-transition relay actions:
+Edge-transition relay actions (bits in `Output::safety_flags`,
+consumed inline by MainTask):
 
-| Transition | `safety_events` bits set |
+| Transition | bits set in `Output::safety_flags` |
 |---|---|
 | Start → Precharge | `kCloseAirN`, `kClosePrecharge` |
 | Start → Charge | `kCloseAirN`, `kCloseAirP` |
@@ -331,12 +392,15 @@ Edge-transition relay actions:
   clears, the FSM stays in `Error` until reset. `ErrorLatch::set()`
   fires on every `Error` entry so the next boot also starts in
   `Error` until backup-domain power is cycled.
-- **Predicate-fault evaluation runs first** on every step, so any
-  fault from any state preempts the normal transition.
-- **AIR / Precharge actions are requests, not direct writes.** The
-  FSM posts `kClose*` / `kOpen*` bits on `safety_events`; SafetyTask
-  consumes them on the clean path (faulted path ignores them — safety
-  wins).
+- **Predicate-fault evaluation runs first** on every MainTask
+  iteration (10 ms cadence), so any fault from any state preempts
+  the normal transition (20 ms FSM step). MainTask skips the FSM
+  step on a fault iteration.
+- **AIR / Precharge actions are driven inline by MainTask.** The
+  FSM's `safety_flags` bitmask is interpreted by `apply_relay_actions`
+  in the same iteration the FSM ran. No event-flag indirection, no
+  cross-task race window. The faulted path skips relay actions but
+  the relays are already open from `latch_error_()`.
 
 ---
 
@@ -352,85 +416,89 @@ sequenceDiagram
   participant HW
   participant main as main()
   participant init as App_InitTask
-  participant safe as SafetyTask
-  participant state as StateTask
-  participant other as Bms/Acu/Cur/Tele
+  participant Main as MainTask
+  participant aux as Bms/Acu/Cur
 
   HW->>main: Reset_Handler then SystemInit
   main->>main: HAL_Init, SystemClock_Config
-  main->>HW: MX_GPIO_Init (relays driven low)
-  main->>HW: MX_ADC1/3, MX_FDCAN1/2, MX_TIM17, MX_USART2
-  main->>HW: ams_watchdog_init (IWDG1 alive pre-scheduler)
-  main->>main: osKernelInitialize
-  main->>main: create mutexes, queues, tasks
-  main->>main: ams_app_globals_init (event groups)
+  main->>HW: MX_GPIO_Init (relays driven low; PB4-7)
+  main->>HW: MX_ADC1/3, MX_FDCAN1/2, MX_TIM17, MX_USART2, MX_SPI1
+  main->>HW: MX_IWDG1_Init (IWDG alive pre-scheduler)
+  main->>main: osKernelInitialize + create queues, tasks
   main->>main: osKernelStart
 
   par scheduler running
-    init->>init: ErrorLatch init (DBP unlock)
-    init->>HW: HAL_FDCAN_ActivateNotification x2
-    init->>HW: HAL_FDCAN_Start x2
+    init->>init: ErrorLatch::init (DBP unlock)
+    Note over init: Under -DAMS_BMS_HIL_STUB:<br/>clear ErrorLatch +<br/>skip LTC chain discovery
+    init->>HW: FDCAN1 filter + ActivateNotification + Start
+    init->>HW: LTC6820 configure + wakeup + chain discovery
+    alt chain discovered != kLtcChainLength
+      init->>HW: ErrorLatch::set + Relays::open_all
+    end
     init->>init: osThreadExit
   and
-    safe->>safe: ErrorLatch is_set
-    Note over safe: For t < kSafetyBootGraceMs (2 s)<br/>data-presence predicates are suppressed.<br/>FORCE_ERROR + SDC-open still trip instantly.
-    loop every 10 ms
-      safe->>safe: snapshot all services
-      alt fault (any active predicate)
-        safe->>HW: Relays open_all + ErrorLatch set
-        Note over safe,HW: NO IWDG refresh, HW reset follows
-      else clean (incl. inside boot grace)
-        safe->>HW: service relay-action flags
-        safe->>HW: HAL_IWDG_Refresh
+    Main->>Main: ErrorLatch::init + Fan::init
+    Main->>Main: boot in Error if ErrorLatch::is_set
+    Note over Main: For t < kSafetyBootGraceMs (2 s)<br/>data-presence predicates are suppressed.<br/>force_error_set still trips instantly.
+    loop every 10 ms (osDelayUntil)
+      Main->>Main: snapshot bms/current/vehicle
+      alt fault detected
+        Main->>HW: latch (Relays::open_all + ErrorLatch::set + fan off)
+        Main->>HW: HAL_IWDG_Refresh (stay alive for diag)
+      else clean path
+        Main->>Main: every 20 ms: fsm::step → apply relay actions inline
+        Main->>HW: HAL_IWDG_Refresh
       end
+      Main->>HW: every 500 ms: emit 0x4A0/0x4A1/0x4A2
     end
-  and
-    state->>state: Fan init + initial duty
-    loop every 20 ms
-      state->>state: fsm step returns next + flags
-      state->>safe: osEventFlagsSet (safety_events)
-    end
-  and other
-    other-->>other: per-task period or event wait
+  and aux
+    aux-->>aux: BmsPoll 250/500 ms (+ balance WRCFGA)<br/>CurrentSensor 50 ms ADC<br/>AcuCan RX-queue drain
   end
 ```
 
 `App_InitTask` self-deletes once peripheral bring-up is done; its
-TCB and stack return to the heap.
+TCB and stack return to the heap. The retired `StateTask` and
+`TelemetryTask` thread entry points also call `osThreadExit()`
+immediately, so their stacks return to the heap on boot too.
 
 ---
 
 ## 7. Shared state
 
-Three domain services. Each is a singleton wrapping a struct
-guarded by one mutex. Single-writer per service; many readers.
+Three domain services. Each is a singleton wrapping a `volatile`
+struct. **Single-writer / many-reader**, lock-free.
 
-| Service | Mutex | Writer | Readers |
-|---|---|---|---|
-| [`BmsService`](../Core/Inc/app/bms_service.hpp) | `bms_mutexHandle` | `BmsPollTask` (LTC6811 isoSPI sweeps; `update_from_ltc_response` + `update_temperature`) | Safety, State, AcuCan TX, BalanceController, Telemetry |
-| [`CurrentService`](../Core/Inc/app/current_service.hpp) | `current_mutexHandle` | `CurrentTask` (ADC), `AcuCanTask` (charger flag) | Safety, State, AcuCan TX, BmsPoll, Telemetry |
-| [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `vehicle_mutexHandle` | `AcuCanTask` | Safety, State, Telemetry |
+| Service | Writer | Readers |
+|---|---|---|
+| [`BmsService`](../Core/Inc/app/bms_service.hpp) | `BmsPollTask` (LTC6811 isoSPI sweeps; `update_from_ltc_response` + `update_temperature` + `seed_for_hil_stub` under HIL flag) | MainTask, AcuCanTask, BalanceController |
+| [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (ADC), `AcuCanTask` (charger flag) | MainTask, BmsPollTask |
+| [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `AcuCanTask` | MainTask |
 
-`BmsState` shape (current, post-#71):
+Concurrency model: Cortex-M7 32-bit aligned loads/stores are atomic.
+Multi-field reads from a non-writer task can briefly observe a
+mid-update snapshot — the predicate + telemetry are tolerant of
+one-cycle staleness (any inconsistency causes at worst one extra
+predicate evaluation that corrects on the next 10 ms iteration).
+The mutex handles (`bms_mutexHandle` etc.) are still declared by
+CubeMX in `MX_FREERTOS_Init` but no one acquires them anymore;
+cleanup deferred to a future `.ioc` pass.
+
+`BmsState` shape:
 
 | Field | Type | Notes |
 |---|---|---|
 | `cell_mV` | `uint16_t [5][19]` | 95 cells; populated by `update_from_ltc_response`. |
 | `cell_tempC` | `int16_t [5][40]` | 200 NTC slots; populated by `update_temperature`. Ctor-initialised to 25 °C so unpopulated channels don't dominate `max_tempC`. |
-| `pack_voltage_mV`, `min/max_cell_mV`, `min/max/avg_tempC` | summaries | recomputed inside the same mutex after every write. |
+| `pack_voltage_mV`, `min/max_cell_mV`, `min/max/avg_tempC` | summaries | recomputed inside `recompute_summaries_` after every write. |
 | `last_rx_tick[5]` | `uint32_t` | advances only on a poll where BOTH LTCs of the module passed PEC. |
 | `module_online_mask` | `uint8_t` | sticky (once-online); compared against `kAllModulesMask`. |
 | `ltc_online_mask` | `uint16_t` | non-sticky per-cycle per-IC PEC-OK mask (10 bits). |
-
-Mutex access goes through
-[`ScopedMutex`](../Core/Inc/app/scoped_mutex.hpp) RAII. No raw
-`osMutexAcquire` calls anywhere in app code.
 
 ---
 
 ## 8. Inter-task signalling
 
-Three primitives, nothing else.
+Two primitives, nothing else.
 
 **Queues** ([`AMS.ioc`](../AMS.ioc) `FREERTOS.Queues01`):
 
@@ -439,15 +507,10 @@ Three primitives, nothing else.
 | `acu_rx_queue` | 16 | `CanFrame` | FDCAN1 RX ISR | AcuCanTask |
 | `acu_tx_queue` | 16 | `CanFrame` | (reserved) | (reserved) |
 
-`bms_rx_queue` was retired in v1.2.0 (#73) along with `BmsRxTask` —
-the BMS no longer talks over CAN, and the bootloader-trigger frame
-that used to share FDCAN2 with the BMS bus now rides on FDCAN1
-(handled inline inside `AcuCanTask`).
-
+`bms_rx_queue` was retired in v1.2.0 (#73) along with `BmsRxTask`.
 `acu_tx_queue` is declared in the .ioc but currently unused —
-`AcuCanTask` is the sole producer on FDCAN1 TX and calls HAL
-directly. Kept declared so a future task could publish through
-the queue without an .ioc round-trip.
+`AcuCanTask` and `MainTask` are sole producers on FDCAN1 TX and
+call HAL directly.
 
 **Event groups** (managed by
 [`app_globals.cpp`](../Core/Src/app/app_globals.cpp) because
@@ -455,11 +518,14 @@ CubeMX 6.16 doesn't emit them from .ioc):
 
 | Group | Bit | Set by | Cleared by |
 |---|---|---|---|
-| `safety_events` | `kForceError` | StateTask (Error entry), App_InitTask (chain-length mismatch on boot) | SafetyTask (latch + reset only) |
-|  | `kCloseAirN/AirP/Precharge` | StateTask | SafetyTask (consume on action) |
-|  | `kOpenAirN/AirP/Precharge` | StateTask | SafetyTask (consume on action) |
 | `bms_events` | `kPollVDue` | osTimer 250 ms | BmsPollTask (ADCV + RDCV[A-D] over isoSPI) |
 |  | `kPollTDue` | osTimer 500 ms | BmsPollTask (20-channel ADG731 mux sweep) |
+
+The `safety_events` event group was retired in refactor/19 phase 3
+(PR #120): the FSM's relay-action bitmask is now consumed inline by
+`MainTask` in the same iteration the FSM produced it. The handle is
+still declared by CubeMX (`MX_FREERTOS_Init`) but no one reads or
+writes it; cleanup deferred to a future `.ioc` pass.
 
 ---
 
@@ -480,10 +546,10 @@ overflows sector 6).
 
 FreeRTOS heap (`configTOTAL_HEAP_SIZE = 32 768`): ~14.7 KB used,
 ~18 KB free. Newlib reentrant structs account for ~1 KB. Three
-load-bearing tasks (`App_InitTask`, `SafetyTask`, `StateTask`) were
-originally planned as `Static` allocation; CubeMX UI workflow makes
-that brittle, so they ship `Dynamic` for now. Heap has enough
-headroom that this is fine; revisitable post-commissioning.
+load-bearing tasks (`App_InitTask`, `MainTask`) were originally
+planned as `Static` allocation; CubeMX UI workflow makes that
+brittle, so they ship `Dynamic` for now. Heap has enough headroom
+that this is fine; revisitable post-commissioning.
 
 ---
 
@@ -506,14 +572,17 @@ Compiler flags (top-level [`CMakeLists.txt`](../CMakeLists.txt)):
   `<thing>_service` or `<thing>_task`.
 - Singletons via `static` local in `instance()`. Construction order
   controlled by explicit `init()` calls from `App_InitTask`.
-- Task entry points are `extern "C"` trampolines that call
-  `Singleton::instance().run()`.
+- Task entry points are `extern "C"` trampolines that call into
+  the implementation TU.
 - `enum class` for state types (`fsm::State`, `CanBus`).
 - `constexpr` for every threshold, ID, period — collected in
   [`ams_config.hpp`](../Core/Inc/app/ams_config.hpp). Anything
   needing on-vehicle tuning is tagged `COMMISSION` (see
   [`COMMISSIONING.md`](COMMISSIONING.md)).
-- `ScopedMutex` always — no raw `osMutexAcquire`.
+- **Single-writer per shared struct.** No mutexes in app code —
+  Cortex-M7 atomic 32-bit accesses + the producer/consumer
+  contract make them unnecessary. If you find yourself wanting a
+  mutex, the design is wrong; talk to the safety reviewer.
 - No `new` / `delete` in steady state. FreeRTOS allocates at task /
   queue / event-group creation only.
 
@@ -579,11 +648,11 @@ IFS08-CE-AMS/
 │   │       ├── ltc6820.hpp          # SPI/CS isoSPI master wrapper (#68)
 │   │       ├── relay_driver.hpp
 │   │       ├── safety_predicates.hpp
-│   │       ├── safety_task.{h,hpp}
-│   │       ├── scoped_mutex.hpp
+│   │       ├── safety_task.{h,hpp}      # MainTask body lives here (rename pending)
+│   │       ├── scoped_mutex.hpp         # orphaned since refactor/19 phase 1
 │   │       ├── state_machine.hpp
-│   │       ├── state_task.h
-│   │       ├── telemetry_task.h
+│   │       ├── state_task.h             # stub; logic merged into MainTask in #120
+│   │       ├── telemetry_task.h         # stub; logic merged into MainTask in #120
 │   │       ├── vehicle_service.hpp
 │   │       └── watchdog.{h,hpp}
 │   ├── Src/
@@ -607,9 +676,9 @@ IFS08-CE-AMS/
 │   │       ├── ltc6811.cpp           # PEC15 + register-group decoders + WRCFGA
 │   │       ├── ltc6820.cpp           # HAL_SPI wrapper, wakeup, STCOMM
 │   │       ├── relay_driver.cpp
-│   │       ├── safety_task.cpp
-│   │       ├── state_task.cpp
-│   │       ├── telemetry_task.cpp
+│   │       ├── safety_task.cpp          # MainTask (safety + FSM + telemetry + fan)
+│   │       ├── state_task.cpp           # stub: osThreadExit() — retired in #120
+│   │       ├── telemetry_task.cpp       # stub: osThreadExit() — retired in #120
 │   │       ├── vehicle_service.cpp
 │   │       └── watchdog.cpp
 │   └── Startup/startup_stm32h733zgtx.s
@@ -657,7 +726,7 @@ Different entry points by goal:
   Touches `AMS.ioc` (`Tasks01` line), one `<task>.h` C-callable
   header, one `<task>.cpp` implementation, one `main.c` USER CODE
   trampoline.
-- **Modifying SafetyTask / predicates / relays**: this is the
+- **Modifying MainTask / predicates / relays**: this is the
   `safety-critical` review bar. Read § 1 and § 5 of this file; then
   follow [`CONTRIBUTING.md`](../CONTRIBUTING.md) § "Modifying the
   safety supervisor".
@@ -679,11 +748,11 @@ For team members coming from
 
 | ECU pattern | AMS equivalent | Reason for delta |
 |---|---|---|
-| `g_in` + `g_inMutex` (single shared struct) | 3 services, 3 mutexes | Distinct domains; finer locking |
-| `ControlTask` 10 ms | `StateTask` 20 ms + `SafetyTask` 10 ms | Safety split out at higher priority |
+| `g_in` + `g_inMutex` (single shared struct) | 3 services, no mutex (volatile, single-writer) | Distinct domains; lock-free single-writer contract |
+| `ControlTask` 10 ms | `MainTask` 10 ms (safety + FSM 20 ms + telemetry 500 ms inline) | Refactor/19 collapsed to one timeline |
 | `CanRxTask` 5 ms single bus | `AcuCanTask` (FDCAN1 only) | BMS moved off CAN onto isoSPI in v1.2.0 (#67–#74); `BmsRxTask` retired (#73). |
 | `CanTxTask` drains queue | Merged into `AcuCanTask` / `BmsPollTask` | Fewer context switches |
 | legacy AMS CAN polling on FDCAN2 | LTC6811-1 isoSPI broadcast (ADCV / RDCV[A-D] / WRCOMM / ADAX / RDAUXA / WRCFGA) via LTC6820 master on SPI1 | Hardware swap to BMS_LITE in v1.2.0; protocol details in [`BMS_LTC6811.md`](BMS_LTC6811.md). |
-| (none) | `SafetyTask` realtime + watchdog discipline | AMS has direct safety output |
-| `AppRuntime_*Step` factoring | Pure helpers (`fsm::step`, `safety::evaluate_fault`, `adc_to_mA`, `classify`) | Larger host-testable surface |
-| C only | C++ for app, C for CubeMX-owned | Legacy AMS was already C++; classes simplify mutex/service patterns |
+| (none) | `MainTask` realtime + watchdog discipline | AMS has direct safety output |
+| `AppRuntime_*Step` factoring | Pure helpers (`fsm::step`, `safety::evaluate_fault`, `adc_to_mA`, `classify`, `telemetry::encode_*`) | Larger host-testable surface |
+| C only | C++ for app, C for CubeMX-owned | Legacy AMS was already C++; classes simplify the service pattern |

@@ -170,20 +170,21 @@ Procedure:
 
 ---
 
-## 3d. SafetyTask boot-grace window
+## 3d. MainTask boot-grace window
 
 `kSafetyBootGraceMs` defaults to 2000 ms. While `now_tick <
 kSafetyBootGraceMs`, the data-presence predicates inside
 [`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)
 return `false` unconditionally. The watchdog is fed normally during
-this window, so the chip stays alive while BmsPollTask, CurrentTask,
-and AcuCanTask are still spinning up their first sample.
+this window, so the chip stays alive while BmsPollTask,
+CurrentSensorTask, and AcuCanTask are still spinning up their first
+sample.
 
 **Immediate-safety predicates stay active during the grace** —
-`FORCE_ERROR` (event-flag) and SDC-open (PE9 input) still trip a
-fault on the very first SafetyTask iteration. The grace only
-suppresses the freshness / range checks that would always fail at
-t = 0 because no service has published yet.
+`force_error_set` still trips a fault on the very first MainTask
+iteration. The grace only suppresses the freshness / range checks
+that would always fail at t = 0 because no service has published
+yet.
 
 Defaults are sized for the slowest startup path among the data
 producers:
@@ -191,7 +192,7 @@ producers:
 | Producer | First write to its service |
 |---|---|
 | BmsPollTask voltage poll | ~250 ms (kBmsPollVoltMs) |
-| CurrentTask ADC sample | 50 ms (kCurrentPeriodMs) |
+| CurrentSensorTask ADC sample | 50 ms (kCurrentPeriodMs) |
 | AcuCanTask VCU 0x100 ingest | depends on the vehicle bus; typically present immediately |
 | BmsPollTask temperature sweep | ~500 ms (kBmsPollTempMs) |
 
@@ -201,7 +202,7 @@ more than the margin; tune up if a planned producer takes longer
 than 2 s to publish on a bench / vehicle.
 
 > Setting `kSafetyBootGraceMs = 0` reverts to the pre-v1.2.0
-> behaviour, where the very first SafetyTask iteration faulted on
+> behaviour, where the very first MainTask iteration faulted on
 > freshness and the chip entered a watchdog-reset loop. Don't do
 > this — the loop is unrecoverable without reflashing.
 
@@ -225,20 +226,22 @@ The IWDG runs at LSI ~32 kHz with ±47 % tolerance. Defaults:
 - `reload    = 100`
 - `nominal timeout = 100 ms` (range ~52 ms to ~190 ms)
 
-The SafetyTask refreshes every 10 ms on the clean path, so even at
-the LSI fast corner (52 ms) we have 5× margin. **Do not increase the
-reload** without re-evaluating the SafetyTask period.
+MainTask refreshes every 10 ms on the clean path (and on the
+latched-fault path; see ARCHITECTURE.md §1 invariant 5), so even at
+the LSI fast corner (52 ms) we have 5× margin. **Do not increase
+the reload** without re-evaluating the MainTask period.
 
 If the watchdog ever resets during normal operation, the failure
-mode is almost certainly NOT the LSI tolerance — it's SafetyTask
-being preempted or blocking on a mutex. Investigate before touching
-the IWDG constants.
+mode is almost certainly NOT the LSI tolerance — it's MainTask
+being preempted by an unexpected higher-priority task, or
+BmsPollTask's SPI call blocking past 10 ms. Investigate before
+touching the IWDG constants.
 
 ---
 
 ## 6. Fan duty cycles
 
-`kFanDuty[]` in `state_task.cpp`:
+`kFanDuty[]` in `safety_task.cpp` (MainTask's anonymous namespace):
 
 | State | Default % | Tune by |
 |---|---|---|
@@ -259,14 +262,14 @@ vehicle:
 1. Cold-boot from VBAT-only → AIRs read open via clamp meter
 2. Press start button with healthy pack → reach `Run` within 2 s
 3. Charger plug-in from `Run` → `Charge`, fan to 75 %
-4. Manual SDC open during `Run` → AIRs open within 50 ms (scope)
-5. Force-open any BMS module (pull its isoSPI cable from the chain) →
+4. Force-open any BMS module (pull its isoSPI cable from the chain) →
    `Error` within `kBmsStaleMs + one V-poll period`, AIRs open, backup
    register flag set
-6. Power-cycle after step 5 → AMS comes up in `Error`, AIRs stay
+5. Power-cycle after step 4 → AMS comes up in `Error`, AIRs stay
    open, requires the manual reset procedure (TBD: define gesture)
-7. 30-minute UART log capture with the line format from
-   `telemetry_task.cpp`; confirm no drops, no garbage
+6. 30-minute capture of telemetry frames `0x4A0` / `0x4A1` / `0x4A2`
+   on FDCAN1; confirm cadence is 500 ms ± 5 ms, no dropped frames,
+   no garbage decode
 
 Sign off each step in the project log with date, scrutineer name, and
 the firmware commit SHA.

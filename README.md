@@ -14,8 +14,9 @@ relay, decides when it's safe to leave the pre-charge state, runs the
 balancing FETs while charging, and shuts the pack down within ~10 ms
 the moment any safety threshold is crossed. It talks to the VCU over
 FDCAN1 and to the BMS over isoSPI (LTC6820 → daisy-chained LTC6811-1
-monitors). There is one realtime-priority safety supervisor that
-overrides everything else.
+monitors). One single-timeline MainTask runs safety + FSM + telemetry
+on tick-gated cadences; three auxiliary tasks own the BMS poll, the
+current sensor ADC, and the FDCAN RX queue.
 
 ```mermaid
 flowchart LR
@@ -25,28 +26,34 @@ flowchart LR
     subgraph AMS[AMS STM32H733]
         SPI[SPI1 + LTC6820 master]
         ADC[ADC1 ch2<br/>pack current]
-        Relays[AIR-, AIR+, Precharge<br/>PD3/4/5]
-        AmsOk[AMS_OK PF13]
-        SDC[SDC PE9]
+        Relays[AIR-, AIR+, Precharge<br/>PB5/PB6/PB7]
+        AmsOk[AMS_OK PB4]
     end
 
     AMS -- "isoSPI" --> Chain([10 × LTC6811-1<br/>+ 2 × ADG731 per module])
     Chain -- "200 NTCs + 95 cells" --> AMS
 
-    AMS -- "telemetry 0x4A0/4A1/4A2<br/>min-V 0x12C, current 0x450" --> VCU
+    AMS -- "telemetry 0x4A0/4A1/4A2" --> VCU
 
     classDef ext  fill:#e2e8f0,stroke:#475569,color:#0f172a
     classDef hw   fill:#1e293b,stroke:#0f172a,color:#f8fafc
     classDef bus  fill:#0ea5e9,stroke:#0369a1,color:#f0f9ff
     class VCU,BENCH ext
-    class SPI,ADC,Relays,AmsOk,SDC hw
+    class SPI,ADC,Relays,AmsOk hw
     class Chain bus
 ```
 
 The pack-monitoring loop runs at **250 ms** (cell voltages, ADCV + 4×
 RDCV*), the temperature sweep at **500 ms** (20-channel mux on each
-of the 10 LTCs, 200 NTCs total), the safety supervisor at **10 ms**,
-the FSM at **20 ms**, and the watchdog timeout is **~100 ms**.
+of the 10 LTCs, 200 NTCs total), the safety supervisor at **10 ms**
+(inside MainTask), the FSM at **20 ms** (inside MainTask), telemetry
+at **500 ms** (inside MainTask), and the watchdog timeout is **~100 ms**.
+
+> **v1.2 daughterboard note.** Digital pin map is on Port B
+> (PB4=AMS_OK, PB5=AIR+, PB6=AIR-, PB7=PRECHARGE). The legacy
+> ``DIGITAL1`` SDC sense input on PE9 is **retired** — the AMS is
+> part of the SDC through ``AMS_OK``, not a sensor of it. See
+> the schematic in ``pcbs/`` for the connector pinout.
 
 ---
 
