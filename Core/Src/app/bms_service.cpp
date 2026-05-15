@@ -4,16 +4,19 @@
 
 #include "ams_config.hpp"
 #include "ltc6811.hpp"
-#include "scoped_mutex.hpp"
-
-#include "cmsis_os2.h"
 
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
 
-extern "C" osMutexId_t bms_mutexHandle;  // created in main.c
+// Lock-free single-writer / multi-reader contract (refactor/19 phase 1):
+// BmsPollTask is the only writer. SafetyTask, StateTask, AcuCanTask,
+// TelemetryTask are readers. Cortex-M7 32-bit aligned loads/stores
+// are atomic; multi-field reads can briefly observe a mid-update
+// snapshot, but the predicate + telemetry are tolerant of one-cycle
+// staleness. The mutex (bms_mutexHandle) is still declared in main.c
+// from the FreeRTOS init; it just isn't acquired by anyone anymore.
 
 namespace ams {
 
@@ -132,8 +135,6 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
 
     if (chain_response == nullptr || len < kExpected) return false;
 
-    ScopedMutex lock(bms_mutexHandle);
-    if (!lock.acquired()) return false;
 
     // Per-IC PEC sweep first, then commit cell values for ICs that
     // passed all four groups. Doing it in two passes keeps the state
@@ -208,8 +209,6 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
     if (chain_response == nullptr || len < kExpected) return false;
     if (channel_idx >= config::kTempsPerLtc)          return false;
 
-    ScopedMutex lock(bms_mutexHandle);
-    if (!lock.acquired()) return false;
 
     bool any_ok = false;
     std::array<std::uint16_t, 3> aux{};
@@ -241,14 +240,10 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
 }
 
 BmsState BmsService::snapshot() const noexcept {
-    ScopedMutex lock(bms_mutexHandle);
-    if (!lock.acquired()) return state_;  // best-effort; caller checks freshness
     return state_;
 }
 
 bool BmsService::is_healthy(std::uint32_t now_tick) const noexcept {
-    ScopedMutex lock(bms_mutexHandle);
-    if (!lock.acquired()) return false;
 
     if (state_.module_online_mask != config::kAllModulesMask) return false;
 
