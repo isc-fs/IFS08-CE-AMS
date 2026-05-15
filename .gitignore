@@ -51,9 +51,11 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-# CMake build output
+# CMake build output (root-level and any in-source build/ directory)
 /build/
 /build-*/
+**/build/
+**/build-*/
 
 # clangd index cache
 /.cache/

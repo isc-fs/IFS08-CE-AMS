@@ -11,9 +11,12 @@ conventions that go beyond "open a feat branch and PR to dev".
 |---|---|
 | What is the architecture? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | What CAN frames does the AMS speak? | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) |
+| How does the LTC6811 / isoSPI BMS path work? | [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) |
+| What is `AMS_BMS_HIL_STUB`? When do I use it? | [`docs/HIL_STUB.md`](docs/HIL_STUB.md) |
 | What is the current phase plan? | [`ROADMAP.md`](ROADMAP.md) (auto-generated) |
 | Source of truth for the roadmap | [`.github/roadmap.yaml`](.github/roadmap.yaml) |
 | Day-to-day Git flow | [`README.md`](README.md) |
+| Bench acceptance criteria for a release | [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) |
 
 ---
 
@@ -85,8 +88,36 @@ Required for merge:
 3. Add a unit test in `tests/unit/` covering encode/decode round-trip and
    edge cases.
 4. Update `docs/CAN_MAP.md` with the new entry.
-5. If the frame talks to the VCU or BMS, label the PR `protocol` and
-   confirm the change with the other team before merging.
+5. If the frame talks to the VCU, label the PR `protocol` and
+   confirm the change with the VCU team before merging.
+
+> The BMS no longer rides on CAN since v1.2.0 — BMS work goes through
+> the isoSPI / LTC6811 path. See the next section.
+
+---
+
+## Adding a new LTC6811 / isoSPI command
+
+1. If the command isn't already declared, add its 11-bit code to
+   `Core/Inc/app/ltc6811.hpp` as a `kCmd<Name>` constant. Per-IC
+   payload-builder helpers (like `pack_cfga_payload`,
+   `pack_adg731_select`) also live in this header.
+2. The pure-logic encode/decode lives in `Core/Src/app/ltc6811.cpp`.
+   No HAL dependency — it must compile in the host unit-test build.
+3. Add a unit test in `tests/unit/test_ltc6811_decode.cpp` with at
+   least the datasheet-derived test vector and one PEC-corrupt
+   negative case.
+4. The transport call site lives in `bms_poll_task.cpp` (or a new
+   helper) and uses `ams::ltc6820::Bus::default_instance()`. Add a
+   `Bus` method only if the call shape is genuinely new
+   (broadcast-write with per-IC payload, post-cmd dummy clocks,
+   etc.) — most reads / writes are already covered by
+   `send_command`, `read_register_group`, and `write_chain_command`.
+5. Update [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) §5 with the
+   new command + cadence row.
+6. If the new command changes a safety predicate (e.g. enabling the
+   LTC's onboard UV/OV detection), label the PR `safety-critical`
+   and follow that section's bar.
 
 ---
 
@@ -114,6 +145,13 @@ This is the only file in the repo with a hard review bar.
   changed.
 - The IWDG-feed point in `SafetyTask::step` must remain on the clean path
   only — feeding on the fault path defeats the whole watchdog design.
+- New predicates that depend on a producer's freshness MUST live behind
+  the boot-grace gate (`now_tick < kSafetyBootGraceMs`) so the chip
+  doesn't latch ERROR at t = 0 (invariant 7 in
+  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1).
+- New predicates that are immediate (event flags, GPIO inputs) must
+  stay outside the grace gate so SDC-open and FORCE_ERROR trip on the
+  first iteration.
 - Two approving reviews from team members familiar with FS safety rules,
   not one.
 - A captured FSM-transition trace from SIL is attached as evidence.
@@ -136,15 +174,29 @@ Full rules in `docs/ARCHITECTURE.md` § 11. Highlights:
 
 ## Local builds and tests
 
-```bash
-# Tests (host)
-cmake -B build -DBUILD_UNIT_TESTS=ON -DBUILD_SIL_TESTS=ON
-cmake --build build
-ctest --test-dir build --output-on-failure
+The build system is CMake end-to-end — the firmware target uses the
+CubeMX-generated `cmake/stm32cubemx/CMakeLists.txt`; the host tests
+use `tests/unit/CMakeLists.txt`. There is no CubeIDE / Eclipse-
+managed makefile.
 
-# Firmware (CubeIDE-generated makefile)
-make -C Debug -j
+```bash
+# Host unit + SIL tests
+cmake -B build-tests -S tests/unit
+cmake --build build-tests
+ctest --test-dir build-tests --output-on-failure
+
+# Firmware (cross-compile)
+cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+cmake --build build
+arm-none-eabi-size build/AMS.elf
+scripts/check_flash_layout.py build/AMS.elf   # sector-0 / overflow guard
+
+# HIL stub build (no LTC chain attached; see docs/HIL_STUB.md)
+cmake -B build-hil -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+                   -DCMAKE_CXX_FLAGS="-DAMS_BMS_HIL_STUB=1"
+cmake --build build-hil
 ```
 
-Production firmware build is driven by STM32CubeIDE. The host-side CMake
-exists only to run unit and SIL tests.
+CI (`.github/workflows/build-tests.yml`) runs the host-test and
+firmware-cross-compile builds on every push. The HIL-stub build is
+operator-driven; CI never produces a stub image.
