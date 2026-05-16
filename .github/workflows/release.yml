@@ -74,10 +74,29 @@ jobs:
       - name: Build firmware
         run: cmake --build build -j
 
-      - name: Verify flash layout
+      - name: Verify app entry point is 0x08020000
         run: |
+          # Two independent checks of the same invariant:
+          #   1) scripts/check_flash_layout.py asserts .isr_vector LMA
+          #      and that no section spills outside the app region.
+          #   2) An explicit objdump grep so the workflow summary is
+          #      unambiguous about the entry point (and the run fails
+          #      loud if the section ever gets renamed).
+          set -e
           python3 scripts/check_flash_layout.py build/AMS.elf | tee layout.log
+
+          ENTRY=$(arm-none-eabi-objdump -h build/AMS.elf \
+                  | awk '/\.isr_vector/ {print "0x"$5; exit}')
+          echo "Detected .isr_vector LMA: $ENTRY"
+          if [ "$ENTRY" != "0x08020000" ]; then
+            echo "::error::App entry point is $ENTRY, expected 0x08020000"
+            exit 1
+          fi
+
           {
+            echo "## App entry point"
+            echo "✓ \`.isr_vector\` LMA = \`$ENTRY\` (matches contract \`0x08020000\`)"
+            echo
             echo "## Flash layout"
             echo '```'
             cat layout.log
@@ -127,8 +146,8 @@ jobs:
             echo "- \`AMS.hex\` — Intel HEX with absolute addressing"
             echo
             echo "## Memory layout"
-            echo "- App base: \`0x08020000\` (sectors 1-6, 768 KB)"
-            echo "- Flash via ST-Link / SWD."
+            echo "- App entry point: \`0x08020000\` (sectors 1-6, 768 KB)"
+            echo "- Flashed over CAN."
             echo
             if [ -n "$PREV" ]; then
               echo "## Changes since \`$PREV\`"
