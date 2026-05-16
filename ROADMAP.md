@@ -34,6 +34,8 @@ CAN-FD) lives outside the v1 scope.
 | 4 | Current + accumulator CAN | ✅ done `feat/11-current-task` · ✅ done `feat/12-acu-can-rx` · ✅ done `feat/13-acu-can-tx` | `v0.4.0-pack-io` |
 | 5 | State machine + integration | ✅ done `feat/14-state-task` · ✅ done `feat/15-precharge-timing` · ✅ done `feat/16-fan-telemetry` · ✅ done `feat/17-sil-tests` · ✅ done `feat/18-commissioning` | `v1.0.0` |
 | 6 | Bootloader integration | ✅ done `feat/19-flash-relocation` · ✅ done `feat/20-bootloader-trigger` | `v1.1.0-bootloader` |
+| 7 | LTC6811-1 BMS migration | 🔜 planned `feat/67-ltc6811-driver` · 🔜 planned `feat/68-ltc6820-bus` · ✅ done `feat/69-chain-discovery` · ✅ done `feat/70-bms-via-ltc6811` · ✅ done `feat/71-temp-acquisition` · ✅ done `feat/72-bms-poll-task-rewrite` · ✅ done `feat/73-retire-bms-rx-task` · ✅ done `feat/74-cell-balancing` | `v1.2.0-ltc6811` |
+| 8 | Simplification refactor | ✅ done `fix/13-safety-boot-grace` · ✅ done `fix/14-iwdg-latch-loop` · ✅ done `fix/15-hil-stub-clear-latch` · ✅ done `fix/17-hil-stub-pre-scheduler-clear` · ✅ done `fix/18-pin-map-schematic` · ✅ done `feat/16-bl-jump-reason-node-id` · 🔜 planned `refactor/19-services-to-globals` · 🔜 planned `refactor/19-phase3-main-task` · 🔜 planned `refactor/19-phase5-current-rename` | `v1.3.0-flatten` |
 | — | Workflow polish _(sidequest)_ | ✅ done `feat/1-autoclose-on-dev-merge` · ✅ done `fix/1-workflow-titled-branches` | — |
 
 ## Branch diagram
@@ -145,11 +147,89 @@ gitGraph
     checkout dev
     merge feat/19-flash-relocation
     branch feat/20-bootloader-trigger
-    commit id: "✔ CAN-triggered jump to bootloader (FDCAN2 id 0x002 + 4 B magic)"
+    commit id: "✔ CAN-triggered jump to bootloader (FDCAN1 id 0x002 + 4 B magic)"
     checkout dev
     merge feat/20-bootloader-trigger
     checkout main
     merge dev tag: "v1.1.0-bootloader"
+    checkout dev
+
+    %% Phase 7 — LTC6811-1 BMS migration
+    branch feat/67-ltc6811-driver
+    commit id: "○ PEC15 + LTC6811 register-group encoders/decoders + chain discovery"
+    checkout dev
+    merge feat/67-ltc6811-driver
+    branch feat/68-ltc6820-bus
+    commit id: "○ LTC6820 isoSPI master wrapper around HAL_SPI + CS pulse train"
+    checkout dev
+    merge feat/68-ltc6820-bus
+    branch feat/69-chain-discovery
+    commit id: "✔ LTC chain wakeup + length discovery on boot"
+    checkout dev
+    merge feat/69-chain-discovery
+    branch feat/70-bms-via-ltc6811
+    commit id: "✔ replace BmsService data source with LTC6811-1 register groups"
+    checkout dev
+    merge feat/70-bms-via-ltc6811
+    branch feat/71-temp-acquisition
+    commit id: "✔ NTC temperature acquisition via ADG731 mux (200 NTCs)"
+    checkout dev
+    merge feat/71-temp-acquisition
+    branch feat/72-bms-poll-task-rewrite
+    commit id: "✔ rewrite BmsPollTask to drive LTC6811 over isoSPI"
+    checkout dev
+    merge feat/72-bms-poll-task-rewrite
+    branch feat/73-retire-bms-rx-task
+    commit id: "✔ retire BmsRxTask + bms_rx_queue, move boot-trigger to FDCAN1"
+    checkout dev
+    merge feat/73-retire-bms-rx-task
+    branch feat/74-cell-balancing
+    commit id: "✔ passive cell balancing via WRCFGA DCC bits"
+    checkout dev
+    merge feat/74-cell-balancing
+    checkout main
+    merge dev tag: "v1.2.0-ltc6811"
+    checkout dev
+
+    %% Phase 8 — Simplification refactor
+    branch fix/13-safety-boot-grace
+    commit id: "✔ kSafetyBootGraceMs 2 s gate to stop IWDG reset loop at first iter"
+    checkout dev
+    merge fix/13-safety-boot-grace
+    branch fix/14-iwdg-latch-loop
+    commit id: "✔ refresh watchdog on latched path so chip stays alive for diag"
+    checkout dev
+    merge fix/14-iwdg-latch-loop
+    branch fix/15-hil-stub-clear-latch
+    commit id: "✔ ErrorLatch::clear() + skip LTC discovery under AMS_BMS_HIL_STUB"
+    checkout dev
+    merge fix/15-hil-stub-clear-latch
+    branch fix/17-hil-stub-pre-scheduler-clear
+    commit id: "✔ pre-scheduler RTC_BKP_DR1 wipe to win the race with SafetyTask"
+    checkout dev
+    merge fix/17-hil-stub-pre-scheduler-clear
+    branch fix/18-pin-map-schematic
+    commit id: "✔ align pin map with v1.2 daughterboard (PB4-7); retire SDC predicate"
+    checkout dev
+    merge fix/18-pin-map-schematic
+    branch feat/16-bl-jump-reason-node-id
+    commit id: "✔ jump-reason log in BKP2R + node ID in firmware_info.reserved[0]"
+    checkout dev
+    merge feat/16-bl-jump-reason-node-id
+    branch refactor/19-services-to-globals
+    commit id: "○ phase 1+2 - drop service mutexes + relocate HIL_STUB to data source"
+    checkout dev
+    merge refactor/19-services-to-globals
+    branch refactor/19-phase3-main-task
+    commit id: "○ phase 3 - collapse SafetyTask + StateTask + TelemetryTask into MainTask"
+    checkout dev
+    merge refactor/19-phase3-main-task
+    branch refactor/19-phase5-current-rename
+    commit id: "○ phase 5 - rename CurrentTask -> CurrentSensorTask"
+    checkout dev
+    merge refactor/19-phase5-current-rename
+    checkout main
+    merge dev tag: "v1.3.0-flatten"
     checkout dev
 
 ```
