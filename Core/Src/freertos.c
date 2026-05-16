@@ -57,27 +57,50 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
 void vApplicationMallocFailedHook(void);
 
 /* USER CODE BEGIN 4 */
+/* Captured globals for SWD post-mortem. Live in .bss so a debugger
+ * attaching to a bricked board can read them without symbols. */
+volatile uint32_t g_stack_overflow_task_addr  = 0;
+volatile char     g_stack_overflow_task_name[16] = {0};
+
+extern void ams_relays_open_all_c(void);   /* relay_driver.cpp wrapper */
+extern void ams_error_latch_set_c(void);   /* error_latch.cpp wrapper */
+
 void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
 {
-   /* Run time stack overflow checking is performed if
-   configCHECK_FOR_STACK_OVERFLOW is defined to 1 or 2. This hook function is
-   called if a stack overflow is detected. */
+   /* configCHECK_FOR_STACK_OVERFLOW=2 -> guard pattern detected the
+    * overflow. Make this loud: open the relays, latch ERROR in
+    * backup register (sticky across reset), capture the failing
+    * task's name+handle for SWD post-mortem, then spin so the
+    * IWDG resets us within ~100 ms with the latch still set.
+    * Next boot, the firmware will come up in ERROR — observable
+    * from telemetry even without a debugger. */
+   g_stack_overflow_task_addr = (uint32_t)xTask;
+   if (pcTaskName != NULL) {
+      for (int i = 0; i < 15 && pcTaskName[i] != '\0'; ++i) {
+         g_stack_overflow_task_name[i] = (char)pcTaskName[i];
+      }
+   }
+   ams_relays_open_all_c();
+   ams_error_latch_set_c();
+   for (;;) { __asm volatile ("nop"); }
 }
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN 5 */
+volatile uint32_t g_malloc_failed_count = 0;
+
 void vApplicationMallocFailedHook(void)
 {
-   /* vApplicationMallocFailedHook() will only be called if
-   configUSE_MALLOC_FAILED_HOOK is set to 1 in FreeRTOSConfig.h. It is a hook
-   function that will get called if a call to pvPortMalloc() fails.
-   pvPortMalloc() is called internally by the kernel whenever a task, queue,
-   timer or semaphore is created. It is also called by various parts of the
-   demo application. If heap_1.c or heap_2.c are used, then the size of the
-   heap available to pvPortMalloc() is defined by configTOTAL_HEAP_SIZE in
-   FreeRTOSConfig.h, and the xPortGetFreeHeapSize() API function can be used
-   to query the size of free heap space that remains (although it does not
-   provide information on how the remaining heap might be fragmented). */
+   /* pvPortMalloc() returned NULL. In practice this fires when a
+    * task / queue / event group creation runs out of contiguous
+    * heap. Without this hook the failure is silent and the
+    * affected primitive simply never exists -- which is exactly
+    * the symptom #123 spent two iterations chasing. Same loud
+    * treatment as the stack-overflow path. */
+   ++g_malloc_failed_count;
+   ams_relays_open_all_c();
+   ams_error_latch_set_c();
+   for (;;) { __asm volatile ("nop"); }
 }
 /* USER CODE END 5 */
 

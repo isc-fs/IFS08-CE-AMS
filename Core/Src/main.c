@@ -96,7 +96,7 @@ const osThreadAttr_t StateTask_attributes = {
 osThreadId_t BmsPollTaskHandle;
 const osThreadAttr_t BmsPollTask_attributes = {
   .name = "BmsPollTask",
-  .stack_size = 256 * 4,
+  .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* Definitions for AcuCanTask */

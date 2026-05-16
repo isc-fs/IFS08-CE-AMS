@@ -22,8 +22,12 @@ inline bool read_pin(GPIO_TypeDef *port, uint16_t pin) noexcept {
 void Relays::open_all() noexcept {
     // Single-write atomic open of all three contactors. Uses BSRR
     // semantics (HAL_GPIO_WritePin -> BSRR) so this is interrupt-safe
-    // without disabling IRQs.
-    HAL_GPIO_WritePin(GPIOD,
+    // without disabling IRQs. Port is GPIOB on the v1.2 daughterboard
+    // (PB5 / PB6 / PB7); was GPIOD pre-#117 -- the port literal here
+    // wasn't updated in that PR, so on the post-#117 firmware this
+    // call wrote to unconfigured PD5/6/7 instead of opening the real
+    // relays. Caught in #128.
+    HAL_GPIO_WritePin(GPIOB,
                       RELAY_AIR_N_Pin | RELAY_AIR_P_Pin | RELAY_PRECHARGE_Pin,
                       GPIO_PIN_RESET);
 }
@@ -60,3 +64,11 @@ bool Relays::is_precharge_closed() noexcept {
 }
 
 }  // namespace ams
+
+// C-callable wrapper so the C-language freertos.c hooks can latch
+// safe state without including the C++ header. Resolves to the same
+// HAL_GPIO_WritePin -> BSRR transaction; safe from any context
+// (including the FreeRTOS hook ISR-ish path).
+extern "C" void ams_relays_open_all_c(void) {
+    ams::Relays::open_all();
+}
