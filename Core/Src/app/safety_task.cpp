@@ -40,6 +40,14 @@
 
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
+
+// Diagnostic canary maintained by BmsService::seed_for_hil_stub.
+// See bms_service.cpp for the rationale. Surfaced in 0x4A2[5].
+extern volatile std::uint32_t g_bms_seed_count;
+
+// FreeRTOS heap diagnostic. Surfaced in 0x4A2[6] as free heap in
+// 256-byte units (so the full 64 KB heap fits in one byte; 0xFF = >64 KB).
+extern std::size_t xPortGetFreeHeapSize(void);
 }
 
 // FSM state mirror exposed for BmsPollTask / other read-only consumers.
@@ -209,8 +217,20 @@ void SafetyTask::run() noexcept {
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
-            const auto frame_temps  = telemetry::encode_temps(
+            auto       frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat);
+
+            // Diagnostic bytes in the 0x4A2 reserved slots. The pure-
+            // function encoder writes 0 to bytes 5 and 6 (unit tests
+            // verify that contract); we patch them in-place here so
+            // the bench can see live runtime indicators without
+            // changing the encoder's tested layout. Drop these once
+            // #123 is closed and the seeder issue is understood.
+            frame_temps[5] = static_cast<std::uint8_t>(g_bms_seed_count & 0xFFu);
+            const std::size_t free_heap = xPortGetFreeHeapSize();
+            frame_temps[6] = (free_heap >= 0xFF00u)
+                ? 0xFFu
+                : static_cast<std::uint8_t>(free_heap >> 8);
 
             if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
             if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
