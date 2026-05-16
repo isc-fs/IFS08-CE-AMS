@@ -232,19 +232,34 @@ void SafetyTask::run() noexcept {
             // indicators without changing the encoder's tested
             // contract. Remove these patches once #123 closes.
 
-            // 0x4A0[3]: BmsPollTask state.
-            //   0xFF -> BmsPollTaskHandle == NULL (osThreadNew failed
-            //           silently; CMSIS-RTOS v2 wrapper bypassed the
-            //           malloc-failed hook on the NULL return)
-            //   0..6 -> osThreadGetState return (Inactive=0, Ready=1,
-            //           Running=2, Blocked=3, Terminated=4, Error=5,
-            //           Invalid=6). Steady state for a healthy
-            //           BmsPollTask is 3 (Blocked in osDelay(250)).
+            // 0x4A0[3]: BmsPollTask state, with sentinel high-nibble.
+            //
+            // Previous attempt (PR #132) had operator reading 0x00 --
+            // ambiguous because the CMSIS wrapper's osThreadGetState
+            // cannot return 0 per spec (eRunning maps to osThreadRunning=2,
+            // never osThreadInactive=0). So 0x00 either meant the patch
+            // didn't execute (byte still = encoder's f[3] = 0) or it
+            // executed and returned 0 via some unspecified path.
+            //
+            // This version writes a sentinel high-nibble 0xA0 OR'd with
+            // the state value in the low nibble. Any byte with 0xA in
+            // the high nibble proves the patch executed; any other
+            // value means the patch is being elided or never reached:
+            //
+            //   0x00       -> patch did not execute (still encoder's 0)
+            //   0xA0       -> patch ran, osThreadGetState returned 0 (bug)
+            //   0xA1       -> Ready
+            //   0xA2       -> Running
+            //   0xA3       -> Blocked (healthy steady state)
+            //   0xA4       -> Terminated
+            //   0xAF (0xA | 0xF from -1 truncation) -> osThreadError or null
+            //   0xFF       -> BmsPollTaskHandle == NULL (explicit branch)
             if (BmsPollTaskHandle == nullptr) {
                 frame_status[3] = 0xFFu;
             } else {
-                frame_status[3] = static_cast<std::uint8_t>(
+                const auto raw_state = static_cast<std::uint8_t>(
                     osThreadGetState(BmsPollTaskHandle));
+                frame_status[3] = 0xA0u | (raw_state & 0x0Fu);
             }
 
             // 0x4A2[5]: low byte of g_bms_seed_count. Ticks ~+4/s if
