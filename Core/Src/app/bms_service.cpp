@@ -22,6 +22,15 @@ namespace ams {
 
 extern "C" volatile std::uint32_t g_ltc_pec_err_count[config::kLtcChainLength] = {};
 
+// Diagnostic canary for #123: incremented on every call to
+// seed_for_hil_stub. Surfaced in 0x4A2[5] (low byte) so the bench
+// can confirm BmsPollTask is actually scheduled and writing,
+// without a debugger. If this stays at 0 forever, the task is not
+// running. If it ticks but BmsState fields stay at constructor
+// sentinels, the writer runs but reads are observing a different
+// memory location (singleton instance vs .bss issue).
+extern "C" volatile std::uint32_t g_bms_seed_count = 0;
+
 BmsService& BmsService::instance() noexcept {
     static BmsService kInstance;
     return kInstance;
@@ -255,6 +264,12 @@ bool BmsService::is_healthy(std::uint32_t now_tick) const noexcept {
 
 #if defined(AMS_BMS_HIL_STUB)
 void BmsService::seed_for_hil_stub(std::uint32_t now_tick) noexcept {
+    // Bump the diagnostic canary FIRST so the bench can see that
+    // BmsPollTask actually entered this function on this iteration.
+    // Surfaces in 0x4A2[5] low byte; see comment above the
+    // g_bms_seed_count declaration.
+    ++g_bms_seed_count;
+
     // Plausible nominal values that pass every BMS predicate:
     //   * module_online_mask = all 5 modules present (0x1F)
     //   * last_rx_tick refreshed to now -> freshness check passes
