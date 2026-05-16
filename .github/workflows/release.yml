@@ -20,9 +20,10 @@ name: Release AMS firmware
 # merge twice in a row before tagging). Decoupling the tag from the
 # merge lets the team decide explicitly when to publish.
 #
-# Mirror of isc-fs/stm32-can-bootloader's release artifact set
-# (CAN_BL.bin/.elf/.hex). The flash-layout check is the AMS-side
-# equivalent of the BL's "fits in sectors 1-6" contract.
+# Asset set follows the same three-artifact convention used by
+# isc-fs/stm32-can-bootloader, but named for the AMS firmware:
+# AMS.elf / AMS.bin / AMS.hex. The flash-layout check is the
+# AMS-side equivalent of the BL's "fits in sectors 1-6" contract.
 
 on:
   push:
