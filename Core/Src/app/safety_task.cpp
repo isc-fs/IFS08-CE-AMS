@@ -41,6 +41,11 @@
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
 
+// CubeMX-generated FreeRTOS task handle for BmsPollTask. NULL if
+// osThreadNew silently failed at boot. Surfaced as part of the
+// 0x4A0[3] diagnostic byte (#123 third bench iteration).
+extern osThreadId_t BmsPollTaskHandle;
+
 // Diagnostic canary maintained by BmsService::seed_for_hil_stub.
 // See bms_service.cpp for the rationale. Surfaced in 0x4A2[5].
 extern volatile std::uint32_t g_bms_seed_count;
@@ -214,19 +219,38 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            const auto frame_status = telemetry::encode_status(
+            auto       frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             auto       frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat);
 
-            // Diagnostic bytes in the 0x4A2 reserved slots. The pure-
-            // function encoder writes 0 to bytes 5 and 6 (unit tests
-            // verify that contract); we patch them in-place here so
-            // the bench can see live runtime indicators without
-            // changing the encoder's tested layout. Drop these once
-            // #123 is closed and the seeder issue is understood.
+            // Diagnostic bytes patched into the reserved slots of
+            // 0x4A0 and 0x4A2. The pure-function encoders still
+            // write 0 to these bytes (unit tests verify that); we
+            // overwrite them here so the bench can see live runtime
+            // indicators without changing the encoder's tested
+            // contract. Remove these patches once #123 closes.
+
+            // 0x4A0[3]: BmsPollTask state.
+            //   0xFF -> BmsPollTaskHandle == NULL (osThreadNew failed
+            //           silently; CMSIS-RTOS v2 wrapper bypassed the
+            //           malloc-failed hook on the NULL return)
+            //   0..6 -> osThreadGetState return (Inactive=0, Ready=1,
+            //           Running=2, Blocked=3, Terminated=4, Error=5,
+            //           Invalid=6). Steady state for a healthy
+            //           BmsPollTask is 3 (Blocked in osDelay(250)).
+            if (BmsPollTaskHandle == nullptr) {
+                frame_status[3] = 0xFFu;
+            } else {
+                frame_status[3] = static_cast<std::uint8_t>(
+                    osThreadGetState(BmsPollTaskHandle));
+            }
+
+            // 0x4A2[5]: low byte of g_bms_seed_count. Ticks ~+4/s if
+            // BmsPollTask reaches seed_for_hil_stub.
             frame_temps[5] = static_cast<std::uint8_t>(g_bms_seed_count & 0xFFu);
+            // 0x4A2[6]: free heap in 256-byte units (0xFF if > 64 KB).
             const std::size_t free_heap = xPortGetFreeHeapSize();
             frame_temps[6] = (free_heap >= 0xFF00u)
                 ? 0xFFu
