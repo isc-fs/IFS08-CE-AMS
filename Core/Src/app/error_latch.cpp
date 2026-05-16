@@ -45,3 +45,11 @@ void ErrorLatch::clear() noexcept {
 }
 
 }  // namespace ams
+
+// C-callable wrapper for the freertos.c hooks that need to persist a
+// fault across the watchdog reset they're about to trigger. Same
+// preconditions as ErrorLatch::set (ErrorLatch::init must have run
+// earlier in main / App_InitTask to unlock the backup domain).
+extern "C" void ams_error_latch_set_c(void) {
+    ams::ErrorLatch::set();
+}
