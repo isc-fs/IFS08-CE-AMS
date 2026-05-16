@@ -10,20 +10,15 @@ name: Release AMS firmware
 #   3. This workflow fires on the tag push:
 #        - cross-compiles the firmware
 #        - converts .elf -> .bin + .hex
-#        - runs the bootloader-compatible flash-layout guard
+#        - runs the flash-layout guard
 #        - reports flash + RAM sizes in the run summary
-#        - creates a GitHub Release named after the tag with all three
-#          binary assets attached
+#        - creates a GitHub Release named after the tag with the
+#          three binary assets (AMS.elf / AMS.bin / AMS.hex) attached
 #
 # Tag-triggered rather than push-to-main-triggered on purpose: dev->main
 # merges don't always coincide with a release-worthy SHA (you might
 # merge twice in a row before tagging). Decoupling the tag from the
 # merge lets the team decide explicitly when to publish.
-#
-# Asset set follows the same three-artifact convention used by
-# isc-fs/stm32-can-bootloader, but named for the AMS firmware:
-# AMS.elf / AMS.bin / AMS.hex. The flash-layout check is the
-# AMS-side equivalent of the BL's "fits in sectors 1-6" contract.
 
 on:
   push:
@@ -79,11 +74,11 @@ jobs:
       - name: Build firmware
         run: cmake --build build -j
 
-      - name: Verify bootloader-compatible flash layout
+      - name: Verify flash layout
         run: |
           python3 scripts/check_flash_layout.py build/AMS.elf | tee layout.log
           {
-            echo "## Flash layout vs. stm32-can-bootloader"
+            echo "## Flash layout"
             echo '```'
             cat layout.log
             echo '```'
@@ -131,10 +126,9 @@ jobs:
             echo "- \`AMS.bin\` — raw image, flash to \`0x08020000\` (sector 1)"
             echo "- \`AMS.hex\` — Intel HEX with absolute addressing"
             echo
-            echo "## Compatibility"
+            echo "## Memory layout"
             echo "- App base: \`0x08020000\` (sectors 1-6, 768 KB)"
-            echo "- Bootloader: [\`isc-fs/stm32-can-bootloader\`](https://github.com/isc-fs/stm32-can-bootloader) at sector 0"
-            echo "- Flash via the bootloader's CAN flash workflow, or directly via SWD."
+            echo "- Flash via ST-Link / SWD."
             echo
             if [ -n "$PREV" ]; then
               echo "## Changes since \`$PREV\`"
