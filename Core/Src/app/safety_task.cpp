@@ -219,73 +219,71 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            auto       frame_status = telemetry::encode_status(
-                g_state_telemetry, ams_ok, bms_snap);
-            const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
-            auto       frame_temps  = telemetry::encode_temps(
-                bms_snap, veh_snap, heartbeat);
+            // Diagnostic-byte plumbing for #123. The MainTask in-place
+            // patch on 0x4A0[3] / 0x4A2[5] / 0x4A2[6] was elided by
+            // every prior shape we tried: bare assignment (#132),
+            // "" ::: "memory" fence (#136), "+m" output constraint
+            // (#138). Each attempt got more aggressive but GCC at -O3
+            // kept finding ways to drop the writes -- the patch
+            // result would land in a scratch stack slot that was
+            // never copied into frame_status[3]'s actual offset.
+            //
+            // This version uses volatile-storage locals so EACH
+            // byte store is individually mandatory and cannot be
+            // elided even within an "observed at this single point"
+            // constraint window. The encoder result is copied byte-
+            // by-byte into the volatile array (volatile writes can
+            // not be merged or skipped), then the diagnostic bytes
+            // are overwritten on top, then the result is copied
+            // back into a non-volatile Frame for send_telem.
+            //
+            // Verbose but compiler-proof. Remove once #123 closes
+            // and the original encoder layout suffices again.
 
-            // Diagnostic bytes patched into the reserved slots of
-            // 0x4A0 and 0x4A2. The pure-function encoders still
-            // write 0 to these bytes (unit tests verify that); we
-            // overwrite them here so the bench can see live runtime
-            // indicators without changing the encoder's tested
-            // contract. Remove these patches once #123 closes.
+            volatile std::uint8_t fs_v[8];
+            volatile std::uint8_t ft_v[8];
+            {
+                const auto fs = telemetry::encode_status(
+                    g_state_telemetry, ams_ok, bms_snap);
+                const auto ft = telemetry::encode_temps(
+                    bms_snap, veh_snap, heartbeat);
+                for (std::size_t i = 0; i < 8; ++i) {
+                    fs_v[i] = fs[i];
+                    ft_v[i] = ft[i];
+                }
+            }
+            const auto frame_pack = telemetry::encode_pack(bms_snap, cur_snap);
 
-            // 0x4A0[3]: BmsPollTask state, with sentinel high-nibble.
-            //
-            // Previous attempt (PR #132) had operator reading 0x00 --
-            // ambiguous because the CMSIS wrapper's osThreadGetState
-            // cannot return 0 per spec (eRunning maps to osThreadRunning=2,
-            // never osThreadInactive=0). So 0x00 either meant the patch
-            // didn't execute (byte still = encoder's f[3] = 0) or it
-            // executed and returned 0 via some unspecified path.
-            //
-            // This version writes a sentinel high-nibble 0xA0 OR'd with
-            // the state value in the low nibble. Any byte with 0xA in
-            // the high nibble proves the patch executed; any other
-            // value means the patch is being elided or never reached:
-            //
-            //   0x00       -> patch did not execute (still encoder's 0)
-            //   0xA0       -> patch ran, osThreadGetState returned 0 (bug)
-            //   0xA1       -> Ready
-            //   0xA2       -> Running
-            //   0xA3       -> Blocked (healthy steady state)
-            //   0xA4       -> Terminated
-            //   0xAF (0xA | 0xF from -1 truncation) -> osThreadError or null
-            //   0xFF       -> BmsPollTaskHandle == NULL (explicit branch)
+            // 0x4A0[3]: BmsPollTask state, sentinel high-nibble 0xA.
+            //   0xFF -> BmsPollTaskHandle == NULL (silent osThreadNew fail)
+            //   0xA0 -> patch ran, osThreadGetState returned 0 (CMSIS quirk)
+            //   0xA1 -> Ready    0xA2 -> Running    0xA3 -> Blocked (healthy)
+            //   0xA4 -> Terminated     0xAF -> Error (-1 truncated)
             if (BmsPollTaskHandle == nullptr) {
-                frame_status[3] = 0xFFu;
+                fs_v[3] = 0xFFu;
             } else {
-                const auto raw_state = static_cast<std::uint8_t>(
+                const std::uint8_t raw_state = static_cast<std::uint8_t>(
                     osThreadGetState(BmsPollTaskHandle));
-                frame_status[3] = 0xA0u | (raw_state & 0x0Fu);
+                fs_v[3] = 0xA0u | (raw_state & 0x0Fu);
             }
 
-            // 0x4A2[5]: low byte of g_bms_seed_count. Ticks ~+4/s if
-            // BmsPollTask reaches seed_for_hil_stub.
-            frame_temps[5] = static_cast<std::uint8_t>(g_bms_seed_count & 0xFFu);
+            // 0x4A2[5]: low byte of g_bms_seed_count.
+            ft_v[5] = static_cast<std::uint8_t>(g_bms_seed_count & 0xFFu);
             // 0x4A2[6]: free heap in 256-byte units (0xFF if > 64 KB).
             const std::size_t free_heap = xPortGetFreeHeapSize();
-            frame_temps[6] = (free_heap >= 0xFF00u)
+            ft_v[6] = (free_heap >= 0xFF00u)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(free_heap >> 8);
 
-            // Force the patched arrays to live in memory across this
-            // point so the compiler can't fold our patch writes back
-            // into the inlined encoder's constant stores. The "+m"
-            // constraint marks each array as both an input and an
-            // output of the asm -- conceptually: "I might have just
-            // modified these and I might modify them again; treat
-            // them as opaque". Combined with the empty asm body, this
-            // emits zero instructions but is the strongest barrier
-            // GCC honours short of declaring the local volatile.
-            // Operator on #123 diagnosed the previous fence (PR #136)
-            // as insufficient: it preserved the call sites of
-            // osThreadGetState and xPortGetFreeHeapSize but the
-            // compiler still folded the writes' results into the
-            // encoded frame. The "+m" output operand is the fix.
-            __asm__ __volatile__("" : "+m"(frame_status), "+m"(frame_temps));
+            // Copy volatile -> non-volatile Frame so send_telem (which
+            // expects const Frame&) can consume it. The copy from
+            // volatile is the second guaranteed-non-elidable read.
+            telemetry::Frame frame_status;
+            telemetry::Frame frame_temps;
+            for (std::size_t i = 0; i < 8; ++i) {
+                frame_status[i] = fs_v[i];
+                frame_temps[i]  = ft_v[i];
+            }
 
             if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
             if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
