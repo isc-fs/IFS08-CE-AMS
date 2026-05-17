@@ -219,42 +219,42 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            // Standard three telemetry frames -- back to the clean,
-            // pre-diagnostic shape. The reserved bytes (0x4A0[3],
-            // 0x4A2[5..6]) go back to encoder-set 0; their value as
-            // diagnostic surfaces was killed by GCC -O3 across five
-            // PRs of escalating barriers. The new 0x4A3 diag frame
-            // below carries the same probes via a dedicated encoder
-            // that the compiler can't fold against.
-            const auto frame_status = telemetry::encode_status(
-                g_state_telemetry, ams_ok, bms_snap);
-            const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
+            // Three telemetry frames. The 0x4A3 diag frame from PR #142
+            // was retired in #152 -- it never reached the wire despite
+            // five iterations chasing the H7 FDCAN TX scheduler. The
+            // diagnostic probes now ride the 0x4A2 encoder's bytes 3..5
+            // under -DAMS_BMS_HIL_STUB (dropping dc_bus_V from 0x4A2 in
+            // that build only; the bench injects dc_bus_V from the host
+            // anyway). Flight builds keep the dc_bus_V layout unchanged.
+
             const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
                 g_telemetry_tx_fail & 0xFFu);
-            const auto frame_temps  = telemetry::encode_temps(
-                bms_snap, veh_snap, heartbeat, tx_fail_lo);
 
-            if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
-            if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
-            if (!send_telem(config::kAmsTelemTempsId,  frame_temps))  ++g_telemetry_tx_fail;
-
-            // 0x4A3 diag frame for #123. Bench-only; remove when the
-            // BmsPollTask seeder issue is resolved. Each call site here
-            // produces a value that flows directly into the encoder's
-            // arguments -- no overlay on an existing encoder output,
-            // so nothing for -O3 to fold or eliminate.
-            const std::uint8_t bms_poll_task_state_byte = (BmsPollTaskHandle == nullptr)
+            // Diag values are always computed -- they're cheap reads and
+            // encode_temps consumes them on the HIL_STUB build path.
+            // Flight builds ignore the args via (void) inside the encoder.
+            const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(
                     0xA0u | (static_cast<std::uint8_t>(
                                  osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
             const std::uint8_t  bms_seed_count_lo = static_cast<std::uint8_t>(
                 g_bms_seed_count & 0xFFu);
-            const std::uint32_t free_heap_bytes   = static_cast<std::uint32_t>(
-                xPortGetFreeHeapSize());
-            const auto frame_diag = telemetry::encode_diag(
-                bms_poll_task_state_byte, bms_seed_count_lo, free_heap_bytes);
-            if (!send_telem(config::kAmsTelemDiagId, frame_diag)) ++g_telemetry_tx_fail;
+            const std::size_t   free_heap         = xPortGetFreeHeapSize();
+            const std::uint8_t  free_heap_kb      = (free_heap >= 0xFF00u)
+                ? 0xFFu
+                : static_cast<std::uint8_t>(free_heap >> 8);
+
+            const auto frame_status = telemetry::encode_status(
+                g_state_telemetry, ams_ok, bms_snap);
+            const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
+            const auto frame_temps  = telemetry::encode_temps(
+                bms_snap, veh_snap, heartbeat, tx_fail_lo,
+                bms_task_state_byte, bms_seed_count_lo, free_heap_kb);
+
+            if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
+            if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
+            if (!send_telem(config::kAmsTelemTempsId,  frame_temps))  ++g_telemetry_tx_fail;
 
             ++heartbeat;  // 8-bit wraparound is intentional
         }

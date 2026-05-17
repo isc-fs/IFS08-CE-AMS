@@ -108,14 +108,27 @@ extern "C" void test_telem_temps_layout(void) {
     g_veh.dc_bus_V  = 350;
 
     const auto f = ams::telemetry::encode_temps(
-        g_bms, g_veh, /*heartbeat=*/0x42u, /*tx_fail_count_lo=*/0x99u);
+        g_bms, g_veh,
+        /*heartbeat=*/0x42u,
+        /*tx_fail_count_lo=*/0x99u,
+        /*bms_task_state_byte=*/0xA3u,
+        /*bms_seed_count_lo=*/0x55u,
+        /*free_heap_kb=*/0x21u);
 
     TEST_ASSERT_EQUAL_INT8 (18,   static_cast<std::int8_t>(f[0]));
     TEST_ASSERT_EQUAL_INT8 (47,   static_cast<std::int8_t>(f[1]));
     TEST_ASSERT_EQUAL_INT8 (30,   static_cast<std::int8_t>(f[2]));
+#if defined(AMS_BMS_HIL_STUB)
+    // Bench layout: bytes 3..5 carry #123 diag probes; dc_bus_V dropped.
+    TEST_ASSERT_EQUAL_UINT8(0xA3, f[3]);   // bms_task_state_byte
+    TEST_ASSERT_EQUAL_UINT8(0x55, f[4]);   // bms_seed_count_lo
+    TEST_ASSERT_EQUAL_UINT8(0x21, f[5]);   // free_heap_kb
+#else
+    // Flight layout: dc_bus_V LE in 3..4, byte 5 reserved.
     TEST_ASSERT_EQUAL_UINT8(0x5E, f[3]);   // 350 = 0x015E, LE
     TEST_ASSERT_EQUAL_UINT8(0x01, f[4]);
-    TEST_ASSERT_EQUAL_UINT8(0x00, f[5]);   // reserved
+    TEST_ASSERT_EQUAL_UINT8(0x00, f[5]);
+#endif
     TEST_ASSERT_EQUAL_UINT8(0x99, f[6]);   // tx_fail_count_lo (#123)
     TEST_ASSERT_EQUAL_UINT8(0x42, f[7]);   // heartbeat
 }
