@@ -32,10 +32,11 @@
 #include <cstddef>
 #include <cstdint>
 
-// FSM state mirror, owned by StateTask. Reading a single byte from
-// another task is safe without a lock; we only need a coherent
-// snapshot at the call point, which volatile + 8-bit read guarantees
-// on Cortex-M7.
+// FSM state mirror, written by MainTask on every transition (the FSM
+// step body lives inside MainTask since refactor/19 phase 3). Reading
+// a single byte from another task is safe without a lock; we only
+// need a coherent snapshot at the call point, which volatile + 8-bit
+// read guarantees on Cortex-M7.
 extern "C" volatile std::uint8_t g_state_telemetry;
 
 namespace {

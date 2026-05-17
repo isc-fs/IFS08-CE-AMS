@@ -3,11 +3,11 @@
 // Aggregates per-module cell voltages and (in #71) temperatures from
 // the LTC6811-1 daisy-chain (kLtcChainLength = 10 ICs feeding 5 BMS
 // modules at 2 ICs each). Single-writer (BmsPollTask, #72); many
-// readers (SafetyTask, StateTask, AcuCanTask, TelemetryTask).
+// readers (MainTask, AcuCanTask, BalanceController).
 //
 // Wire protocol: docs/BMS_LTC6811.md (#75) -- replaces the legacy
 // FDCAN2 BMS section now marked DEPRECATED in docs/CAN_MAP.md.
-// Synchronisation: docs/ARCHITECTURE.md §3 ownership map.
+// Synchronisation: docs/ARCHITECTURE.md §7 ownership map.
 
 #pragma once
 

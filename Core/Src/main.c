@@ -29,8 +29,6 @@
 #include "app/can_frame.h"
 #include "app/current_task.h"
 #include "app/safety_task.h"
-#include "app/state_task.h"
-#include "app/telemetry_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
 
@@ -85,13 +83,6 @@ const osThreadAttr_t SafetyTask_attributes = {
   .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityRealtime,
 };
-/* Definitions for StateTask */
-osThreadId_t StateTaskHandle;
-const osThreadAttr_t StateTask_attributes = {
-  .name = "StateTask",
-  .stack_size = 1024 * 4,
-  .priority = (osPriority_t) osPriorityHigh,
-};
 /* Definitions for BmsPollTask */
 osThreadId_t BmsPollTaskHandle;
 const osThreadAttr_t BmsPollTask_attributes = {
@@ -112,13 +103,6 @@ const osThreadAttr_t CurrentSensorTask_attributes = {
   .name = "CurrentSensorTask",
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
-};
-/* Definitions for TelemetryTask */
-osThreadId_t TelemetryTaskHandle;
-const osThreadAttr_t TelemetryTask_attributes = {
-  .name = "TelemetryTask",
-  .stack_size = 512 * 4,
-  .priority = (osPriority_t) osPriorityLow,
 };
 /* Definitions for acu_rx_queue */
 osMessageQueueId_t acu_rx_queueHandle;
@@ -164,11 +148,9 @@ static void MX_IWDG1_Init(void);
 void StartDefaultTask(void *argument);
 void StartAppInitTask(void *argument);
 void StartSafetyTask(void *argument);
-void StartStateTask(void *argument);
 void StartBmsPollTask(void *argument);
 void StartAcuCanTask(void *argument);
 void StartCurrentSensorTask(void *argument);
-void StartTelemetryTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -287,9 +269,6 @@ int main(void)
   /* creation of SafetyTask */
   SafetyTaskHandle = osThreadNew(StartSafetyTask, NULL, &SafetyTask_attributes);
 
-  /* creation of StateTask */
-  StateTaskHandle = osThreadNew(StartStateTask, NULL, &StateTask_attributes);
-
   /* creation of BmsPollTask */
   BmsPollTaskHandle = osThreadNew(StartBmsPollTask, NULL, &BmsPollTask_attributes);
 
@@ -298,9 +277,6 @@ int main(void)
 
   /* creation of CurrentSensorTask */
   CurrentSensorTaskHandle = osThreadNew(StartCurrentSensorTask, NULL, &CurrentSensorTask_attributes);
-
-  /* creation of TelemetryTask */
-  TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -958,21 +934,6 @@ void StartSafetyTask(void *argument)
   /* USER CODE END StartSafetyTask */
 }
 
-/* USER CODE BEGIN Header_StartStateTask */
-/**
-* @brief Function implementing the StateTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartStateTask */
-void StartStateTask(void *argument)
-{
-  /* USER CODE BEGIN StartStateTask */
-  ams_state_task_run(argument);
-  for(;;) { osDelay(1); }
-  /* USER CODE END StartStateTask */
-}
-
 /* USER CODE BEGIN Header_StartBmsPollTask */
 /**
 * @brief Function implementing the BmsPollTask thread.
@@ -1019,21 +980,6 @@ void StartCurrentSensorTask(void *argument)
   /* Unreachable: ams_current_sensor_task_run() never returns. */
   for(;;) { osDelay(1); }
   /* USER CODE END StartCurrentSensorTask */
-}
-
-/* USER CODE BEGIN Header_StartTelemetryTask */
-/**
-* @brief Function implementing the TelemetryTask thread.
-* @param argument: Not used
-* @retval None
-*/
-/* USER CODE END Header_StartTelemetryTask */
-void StartTelemetryTask(void *argument)
-{
-  /* USER CODE BEGIN StartTelemetryTask */
-  ams_telemetry_task_run(argument);
-  for(;;) { osDelay(1); }
-  /* USER CODE END StartTelemetryTask */
 }
 
 /**

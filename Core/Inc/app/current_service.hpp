@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: proprietary
 //
 // Pack current measurement service. Single-writer (CurrentSensorTask via
-// update_from_adc); many readers (SafetyTask, StateTask, AcuCanTask,
-// TelemetryTask). Synchronisation: docs/ARCHITECTURE.md §3.
+// update_from_adc); many readers (MainTask, AcuCanTask, BmsPollTask).
+// Synchronisation: docs/ARCHITECTURE.md §7.
 
 #pragma once
 

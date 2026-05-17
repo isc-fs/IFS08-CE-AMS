@@ -5,8 +5,8 @@
 // (0x600), and (indirectly via CurrentService) charger detection
 // (0x18FF50E7).
 //
-// Single-writer: AcuCanTask. Many readers: SafetyTask, StateTask,
-// TelemetryTask. Synchronisation: docs/ARCHITECTURE.md §3.
+// Single-writer: AcuCanTask. Many readers: MainTask.
+// Synchronisation: docs/ARCHITECTURE.md §7.
 
 #pragma once
 

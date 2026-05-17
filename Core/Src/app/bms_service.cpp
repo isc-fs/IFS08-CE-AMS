@@ -11,8 +11,8 @@
 #include <limits>
 
 // Lock-free single-writer / multi-reader contract (refactor/19 phase 1):
-// BmsPollTask is the only writer. SafetyTask, StateTask, AcuCanTask,
-// TelemetryTask are readers. Cortex-M7 32-bit aligned loads/stores
+// BmsPollTask is the only writer. MainTask, AcuCanTask, and the
+// BalanceController are readers. Cortex-M7 32-bit aligned loads/stores
 // are atomic; multi-field reads can briefly observe a mid-update
 // snapshot, but the predicate + telemetry are tolerant of one-cycle
 // staleness. The mutex (bms_mutexHandle) is still declared in main.c
