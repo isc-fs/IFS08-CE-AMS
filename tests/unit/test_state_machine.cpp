@@ -5,7 +5,7 @@
 //
 // Updated in fix/48 for the TSMS / DASH_CHG + mode_locked rewrite.
 // The old 0x600 start_button / 0x18FF50E7 charger_detected triggers
-// were retired; cockpit GPIO state lives directly in fsm::Inputs.
+// were retired; TSMS / DASH_CHG state lives directly in fsm::Inputs.
 
 #include "ams_config.hpp"
 #include "state_machine.hpp"
@@ -47,7 +47,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
 // ---------------------------------------------------------------------------
 // Start -> Precharge requires BOTH TSMS and DASH_CHG.
 // ---------------------------------------------------------------------------
-extern "C" void test_fsm_start_waits_without_cockpit_inputs(void) {
+extern "C" void test_fsm_start_waits_without_tsms_or_dash_chg(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
     // tsms=false, dash_chg=false
@@ -163,9 +163,9 @@ extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Run / Charge: cockpit drop latches Error; otherwise stays.
+// Run / Charge: TSMS or DASH_CHG drop latches Error; otherwise stays.
 // ---------------------------------------------------------------------------
-extern "C" void test_fsm_run_stays_while_cockpit_high(void) {
+extern "C" void test_fsm_run_stays_while_tsms_and_dash_chg_high(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
@@ -194,7 +194,7 @@ extern "C" void test_fsm_run_to_error_on_dash_chg_drop(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
 }
 
-extern "C" void test_fsm_charge_to_error_on_cockpit_drop(void) {
+extern "C" void test_fsm_charge_to_error_on_tsms_or_dash_chg_drop(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Charge, bms, cur, veh);
     in.tsms = false; in.dash_chg = false;
@@ -221,6 +221,6 @@ extern "C" void test_fsm_any_state_to_error_on_fault(void) {
 extern "C" void test_fsm_error_is_sticky(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Error, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;  // even with healthy cockpit
+    in.tsms = true; in.dash_chg = true;  // even with both inputs high
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, ams::fsm::step(in).next);
 }

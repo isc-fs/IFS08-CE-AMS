@@ -145,8 +145,10 @@ void SafetyTask::run() noexcept {
         const auto cur_snap = CurrentService::instance().snapshot();
         const auto veh_snap = VehicleService::instance().snapshot();
 
-        // Cockpit GPIO inputs (active-high, external pull-down on
-        // carrier). Polled every 10 ms; the 20 ms FSM step consumes
+        // Operator-facing GPIO inputs: TSMS (side-of-car external
+        // switch, PF9) and DASH_CHG (cockpit dashboard / charger
+        // button, PF10). Both active-high, external pull-down on the
+        // carrier. Polled every 10 ms; the 20 ms FSM step consumes
         // the latest reading.
         const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
@@ -247,12 +249,12 @@ void SafetyTask::run() noexcept {
             //
             // 0x4A2[3] -- BmsPollTask scheduling state (BmsPollTaskHandle)
             // 0x4A2[4] -- g_acu_rx_total low byte  (any ACU RX = ticking)
-            // 0x4A2[5] -- cockpit pin readback. High nibble 0x8 as a
-            //             "this byte is live" sentinel (so 0x00 from
-            //             older binaries stands out). Bit 1 = TSMS,
-            //             bit 0 = DASH_CHG. Low nibble of mode_locked
-            //             in bits 2..3 (00=Undecided, 01=Car, 10=Charger)
-            //             so the bench can confirm the lock fired.
+            // 0x4A2[5] -- TSMS + DASH_CHG pin readback + mode_locked.
+            //             High nibble 0x8 is a "this byte is live"
+            //             sentinel so 0x00 from older binaries stands
+            //             out. Bits: [7]=1, [3..2]=mode_locked
+            //             (00=Undecided, 01=Car, 10=Charger),
+            //             [1]=TSMS, [0]=DASH_CHG.
             const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(
@@ -260,7 +262,7 @@ void SafetyTask::run() noexcept {
                                  osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
             const std::uint8_t acu_rx_total_lo = static_cast<std::uint8_t>(
                 g_acu_rx_total & 0xFFu);
-            const std::uint8_t cockpit_byte = static_cast<std::uint8_t>(
+            const std::uint8_t tsms_dash_chg_byte = static_cast<std::uint8_t>(
                 0x80u |
                 (static_cast<std::uint8_t>(mode_locked) << 2) |
                 (tsms    ? 0x02u : 0u) |
@@ -272,7 +274,7 @@ void SafetyTask::run() noexcept {
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo,
-                bms_task_state_byte, acu_rx_total_lo, cockpit_byte);
+                bms_task_state_byte, acu_rx_total_lo, tsms_dash_chg_byte);
 #else
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);

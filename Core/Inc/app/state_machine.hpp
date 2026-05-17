@@ -89,12 +89,13 @@ struct Output {
 
     switch (in.current) {
     case State::Start: {
-        // Wait for the cockpit gate: TSMS=1 AND DASH_CHG=1, level-polled
-        // at the 20 ms FSM cadence. Same gate for both car and charger
-        // -- SafetyTask decides which one it is by looking at the VCU
-        // 0x100 freshness at this exact moment and captures the result
-        // into in.mode_locked, which we'll consume on the way out of
-        // Transition.
+        // Wait for both inputs: TSMS (side-of-car external switch) = 1
+        // AND DASH_CHG (cockpit dashboard / charger button) = 1,
+        // level-polled at the 20 ms FSM cadence. Same gate for both
+        // car and charger -- SafetyTask decides which one it is by
+        // looking at the VCU 0x100 freshness at this exact moment and
+        // captures the result into in.mode_locked, which we'll consume
+        // on the way out of Transition.
         if (in.tsms && in.dash_chg) {
             return { State::Precharge,
                      events::safety::kCloseAirN |
