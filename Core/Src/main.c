@@ -587,7 +587,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.RxBuffersNbr = 1;
   hfdcan1.Init.RxBufferSize = FDCAN_DATA_BYTES_8;
   hfdcan1.Init.TxEventsNbr = 1;
-  hfdcan1.Init.TxBuffersNbr = 16;
+  hfdcan1.Init.TxBuffersNbr = 0;            /* #123: dedicated TX buffers + FIFO simultaneously corrupts TX scheduler addressing; HAL_FDCAN_AddMessageToTxFifoQ only needs the FIFO/queue path */
   hfdcan1.Init.TxFifoQueueElmtsNbr = 16;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   hfdcan1.Init.TxElmtSize = FDCAN_DATA_BYTES_8;
