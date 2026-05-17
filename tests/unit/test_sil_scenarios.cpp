@@ -6,7 +6,7 @@
 // timing bugs that only show up across multiple step() calls.
 //
 // All inputs are constructed manually -- no FreeRTOS, no HAL. The
-// helper Harness keeps the BMS / current / vehicle state, cockpit
+// helper Harness keeps the BMS / current / vehicle state, TSMS / DASH_CHG
 // pin readback, locked-mode, and a monotonically advancing `now` tick.
 
 #include "ams_config.hpp"
@@ -83,10 +83,10 @@ struct Harness {
 extern "C" void test_sil_nominal_startup_to_run(void) {
     Harness h;
 
-    // Tick 0: idle in Start, no cockpit assertion.
+    // Tick 0: idle in Start, neither TSMS nor DASH_CHG asserted.
     TEST_ASSERT_EQUAL(ams::fsm::State::Start, h.step().next);
 
-    // Assert cockpit and lock car mode (VCU heartbeat fresh per
+    // Assert TSMS + DASH_CHG and lock car mode (VCU heartbeat fresh per
     // Harness ctor).
     h.tsms        = true;
     h.dash_chg     = true;
@@ -153,7 +153,7 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4: charger path -- same cockpit gate as car, but mode_locked
+// Scenario 4: charger path -- same TSMS+DASH_CHG gate as car, but mode_locked
 // captured as Charger (no VCU heartbeat) routes Transition -> Charge.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_charger_path(void) {
