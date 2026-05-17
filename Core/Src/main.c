@@ -359,12 +359,68 @@ int main(void)
      * IWDG starvation in the pre-scheduler / early-scheduler window
      * is confirmed as the root cause. Bench-only. */
     HAL_IWDG_Refresh(&hiwdg1);
-    /* #123 iter 21: iter-20's pre-init xPortGetFreeHeapSize() call
-     * crashed (operator: heap_4 free-list head is uninitialized until
-     * the first pvPortMalloc). Replace with a sanity constant -- if
-     * 0x7AC fires now we've confirmed the heap-query was the killer;
-     * the real free-heap read moves to 0x7AD AFTER osKernelInitialize
-     * (which touches the heap internally and primes the free list). */
+    /* #123 iter 22: operator pinned to "exactly one FDCAN TX per boot
+     * succeeds" -- 0x7AC never emits even with a sanity constant
+     * (no heap call), and disassembly confirms the call site exists.
+     * Two cheap discriminators added inline (NOT via hil_probe so we
+     * rule out the helper itself):
+     *
+     *   A) Inline-duplicate 0x7AA at ID 0x7A9 -- byte-for-byte copy
+     *      of the 0x7AA TxHeader and AddMessageToTxFifoQ call. If
+     *      0x7AA fires but 0x7A9 does not, the problem is per-TX
+     *      FDCAN state, not the hil_probe abstraction.
+     *
+     *   B) 0x7AE carrying FDCAN1->ECR (full u32 LE). H7 ECR layout:
+     *        bits  0..7  TEC  (TX error counter)
+     *        bits  8..14 REC  (RX error counter)
+     *        bit  15     RP   (RX passive)
+     *        bits 16..23 CEL  (CAN error logging)
+     *      If TEC > 0 right after first TX -> bus-off / error-passive
+     *      is the smoking gun (operator's hypothesis c). If TEC == 0
+     *      and REC == 0 the FDCAN is fine and we're chasing something
+     *      else (compiler / linker / stack).
+     */
+    {
+      FDCAN_TxHeaderTypeDef tx2 = {0};
+      tx2.Identifier          = 0x7A9u;
+      tx2.IdType              = FDCAN_STANDARD_ID;
+      tx2.TxFrameType         = FDCAN_DATA_FRAME;
+      tx2.DataLength          = FDCAN_DLC_BYTES_8;
+      tx2.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+      tx2.BitRateSwitch       = FDCAN_BRS_OFF;
+      tx2.FDFormat            = FDCAN_CLASSIC_CAN;
+      tx2.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+      tx2.MessageMarker       = 0;
+      uint8_t data2[8] = { 0xA9u, 0, 0, 0, 0, 0xAAu, 0, 0 };
+      (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx2, data2);
+      HAL_Delay(2);
+    }
+    {
+      const uint32_t ecr = FDCAN1->ECR;
+      FDCAN_TxHeaderTypeDef tx3 = {0};
+      tx3.Identifier          = 0x7AEu;
+      tx3.IdType              = FDCAN_STANDARD_ID;
+      tx3.TxFrameType         = FDCAN_DATA_FRAME;
+      tx3.DataLength          = FDCAN_DLC_BYTES_8;
+      tx3.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+      tx3.BitRateSwitch       = FDCAN_BRS_OFF;
+      tx3.FDFormat            = FDCAN_CLASSIC_CAN;
+      tx3.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+      tx3.MessageMarker       = 0;
+      uint8_t data3[8] = {
+        0xAEu,
+        (uint8_t)(ecr        & 0xFFu),
+        (uint8_t)((ecr >>  8) & 0xFFu),
+        (uint8_t)((ecr >> 16) & 0xFFu),
+        (uint8_t)((ecr >> 24) & 0xFFu),
+        0xAAu, 0, 0,
+      };
+      (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx3, data3);
+      HAL_Delay(2);
+    }
+    HAL_IWDG_Refresh(&hiwdg1);
+    /* Keep the original 0x7AC sanity-constant probe as well so the
+     * iter-21 vs iter-22 comparison is apples-to-apples. */
     hil_probe(0x7ACu, 0xDEADBEEFu);
   }
 #endif
