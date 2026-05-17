@@ -69,7 +69,15 @@ struct Inputs {
 
     // Current sensor: not faulted, fresh, within absolute limit.
     if (in.current.sensor_fault)                                       return true;
+#if !defined(AMS_BMS_HIL_STUB)
+    // Bench has no real current sensor (#123 Block B/C sweep: chip
+    // latched Error ~200 ms after boot_grace_ms because no fixture
+    // feeds current-sensor frames). Skip the freshness check on the
+    // stub build -- sensor_fault + Imax still apply, so a fixture
+    // that DOES inject current frames will still see meaningful
+    // safety behaviour.
     if (in.now_tick - in.current.last_update_tick > config::kIStaleMs) return true;
+#endif
     if (std::abs(in.current.filtered_mA) > config::kImaxMa)            return true;
 
     // VCU DC bus heartbeat.
