@@ -271,7 +271,24 @@ int main(void)
     tx.FDFormat            = FDCAN_CLASSIC_CAN;
     tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
     tx.MessageMarker       = 0;
-    uint8_t data[8] = { 0xA0u, 0, 0, 0, 0, 0, 0, 0 };
+    /* #123 iter 18: payload[1..4] carry IWDG->RLR (little-endian uint32)
+     * so the bench can confirm the configured reload counter without
+     * SWD. Bench observed ~2.1 s reset spacing -- if RLR encodes a
+     * value that matches 2.1 s at the LSI frequency (32 kHz / 32 div
+     * = 1 kHz tick -> RLR=2100 would yield ~2.1 s), IWDG is the
+     * smoking gun and SafetyTask::run never reaches Watchdog::refresh
+     * before expiry. Payload[5] = marker 0xAA so the bench can
+     * distinguish iter-18 frames from iter-17 frames (which had
+     * payload[1..7] all-zero). */
+    const uint32_t rlr = IWDG1->RLR;
+    uint8_t data[8] = {
+      0xA0u,
+      (uint8_t)(rlr        & 0xFFu),
+      (uint8_t)((rlr >>  8) & 0xFFu),
+      (uint8_t)((rlr >> 16) & 0xFFu),
+      (uint8_t)((rlr >> 24) & 0xFFu),
+      0xAAu, 0, 0,
+    };
     (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
     /* Give the hardware time to actually transmit before we move on
      * to osKernelStart -- otherwise the FIFO write races the start
@@ -279,6 +296,13 @@ int main(void)
      * is well over the time needed to transmit one 8-byte frame
      * (which takes ~250 us on the wire). */
     HAL_Delay(2);
+    /* #123 iter 18: explicit IWDG refresh after the probe send.
+     * If this single refresh extends time-to-reset measurably (e.g.
+     * 0x7AA spacing becomes 4.2 s instead of 2.1 s, or the chip
+     * stops resetting once SafetyTask runs and refreshes again),
+     * IWDG starvation in the pre-scheduler / early-scheduler window
+     * is confirmed as the root cause. Bench-only. */
+    HAL_IWDG_Refresh(&hiwdg1);
   }
 #endif
   /* USER CODE END 2 */
@@ -345,6 +369,41 @@ int main(void)
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
+#if defined(AMS_BMS_HIL_STUB)
+  /* #123 iter 18: post-osThreadNew / pre-osKernelStart probe (0x7AB).
+   * Brackets the FreeRTOS-init phase so the bench can tell whether
+   * the chip dies during osThreadNew (no 0x7AB) or after the
+   * scheduler actually starts (0x7AB present, but no later
+   * App_InitTask 0xB1..0xB7 trace and no 0x4A0/0x4A1/0x4A2). Also
+   * refreshes IWDG -- the osThreadNew + queue + mutex setup above
+   * can chew through tens of ms in -O0 builds; combined with the
+   * pre-scheduler HAL_Delay(2) and any LSI slack, it may be
+   * dangerously close to the 100-tick reload. Bench-only. */
+  {
+    FDCAN_TxHeaderTypeDef tx = {0};
+    tx.Identifier          = 0x7ABu;
+    tx.IdType              = FDCAN_STANDARD_ID;
+    tx.TxFrameType         = FDCAN_DATA_FRAME;
+    tx.DataLength          = FDCAN_DLC_BYTES_8;
+    tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    tx.BitRateSwitch       = FDCAN_BRS_OFF;
+    tx.FDFormat            = FDCAN_CLASSIC_CAN;
+    tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    tx.MessageMarker       = 0;
+    const uint32_t rlr = IWDG1->RLR;
+    uint8_t data[8] = {
+      0xABu,
+      (uint8_t)(rlr        & 0xFFu),
+      (uint8_t)((rlr >>  8) & 0xFFu),
+      (uint8_t)((rlr >> 16) & 0xFFu),
+      (uint8_t)((rlr >> 24) & 0xFFu),
+      0xAAu, 0, 0,
+    };
+    (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
+    HAL_Delay(2);
+    HAL_IWDG_Refresh(&hiwdg1);
+  }
+#endif
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
