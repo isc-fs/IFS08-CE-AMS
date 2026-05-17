@@ -5,7 +5,16 @@
 #include "ams_config.hpp"
 #include "current_service.hpp"
 
+#include <cstdint>
 
+#if defined(AMS_BMS_HIL_STUB)
+// #123 ACU RX dispatch probes. Surfaced in 0x4A2[4..5] via safety_task.
+// Both stay at 0 -> AcuCanTask isn't dequeueing (or update_from_frame
+// not called). Total ticks but start_btn doesn't -> std-frame dispatch
+// path drops the 0x600 frame somewhere between the switch and decode.
+extern "C" volatile std::uint32_t g_acu_rx_total          = 0;
+extern "C" volatile std::uint32_t g_acu_start_btn_rx_count = 0;
+#endif
 
 namespace ams {
 
@@ -28,6 +37,10 @@ std::uint8_t VehicleService::decode_start_button(const std::uint8_t *data) noexc
 bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
     if (f.bus != static_cast<std::uint8_t>(CanBus::Acu)) return false;
 
+#if defined(AMS_BMS_HIL_STUB)
+    ++g_acu_rx_total;
+#endif
+
     switch (f.id) {
     case config::kAcuRxDcBusId: {
         if (f.dlc < 2) return false;
@@ -38,6 +51,9 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
 
     case config::kAcuRxStartBtnId: {
         if (f.dlc < 1) return false;
+#if defined(AMS_BMS_HIL_STUB)
+        ++g_acu_start_btn_rx_count;
+#endif
         state_.start_button       = decode_start_button(f.data);
         state_.last_start_btn_tick = f.timestamp_ms;
         return true;
