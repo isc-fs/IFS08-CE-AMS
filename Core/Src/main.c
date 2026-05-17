@@ -240,6 +240,47 @@ int main(void)
    * first place. App_InitTask still calls ErrorLatch::clear() under
    * the same flag as defence-in-depth against a backup register
    * surviving a previous (pre-phase-2) session. */
+#if defined(AMS_BMS_HIL_STUB)
+  /* #123 iter 17: pre-scheduler FDCAN_Start + boot-trace probe.
+   * All three FDCAN-config reverts (#159, #161, #163) failed to
+   * restore TX. The remaining suspects are SafetyTask / App_InitTask
+   * code paths, but we have no way to observe them on this bench
+   * without TX working. Move HAL_FDCAN_Start to here so we can
+   * emit a probe frame BEFORE any of the suspect code runs.
+   *
+   * If candump sees 0x7AA after this point, the FDCAN1 TX path
+   * itself works in this firmware tree -- the regression is
+   * downstream (App_InitTask hang, or osThreadNew failure for
+   * MainTask, or similar). If we see nothing, the regression is
+   * even earlier than HAL_FDCAN_Start succeeding (very unlikely
+   * given pre-#152 firmware transmitted with this same chip and
+   * the same RCC config). App_InitTask's own HAL_FDCAN_Start
+   * is now redundant but harmless (already in BUSY state).
+   *
+   * Bench-only -- flight keeps the post-scheduler Start in
+   * App_InitTask exactly as before.
+   */
+  if (HAL_FDCAN_Start(&hfdcan1) == HAL_OK) {
+    FDCAN_TxHeaderTypeDef tx = {0};
+    tx.Identifier          = 0x7AAu;
+    tx.IdType              = FDCAN_STANDARD_ID;
+    tx.TxFrameType         = FDCAN_DATA_FRAME;
+    tx.DataLength          = FDCAN_DLC_BYTES_8;
+    tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    tx.BitRateSwitch       = FDCAN_BRS_OFF;
+    tx.FDFormat            = FDCAN_CLASSIC_CAN;
+    tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    tx.MessageMarker       = 0;
+    uint8_t data[8] = { 0xA0u, 0, 0, 0, 0, 0, 0, 0 };
+    (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
+    /* Give the hardware time to actually transmit before we move on
+     * to osKernelStart -- otherwise the FIFO write races the start
+     * of FreeRTOS scheduling and might not drain. ~1 ms at 500 kbps
+     * is well over the time needed to transmit one 8-byte frame
+     * (which takes ~250 us on the wire). */
+    HAL_Delay(2);
+  }
+#endif
   /* USER CODE END 2 */
 
   /* Init scheduler */
