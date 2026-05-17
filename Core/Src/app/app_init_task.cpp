@@ -29,6 +29,27 @@ extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
 extern SPI_HandleTypeDef   hspi1;
 
+// Diagnostic for #123 (HIL_STUB only): monotonic milestone counter
+// incremented at each App_InitTask init step. Surfaced in 0x4A0[3]
+// via encode_status so the bench can see how far this task got
+// without SWD, even if FDCAN1 never starts and other telemetry
+// silences. If 0x4A0 transmits at all, byte 3 == this counter at
+// the moment MainTask snapshotted it.
+//   0 -> App_InitTask never started OR hung before any milestone
+//   1 -> post-ErrorLatch::init
+//   2 -> post-ErrorLatch::clear         (HIL_STUB only)
+//   3 -> post-HAL_FDCAN_ConfigGlobalFilter
+//   4 -> post-HAL_FDCAN_ActivateNotification
+//   5 -> post-HAL_FDCAN_Start (regardless of return code)
+//   6 -> Start returned HAL_OK
+//   7 -> task self-exit reached (App_InitTask completed cleanly)
+//
+// HAL_FDCAN_Start's return code is also captured into a sibling
+// global so the operator can read it later via SWD or a follow-up
+// probe if needed. The byte itself only surfaces the milestone.
+extern "C" volatile std::uint8_t g_app_init_progress    = 0;
+extern "C" volatile std::uint32_t g_fdcan1_start_result = 0xFFFFFFFFu;
+
 void ams_app_init_task_run(void *argument)
 {
     (void)argument;
@@ -37,6 +58,7 @@ void ams_app_init_task_run(void *argument)
     // landing it here ensures it runs BEFORE SafetyTask first looks
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
+    g_app_init_progress = 1u;   // post-ErrorLatch::init
 
 #if defined(AMS_BMS_HIL_STUB)
     // HIL-only: VBAT-backed RTC_BKP_DR1 outlives long power-offs on
@@ -48,6 +70,7 @@ void ams_app_init_task_run(void *argument)
     // sticky-error contract that protects against intermittent
     // pre-charge / SDC events surviving a brown-out.
     ams::ErrorLatch::clear();
+    g_app_init_progress = 2u;   // post-ErrorLatch::clear
 #endif
 
     // FDCAN1 (accumulator + boot-trigger bus). FDCAN2 is left
@@ -64,10 +87,14 @@ void ams_app_init_task_run(void *argument)
         FDCAN_ACCEPT_IN_RX_FIFO0,
         FDCAN_REJECT_REMOTE,
         FDCAN_REJECT_REMOTE);
+    g_app_init_progress = 3u;   // post-ConfigGlobalFilter
 
     HAL_FDCAN_ActivateNotification(&hfdcan1,
                                    FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-    HAL_FDCAN_Start(&hfdcan1);
+    g_app_init_progress = 4u;   // post-ActivateNotification
+
+    g_fdcan1_start_result = static_cast<std::uint32_t>(HAL_FDCAN_Start(&hfdcan1));
+    g_app_init_progress   = (g_fdcan1_start_result == HAL_OK) ? 6u : 5u;
 
     // ----------------------------------------------------------------
     // LTC6811-1 chain bring-up + length discovery (#68 + #69).
@@ -117,6 +144,8 @@ void ams_app_init_task_run(void *argument)
     // right after we just cleared the latch above.
     (void)hspi1;
 #endif
+
+    g_app_init_progress = 7u;   // reached self-exit
 
     // Task is single-shot. CMSIS-RTOS v2: terminate self.
     osThreadExit();

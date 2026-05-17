@@ -42,16 +42,14 @@ extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
 
 // CubeMX-generated FreeRTOS task handle for BmsPollTask. NULL if
-// osThreadNew silently failed at boot. Surfaced as part of the
-// 0x4A0[3] diagnostic byte (#123 third bench iteration).
+// osThreadNew silently failed at boot.
 extern osThreadId_t BmsPollTaskHandle;
 
-// Diagnostic canary maintained by BmsService::seed_for_hil_stub.
-// See bms_service.cpp for the rationale. Surfaced in 0x4A2[5].
-extern volatile std::uint32_t g_bms_seed_count;
+// #123 diagnostics maintained by other TUs.
+extern volatile std::uint32_t g_bms_seed_count;     // bms_service.cpp
+extern volatile std::uint8_t  g_app_init_progress;  // app_init_task.cpp (#123 iter 12)
 
-// FreeRTOS heap diagnostic. Surfaced in 0x4A2[6] as free heap in
-// 256-byte units (so the full 64 KB heap fits in one byte; 0xFF = >64 KB).
+// FreeRTOS heap diagnostic.
 extern std::size_t xPortGetFreeHeapSize(void);
 }
 
@@ -246,7 +244,8 @@ void SafetyTask::run() noexcept {
                 : static_cast<std::uint8_t>(free_heap >> 8);
 
             const auto frame_status = telemetry::encode_status(
-                g_state_telemetry, ams_ok, bms_snap);
+                g_state_telemetry, ams_ok, bms_snap,
+                /*app_init_progress=*/g_app_init_progress);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo,

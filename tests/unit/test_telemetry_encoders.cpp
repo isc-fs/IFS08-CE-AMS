@@ -40,12 +40,17 @@ extern "C" void test_telem_status_layout(void) {
     g_bms.max_cell_mV        = 0xABCD;
 
     const auto f = ams::telemetry::encode_status(
-        /*state=*/3u, /*ams_ok=*/1u, g_bms);
+        /*state=*/3u, /*ams_ok=*/1u, g_bms,
+        /*app_init_progress=*/0x06u);
 
     TEST_ASSERT_EQUAL_UINT8(0x03, f[0]);  // state Run
     TEST_ASSERT_EQUAL_UINT8(0x01, f[1]);  // ams_ok asserted
     TEST_ASSERT_EQUAL_UINT8(0x1F, f[2]);  // all 5 modules online
+#if defined(AMS_BMS_HIL_STUB)
+    TEST_ASSERT_EQUAL_UINT8(0x06, f[3]);  // app_init_progress (#123 diag)
+#else
     TEST_ASSERT_EQUAL_UINT8(0x00, f[3]);  // reserved
+#endif
     TEST_ASSERT_EQUAL_UINT8(0x12, f[4]);  // min_cell_mV BE high
     TEST_ASSERT_EQUAL_UINT8(0x34, f[5]);  // min_cell_mV BE low
     TEST_ASSERT_EQUAL_UINT8(0xAB, f[6]);  // max_cell_mV BE high
