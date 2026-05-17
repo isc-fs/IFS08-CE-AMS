@@ -4,13 +4,14 @@
 //
 //  RX (always): drain acu_rx_queue -> VehicleService::update_from_frame.
 //  TX (periodic):
-//    - 0x12C extended, 500 ms, big-endian min cell mV
-//      (suppressed when CurrentService says charger is attached --
-//      mirrors the legacy "no balancing during charge" rule).
 //    - 0x450 standard, 250 ms, byte 0 = 0x00, byte 1 = filtered current A
 //      (low byte only, matches legacy 0x450 wire format -- the wider
 //      16-bit signed mA frame is a future protocol change documented
 //      in docs/CAN_MAP.md refactor checklist).
+//
+// 0x12C min-voltage TX retired in fix/48 along with the old charger-
+// detect path; it only ever existed to suppress itself during Charge.
+// Will return as a Charge-state-only balance TX in a future PR.
 //
 // Cadence is driven by osMessageQueueGet with a computed timeout that
 // expires at the nearest TX deadline, so RX latency stays low and TX
@@ -19,7 +20,6 @@
 #include "app/acu_can_task.h"
 
 #include "ams_config.hpp"
-#include "bms_service.hpp"
 #include "bootloader.hpp"
 #include "can_frame.hpp"
 #include "current_service.hpp"
@@ -28,7 +28,6 @@
 #include "cmsis_os2.h"
 #include "main.h"
 
-#include <algorithm>
 #include <cstdlib>
 
 extern "C" {
@@ -43,7 +42,6 @@ namespace {
 volatile std::uint32_t g_acu_rx_dropped_unknown = 0;
 volatile std::uint32_t g_acu_tx_fail            = 0;
 
-constexpr std::uint32_t kMinVoltagePeriodMs = 500;
 constexpr std::uint32_t kCurrentPeriodMs    = 250;
 
 bool send_acu(std::uint32_t id, bool extended, std::uint8_t dlc,
@@ -60,16 +58,6 @@ bool send_acu(std::uint32_t id, bool extended, std::uint8_t dlc,
     tx.MessageMarker       = 0;
     return HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx,
                                          const_cast<std::uint8_t *>(data)) == HAL_OK;
-}
-
-void tx_min_voltage(const ams::BmsState& bms) {
-    const std::uint8_t data[2] = {
-        static_cast<std::uint8_t>(bms.min_cell_mV >> 8),
-        static_cast<std::uint8_t>(bms.min_cell_mV & 0xFF),
-    };
-    if (!send_acu(ams::config::kAcuTxMinVoltId, /*extended=*/true, 2, data)) {
-        ++g_acu_tx_fail;
-    }
 }
 
 void tx_current(const ams::CurrentState& cur) {
@@ -90,15 +78,12 @@ extern "C" void ams_acu_can_task_run(void *argument) {
     (void)argument;
 
     ams::CanFrame frame;
-    std::uint32_t last_minv_tx = osKernelGetTickCount();
-    std::uint32_t last_curr_tx = last_minv_tx;
+    std::uint32_t last_curr_tx = osKernelGetTickCount();
 
     for (;;) {
         const std::uint32_t now = osKernelGetTickCount();
-        const std::uint32_t next_minv = last_minv_tx + kMinVoltagePeriodMs;
         const std::uint32_t next_curr = last_curr_tx + kCurrentPeriodMs;
-        const std::uint32_t deadline  = std::min(next_minv, next_curr);
-        const std::uint32_t timeout   = (deadline > now) ? deadline - now : 0u;
+        const std::uint32_t timeout   = (next_curr > now) ? next_curr - now : 0u;
 
         // Drain at most one RX frame per loop; the next iteration will
         // pick up the next one. Keeps TX cadence within ~1 RX-frame
@@ -122,15 +107,6 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         const std::uint32_t now2 = osKernelGetTickCount();
         const auto cur = ams::CurrentService::instance().snapshot();
 
-        if (now2 - last_minv_tx >= kMinVoltagePeriodMs) {
-            // Legacy: suppress min-V frame while charger is attached
-            // (the VCU side doesn't expect / use it during charging).
-            if (!cur.charger_detected) {
-                const auto bms = ams::BmsService::instance().snapshot();
-                tx_min_voltage(bms);
-            }
-            last_minv_tx = now2;
-        }
         if (now2 - last_curr_tx >= kCurrentPeriodMs) {
             tx_current(cur);
             last_curr_tx = now2;

@@ -6,8 +6,8 @@
 // timing bugs that only show up across multiple step() calls.
 //
 // All inputs are constructed manually -- no FreeRTOS, no HAL. The
-// helper Harness keeps the BMS / current / vehicle state and a
-// monotonically advancing `now` tick.
+// helper Harness keeps the BMS / current / vehicle state, cockpit
+// pin readback, locked-mode, and a monotonically advancing `now` tick.
 
 #include "ams_config.hpp"
 #include "state_machine.hpp"
@@ -23,6 +23,9 @@ struct Harness {
     ams::BmsState     bms{};
     ams::CurrentState cur{};
     ams::VehicleState veh{};
+    bool              tsms             = false;
+    bool              rst_pil          = false;
+    ams::fsm::Mode    mode_locked      = ams::fsm::Mode::Undecided;
     // Start past kSafetyBootGraceMs (2000) so the safety predicates
     // are active. Scenarios that need the grace itself live in
     // test_safety_predicates.cpp.
@@ -57,6 +60,7 @@ struct Harness {
     ams::fsm::Output step() {
         const ams::fsm::Inputs in = {
             state, bms, cur, veh,
+            tsms, rst_pil, mode_locked,
             /*force_error_set=*/false,
             now, state_entry_tick,
         };
@@ -72,18 +76,21 @@ struct Harness {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// Scenario 1: nominal startup.
-// Start -> press button -> Precharge -> bus reaches target -> Transition
-// -> hold elapses -> Run.
+// Scenario 1: nominal startup in CAR mode.
+// Start -> assert TSMS+RST_PIL (+ lock Mode::Car) -> Precharge ->
+// bus reaches target -> Transition -> hold elapses -> Run.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_nominal_startup_to_run(void) {
     Harness h;
 
-    // Tick 0: idle in Start, no button.
+    // Tick 0: idle in Start, no cockpit assertion.
     TEST_ASSERT_EQUAL(ams::fsm::State::Start, h.step().next);
 
-    // Press start button.
-    h.veh.start_button = 1;
+    // Assert cockpit and lock car mode (VCU heartbeat fresh per
+    // Harness ctor).
+    h.tsms        = true;
+    h.rst_pil     = true;
+    h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
 
@@ -112,7 +119,8 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_precharge_timeout_to_error(void) {
     Harness h;
-    h.veh.start_button = 1;
+    h.tsms = true; h.rst_pil = true;
+    h.mode_locked = ams::fsm::Mode::Car;
     h.step();                                 // -> Precharge
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.state);
 
@@ -133,6 +141,8 @@ extern "C" void test_sil_precharge_timeout_to_error(void) {
 extern "C" void test_sil_bms_dropout_in_run(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
+    h.tsms = true; h.rst_pil = true;
+    h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
 
     // Pretend module 2 stopped reporting > kBmsStaleMs ago.
@@ -143,20 +153,48 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4: charger plugs in from Start -> straight to Charge.
+// Scenario 4: charger path -- same cockpit gate as car, but mode_locked
+// captured as Charger (no VCU heartbeat) routes Transition -> Charge.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_charger_path(void) {
     Harness h;
-    h.cur.charger_detected = true;
-    const auto out = h.step();
-    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, out.next);
+    h.tsms = true; h.rst_pil = true;
+    h.mode_locked = ams::fsm::Mode::Charger;
+
+    // Start -> Precharge
+    auto out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kCloseAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kCloseAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kClosePrecharge);
+
+    // Precharge -> Transition once bus catches up
+    h.advance(20);
+    h.veh.dc_bus_V = 350;
+    out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+
+    // Hold elapses -> Charge (not Run)
+    for (int i = 0; i < 5; ++i) { h.advance(20); h.step(); }
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
 }
 
 // ---------------------------------------------------------------------------
-// (Former scenario 5 -- "SDC opens during Run" -- removed in #18 along
-// with the sdc_closed predicate. The AMS no longer GPIO-senses the SDC
-// line; equivalent "sticky Error" coverage lives in the kForceError +
-// BMS-stale paths above.)
+// Scenario 5: TSMS drops mid-Run -> Error (sticky, every AIR-open latches).
 // ---------------------------------------------------------------------------
+extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
+    Harness h;
+    h.state = ams::fsm::State::Run;
+    h.tsms = true; h.rst_pil = true;
+    h.mode_locked = ams::fsm::Mode::Car;
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);
+
+    // Driver turns the key off mid-run.
+    h.tsms = false;
+    const auto out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
+}

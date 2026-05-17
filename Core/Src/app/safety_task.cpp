@@ -27,7 +27,6 @@
 #include "bms_service.hpp"
 #include "current_service.hpp"
 #include "error_latch.hpp"
-#include "fan.hpp"
 #include "relay_driver.hpp"
 #include "safety_predicates.hpp"
 #include "state_machine.hpp"
@@ -49,15 +48,10 @@ extern osThreadId_t BmsPollTaskHandle;
 extern volatile std::uint32_t g_bms_seed_count;     // bms_service.cpp
 #if defined(AMS_BMS_HIL_STUB)
 extern volatile std::uint8_t  g_app_init_progress;  // app_init_task.cpp (#123 iter 12)
-// #123 ACU RX dispatch probes (vehicle_service.cpp). Surfaced in
-// 0x4A2[4..5] -- repurposed from the stale bms_seed_count_lo /
-// free_heap_kb slots now that the BMS stub is confirmed working.
+// ACU RX dispatch liveness counter. Surfaced in 0x4A2[4] -- ticks on
+// any matched ACU frame.
 extern volatile std::uint32_t g_acu_rx_total;
-extern volatile std::uint32_t g_acu_start_btn_rx_count;
 #endif
-
-// FreeRTOS heap diagnostic.
-extern std::size_t xPortGetFreeHeapSize(void);
 }
 
 // FSM state mirror exposed for BmsPollTask / other read-only consumers.
@@ -81,17 +75,6 @@ void SafetyTask::latch_error_() noexcept {
 }
 
 namespace {
-
-// Per-state fan duty mirroring the legacy 40 % run / 75 % charge,
-// off in transitional / error states.
-constexpr std::uint8_t kFanDuty[6] = {
-    /*Start*/      0,
-    /*Precharge*/  0,
-    /*Transition*/ 0,
-    /*Run*/       40,
-    /*Charge*/    75,
-    /*Error*/      0,
-};
 
 bool send_telem(std::uint32_t id, const telemetry::Frame& payload) noexcept {
     FDCAN_TxHeaderTypeDef tx = {};
@@ -126,10 +109,10 @@ void apply_relay_actions(std::uint32_t flags) noexcept {
 
 void SafetyTask::run() noexcept {
     // ---------------- One-shot init ----------------
-    // ErrorLatch + Fan PWM bring-up. ErrorLatch::init is idempotent;
-    // App_InitTask has almost certainly already called it.
+    // ErrorLatch bring-up. ErrorLatch::init is idempotent;
+    // App_InitTask has almost certainly already called it. Fan PWM
+    // retired in fix/48 (fan is wired permanently on; see main.c).
     ErrorLatch::init();
-    Fan::init();
 
     // Boot in ERROR if the previous run latched it. App_InitTask
     // clears the latch under -DAMS_BMS_HIL_STUB, so on the bench we
@@ -141,8 +124,8 @@ void SafetyTask::run() noexcept {
     }
 
     fsm::State state          = boot_in_error ? fsm::State::Error : fsm::State::Start;
+    fsm::Mode  mode_locked    = fsm::Mode::Undecided;
     g_state_telemetry         = static_cast<std::uint8_t>(state);
-    Fan::set_duty_pct(kFanDuty[static_cast<std::uint8_t>(state)]);
 
     std::uint32_t last_wake           = osKernelGetTickCount();
     std::uint32_t state_entry_tick    = last_wake;
@@ -162,6 +145,12 @@ void SafetyTask::run() noexcept {
         const auto cur_snap = CurrentService::instance().snapshot();
         const auto veh_snap = VehicleService::instance().snapshot();
 
+        // Cockpit GPIO inputs (active-high, external pull-down on
+        // carrier). Polled every 10 ms; the 20 ms FSM step consumes
+        // the latest reading.
+        const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
+        const bool rst_pil = HAL_GPIO_ReadPin(RST_PIL_GPIO_Port, RST_PIL_Pin) == GPIO_PIN_SET;
+
         // ---------------- Safety predicate (every 10 ms) ----------------
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
@@ -176,7 +165,6 @@ void SafetyTask::run() noexcept {
                 state            = fsm::State::Error;
                 state_entry_tick = now;
                 g_state_telemetry = static_cast<std::uint8_t>(state);
-                Fan::set_duty_pct(kFanDuty[static_cast<std::uint8_t>(state)]);
             }
             // Stay alive in the latched state: relays already open,
             // ErrorLatch persists across reset, so refreshing the
@@ -189,8 +177,25 @@ void SafetyTask::run() noexcept {
             if (now - last_state_tick >= config::kStatePeriodMs) {
                 last_state_tick = now;
 
+                // Lock the Car-vs-Charger mode at the EXACT iteration
+                // that's about to take us out of Start. Captured here
+                // (before fsm::step) so the FSM body sees a
+                // self-consistent input snapshot. Read VCU 0x100
+                // freshness via the snapshot already taken this tick.
+                if (state == fsm::State::Start &&
+                    mode_locked == fsm::Mode::Undecided &&
+                    tsms && rst_pil) {
+                    const bool vcu_fresh =
+                        veh_snap.last_dc_bus_tick != 0u &&
+                        (now - veh_snap.last_dc_bus_tick) <=
+                            config::kVcuFreshMs;
+                    mode_locked = vcu_fresh ? fsm::Mode::Car
+                                            : fsm::Mode::Charger;
+                }
+
                 const fsm::Inputs fsm_in = {
                     state, bms_snap, cur_snap, veh_snap,
+                    tsms, rst_pil, mode_locked,
                     /*force_error_set=*/false,
                     now, state_entry_tick,
                 };
@@ -202,11 +207,11 @@ void SafetyTask::run() noexcept {
                     state             = out.next;
                     state_entry_tick  = now;
                     g_state_telemetry = static_cast<std::uint8_t>(state);
-                    Fan::set_duty_pct(kFanDuty[static_cast<std::uint8_t>(state)]);
 
                     // Persist ERROR across resets even when the FSM
                     // got there without a predicate fault (e.g.
-                    // precharge timeout).
+                    // precharge timeout, or TSMS/RST_PIL dropped
+                    // mid-Run).
                     if (state == fsm::State::Error) {
                         ErrorLatch::set();
                         error_latched_ = true;
@@ -238,14 +243,16 @@ void SafetyTask::run() noexcept {
 #if defined(AMS_BMS_HIL_STUB)
             // Bench-only diag values riding 0x4A2[3..5]. Skipped in
             // flight so we don't burn an osThreadGetState() call per
-            // 500 ms tick. xPortGetFreeHeapSize is retired here -- the
-            // bench has confirmed the heap is fine post-init, and the
-            // 0x4A2[5] slot is more useful as an ACU RX dispatch probe.
+            // 500 ms tick.
             //
             // 0x4A2[3] -- BmsPollTask scheduling state (BmsPollTaskHandle)
             // 0x4A2[4] -- g_acu_rx_total low byte  (any ACU RX = ticking)
-            // 0x4A2[5] -- g_acu_start_btn_rx_count low byte
-            //             (0x600 std-frame dispatch healthy = ticking)
+            // 0x4A2[5] -- cockpit pin readback. High nibble 0x8 as a
+            //             "this byte is live" sentinel (so 0x00 from
+            //             older binaries stands out). Bit 1 = TSMS,
+            //             bit 0 = RST_PIL. Low nibble of mode_locked
+            //             in bits 2..3 (00=Undecided, 01=Car, 10=Charger)
+            //             so the bench can confirm the lock fired.
             const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(
@@ -253,8 +260,11 @@ void SafetyTask::run() noexcept {
                                  osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
             const std::uint8_t acu_rx_total_lo = static_cast<std::uint8_t>(
                 g_acu_rx_total & 0xFFu);
-            const std::uint8_t acu_start_btn_lo = static_cast<std::uint8_t>(
-                g_acu_start_btn_rx_count & 0xFFu);
+            const std::uint8_t cockpit_byte = static_cast<std::uint8_t>(
+                0x80u |
+                (static_cast<std::uint8_t>(mode_locked) << 2) |
+                (tsms    ? 0x02u : 0u) |
+                (rst_pil ? 0x01u : 0u));
 
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap,
@@ -262,7 +272,7 @@ void SafetyTask::run() noexcept {
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo,
-                bms_task_state_byte, acu_rx_total_lo, acu_start_btn_lo);
+                bms_task_state_byte, acu_rx_total_lo, cockpit_byte);
 #else
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);

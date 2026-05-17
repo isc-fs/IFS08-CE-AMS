@@ -28,11 +28,24 @@ enum class State : std::uint8_t {
     Error      = 5,
 };
 
+// Mode locked at the moment of Start->Precharge. Determines whether
+// Transition exits into Run or Charge, and never re-evaluated for the
+// rest of the boot cycle. Captured by SafetyTask, not by fsm::step --
+// here only as an FSM input.
+enum class Mode : std::uint8_t {
+    Undecided = 0,    // before Start->Precharge has fired
+    Car       = 1,    // VCU 0x100 heard within kVcuFreshMs at the trigger
+    Charger   = 2,    // VCU 0x100 silent at the trigger
+};
+
 struct Inputs {
     State               current;
     const BmsState&     bms;
     const CurrentState& current_sensor;
     const VehicleState& vehicle;
+    bool                tsms;             // PF9 readback (active-high)
+    bool                rst_pil;          // PF10 readback (active-high)
+    Mode                mode_locked;      // set by SafetyTask at Start->Precharge
     bool                force_error_set;
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;
@@ -76,14 +89,13 @@ struct Output {
 
     switch (in.current) {
     case State::Start: {
-        // Wait for charger detection, start button, OR a healthy
-        // baseline. Charger is the cleanest trigger; absent that,
-        // a start_button transitions us into Precharge.
-        if (in.current_sensor.charger_detected) {
-            return { State::Charge,
-                     events::safety::kCloseAirN | events::safety::kCloseAirP };
-        }
-        if (in.vehicle.start_button != 0u) {
+        // Wait for the cockpit gate: TSMS=1 AND RST_PIL=1, level-polled
+        // at the 20 ms FSM cadence. Same gate for both car and charger
+        // -- SafetyTask decides which one it is by looking at the VCU
+        // 0x100 freshness at this exact moment and captures the result
+        // into in.mode_locked, which we'll consume on the way out of
+        // Transition.
+        if (in.tsms && in.rst_pil) {
             return { State::Precharge,
                      events::safety::kCloseAirN |
                      events::safety::kClosePrecharge };
@@ -120,25 +132,47 @@ struct Output {
                      events::safety::kOpenPrecharge };
         }
         if (in.now_tick - in.state_entry_tick >= config::kTransitionHoldMs) {
-            return { State::Run, 0u };
+            // Branch on the mode SafetyTask captured at Start->Precharge.
+            // Mode::Undecided here would be a programming error
+            // (Transition reached without going through Start); treat
+            // as fault to be safe.
+            if (in.mode_locked == Mode::Car) {
+                return { State::Run, 0u };
+            }
+            if (in.mode_locked == Mode::Charger) {
+                return { State::Charge, 0u };
+            }
+            return { State::Error,
+                     events::safety::kForceError |
+                     events::safety::kOpenAirN | events::safety::kOpenAirP |
+                     events::safety::kOpenPrecharge };
         }
         return { State::Transition, 0u };
     }
 
     case State::Run: {
-        // Run = pack is in the car. Charger detection should be
-        // physically impossible here; if it happens it's almost
-        // certainly an electrical issue (noise on the charger CAN
-        // id, miswired charger). Stay in Run -- the predicate set
-        // will catch any genuine current anomaly via |I| > kImaxMa.
+        // Any drop of TSMS or RST_PIL while in Run latches Error and
+        // opens all relays. Operator wanted conservative semantics:
+        // every AIR-open event is a sticky fault requiring power
+        // cycle (matches existing ErrorLatch backup-register design;
+        // see error_latch.cpp).
+        if (!in.tsms || !in.rst_pil) {
+            return { State::Error,
+                     events::safety::kForceError |
+                     events::safety::kOpenAirN | events::safety::kOpenAirP |
+                     events::safety::kOpenPrecharge };
+        }
         return { State::Run, 0u };
     }
 
     case State::Charge: {
-        // Charge = pack is at the charging station. Run and Charge
-        // are mutually exclusive contexts entered ONCE per power
-        // cycle from Start; we never transition between them at
-        // runtime. Stay here until reset.
+        // Same exit semantics as Run -- TSMS/RST drop latches Error.
+        if (!in.tsms || !in.rst_pil) {
+            return { State::Error,
+                     events::safety::kForceError |
+                     events::safety::kOpenAirN | events::safety::kOpenAirP |
+                     events::safety::kOpenPrecharge };
+        }
         return { State::Charge, 0u };
     }
 

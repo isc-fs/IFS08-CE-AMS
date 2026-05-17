@@ -17,7 +17,6 @@ struct CurrentState {
     std::int32_t  raw_mA;        // single-sample, no filter
     std::int32_t  filtered_mA;   // IIR low-pass, tau ~ 16 samples
     std::uint32_t last_update_tick;
-    bool          charger_detected;  // set by AcuCanTask (feat/12)
     bool          sensor_fault;      // ADC failed to convert, or out of plausible range
 };
 
@@ -28,9 +27,6 @@ public:
     // Called by CurrentSensorTask only. Converts raw ADC counts to mA,
     // updates the filter, refreshes the timestamp.
     void update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept;
-
-    // Called by AcuCanTask on charger-detected CAN frame.
-    void set_charger_detected(bool detected) noexcept;
 
     // Atomic read of the full state.
     [[nodiscard]] CurrentState snapshot() const noexcept;
