@@ -171,7 +171,29 @@ void StartCurrentSensorTask(void *argument);
 void StartTelemetryTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-
+#if defined(AMS_BMS_HIL_STUB)
+/* #123 iter 19: per-thread bring-up probe. Emits 0x7B0+idx on can0 with
+ * payload[0]=marker, payload[1..4]=phase byte tag (0xBE = "before call"
+ * / 0xAF = "after call returned"), payload[5..6] reserved, payload[7]=
+ * 0xAA iter marker. Refreshes IWDG before queuing the frame to keep the
+ * watchdog from biting mid-probe. Bench-only. */
+static void hil_thread_probe(uint8_t idx, uint8_t phase)
+{
+  HAL_IWDG_Refresh(&hiwdg1);
+  FDCAN_TxHeaderTypeDef tx = {0};
+  tx.Identifier          = 0x7B0u + idx;
+  tx.IdType              = FDCAN_STANDARD_ID;
+  tx.TxFrameType         = FDCAN_DATA_FRAME;
+  tx.DataLength          = FDCAN_DLC_BYTES_8;
+  tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  tx.BitRateSwitch       = FDCAN_BRS_OFF;
+  tx.FDFormat            = FDCAN_CLASSIC_CAN;
+  tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+  tx.MessageMarker       = 0;
+  uint8_t data[8] = { idx, phase, 0, 0, 0, 0, 0, 0xAAu };
+  (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
+}
+#endif
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -344,28 +366,76 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(0, 0xBEu);
+#endif
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(0, 0xAFu);
+#endif
 
   /* creation of App_InitTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(1, 0xBEu);
+#endif
   App_InitTaskHandle = osThreadNew(StartAppInitTask, NULL, &App_InitTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(1, 0xAFu);
+#endif
 
   /* creation of SafetyTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(2, 0xBEu);
+#endif
   SafetyTaskHandle = osThreadNew(StartSafetyTask, NULL, &SafetyTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(2, 0xAFu);
+#endif
 
   /* creation of StateTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(3, 0xBEu);
+#endif
   StateTaskHandle = osThreadNew(StartStateTask, NULL, &StateTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(3, 0xAFu);
+#endif
 
   /* creation of BmsPollTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(4, 0xBEu);
+#endif
   BmsPollTaskHandle = osThreadNew(StartBmsPollTask, NULL, &BmsPollTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(4, 0xAFu);
+#endif
 
   /* creation of AcuCanTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(5, 0xBEu);
+#endif
   AcuCanTaskHandle = osThreadNew(StartAcuCanTask, NULL, &AcuCanTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(5, 0xAFu);
+#endif
 
   /* creation of CurrentSensorTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(6, 0xBEu);
+#endif
   CurrentSensorTaskHandle = osThreadNew(StartCurrentSensorTask, NULL, &CurrentSensorTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(6, 0xAFu);
+#endif
 
   /* creation of TelemetryTask */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(7, 0xBEu);
+#endif
   TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_thread_probe(7, 0xAFu);
+#endif
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
