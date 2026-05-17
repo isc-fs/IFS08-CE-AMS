@@ -47,7 +47,9 @@ extern osThreadId_t BmsPollTaskHandle;
 
 // #123 diagnostics maintained by other TUs.
 extern volatile std::uint32_t g_bms_seed_count;     // bms_service.cpp
+#if defined(AMS_BMS_HIL_STUB)
 extern volatile std::uint8_t  g_app_init_progress;  // app_init_task.cpp (#123 iter 12)
+#endif
 
 // FreeRTOS heap diagnostic.
 extern std::size_t xPortGetFreeHeapSize(void);
@@ -245,7 +247,12 @@ void SafetyTask::run() noexcept {
 
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap,
-                /*app_init_progress=*/g_app_init_progress);
+#if defined(AMS_BMS_HIL_STUB)
+                /*app_init_progress=*/g_app_init_progress
+#else
+                /*app_init_progress=*/0u
+#endif
+            );
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo,

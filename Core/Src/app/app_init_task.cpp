@@ -80,8 +80,10 @@ static void send_boot_trace(std::uint8_t marker, std::uint32_t start_rc) noexcep
 // HAL_FDCAN_Start's return code is also captured into a sibling
 // global so the operator can read it later via SWD or a follow-up
 // probe if needed. The byte itself only surfaces the milestone.
-extern "C" volatile std::uint8_t g_app_init_progress    = 0;
+#if defined(AMS_BMS_HIL_STUB)
+extern "C" volatile std::uint8_t  g_app_init_progress   = 0;
 extern "C" volatile std::uint32_t g_fdcan1_start_result = 0xFFFFFFFFu;
+#endif
 
 void ams_app_init_task_run(void *argument)
 {
@@ -91,8 +93,8 @@ void ams_app_init_task_run(void *argument)
     // landing it here ensures it runs BEFORE SafetyTask first looks
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
-    g_app_init_progress = 1u;   // post-ErrorLatch::init
 #if defined(AMS_BMS_HIL_STUB)
+    g_app_init_progress = 1u;   // post-ErrorLatch::init
     send_boot_trace(0xB1u, g_fdcan1_start_result);  // will silently fail (FDCAN not started)
 #endif
 
@@ -124,27 +126,29 @@ void ams_app_init_task_run(void *argument)
         FDCAN_ACCEPT_IN_RX_FIFO0,
         FDCAN_REJECT_REMOTE,
         FDCAN_REJECT_REMOTE);
-    g_app_init_progress = 3u;   // post-ConfigGlobalFilter
 #if defined(AMS_BMS_HIL_STUB)
+    g_app_init_progress = 3u;   // post-ConfigGlobalFilter
     send_boot_trace(0xB3u, g_fdcan1_start_result);  // still pre-Start, silent
 #endif
 
     HAL_FDCAN_ActivateNotification(&hfdcan1,
                                    FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
-    g_app_init_progress = 4u;   // post-ActivateNotification
 #if defined(AMS_BMS_HIL_STUB)
+    g_app_init_progress = 4u;   // post-ActivateNotification
     send_boot_trace(0xB4u, g_fdcan1_start_result);  // still pre-Start, silent
 #endif
 
+#if defined(AMS_BMS_HIL_STUB)
     g_fdcan1_start_result = static_cast<std::uint32_t>(HAL_FDCAN_Start(&hfdcan1));
     g_app_init_progress   = (g_fdcan1_start_result == HAL_OK) ? 6u : 5u;
-#if defined(AMS_BMS_HIL_STUB)
     // First call that can ACTUALLY transmit, assuming Start succeeded.
     // If Start returned HAL_OK, this frame should appear on the bus
     // with payload[0] = 0xB6 and payload[1..4] = 0 (HAL_OK = 0).
     // If Start failed, this queues but never transmits.
     send_boot_trace((g_fdcan1_start_result == HAL_OK) ? 0xB6u : 0xB5u,
                     g_fdcan1_start_result);
+#else
+    (void)HAL_FDCAN_Start(&hfdcan1);
 #endif
 
     // ----------------------------------------------------------------
@@ -196,8 +200,8 @@ void ams_app_init_task_run(void *argument)
     (void)hspi1;
 #endif
 
-    g_app_init_progress = 7u;   // reached self-exit
 #if defined(AMS_BMS_HIL_STUB)
+    g_app_init_progress = 7u;   // reached self-exit
     // Final trace before App_InitTask self-deletes. If both 0xB6 AND
     // 0xB7 appear on the wire, App_InitTask ran end-to-end and the
     // problem with MainTask telemetry is downstream.
