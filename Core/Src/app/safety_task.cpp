@@ -49,6 +49,11 @@ extern osThreadId_t BmsPollTaskHandle;
 extern volatile std::uint32_t g_bms_seed_count;     // bms_service.cpp
 #if defined(AMS_BMS_HIL_STUB)
 extern volatile std::uint8_t  g_app_init_progress;  // app_init_task.cpp (#123 iter 12)
+// #123 ACU RX dispatch probes (vehicle_service.cpp). Surfaced in
+// 0x4A2[4..5] -- repurposed from the stale bms_seed_count_lo /
+// free_heap_kb slots now that the BMS stub is confirmed working.
+extern volatile std::uint32_t g_acu_rx_total;
+extern volatile std::uint32_t g_acu_start_btn_rx_count;
 #endif
 
 // FreeRTOS heap diagnostic.
@@ -232,19 +237,24 @@ void SafetyTask::run() noexcept {
 
 #if defined(AMS_BMS_HIL_STUB)
             // Bench-only diag values riding 0x4A2[3..5]. Skipped in
-            // flight so we don't burn an osThreadGetState() +
-            // xPortGetFreeHeapSize() pair per 500 ms tick.
+            // flight so we don't burn an osThreadGetState() call per
+            // 500 ms tick. xPortGetFreeHeapSize is retired here -- the
+            // bench has confirmed the heap is fine post-init, and the
+            // 0x4A2[5] slot is more useful as an ACU RX dispatch probe.
+            //
+            // 0x4A2[3] -- BmsPollTask scheduling state (BmsPollTaskHandle)
+            // 0x4A2[4] -- g_acu_rx_total low byte  (any ACU RX = ticking)
+            // 0x4A2[5] -- g_acu_start_btn_rx_count low byte
+            //             (0x600 std-frame dispatch healthy = ticking)
             const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(
                     0xA0u | (static_cast<std::uint8_t>(
                                  osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
-            const std::uint8_t  bms_seed_count_lo = static_cast<std::uint8_t>(
-                g_bms_seed_count & 0xFFu);
-            const std::size_t   free_heap         = xPortGetFreeHeapSize();
-            const std::uint8_t  free_heap_kb      = (free_heap >= 0xFF00u)
-                ? 0xFFu
-                : static_cast<std::uint8_t>(free_heap >> 8);
+            const std::uint8_t acu_rx_total_lo = static_cast<std::uint8_t>(
+                g_acu_rx_total & 0xFFu);
+            const std::uint8_t acu_start_btn_lo = static_cast<std::uint8_t>(
+                g_acu_start_btn_rx_count & 0xFFu);
 
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap,
@@ -252,7 +262,7 @@ void SafetyTask::run() noexcept {
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo,
-                bms_task_state_byte, bms_seed_count_lo, free_heap_kb);
+                bms_task_state_byte, acu_rx_total_lo, acu_start_btn_lo);
 #else
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);
