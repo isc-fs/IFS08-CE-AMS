@@ -72,17 +72,25 @@ using Frame = std::array<std::uint8_t, 8>;
 // ---------------------------------------------------------------------------
 // 0x4A2  "AMS temps + diagnostics" (cadence 500 ms)
 //
+// Flight layout (no AMS_BMS_HIL_STUB):
 //   byte 0   min_tempC  signed int8 (clipped from BmsState int16)
 //   byte 1   max_tempC  signed int8
 //   byte 2   avg_tempC  signed int8
 //   bytes 3..4  dc_bus_V  little-endian uint16 (volts)
 //   byte 5   reserved (0)
-//   byte 6   tx_fail_count_lo  low byte of g_telemetry_tx_fail
-//            (#123 diagnostic; ticks +1 per failed send_telem call.
-//            Was previously reserved (0); flipped to a live counter
-//            because the 0x4A3 diag frame isn't reaching the wire
-//            and we need to confirm send_telem is returning false.)
+//   byte 6   tx_fail_count_lo  low byte of g_telemetry_tx_fail (#123 diag)
 //   byte 7   heartbeat counter (caller supplies; wraps at 255)
+//
+// HIL_STUB layout (AMS_BMS_HIL_STUB defined): same first 3 + last 2 bytes,
+// but bytes 3..5 are repurposed as #123 diagnostic probes since
+// a separate 0x4A3 frame doesn't reach the wire (suspected H7 TX
+// scheduler dedicated/FIFO addressing quirk -- chased in 5 PRs
+// then deferred). dc_bus_V is dropped from this build only -- the
+// bench injects it from the host so observability is unaffected:
+//   byte 3   bms_poll_task_state  0xA0 | (osThreadGetState low nibble),
+//                                 or 0xFF when BmsPollTaskHandle == NULL
+//   byte 4   bms_seed_count_lo  low byte of g_bms_seed_count
+//   byte 5   free_heap_kb       free heap >> 8 (256 B units), 0xFF saturates
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::int8_t clip_int8(std::int16_t v) noexcept {
     if (v >  127) return  127;
@@ -93,14 +101,29 @@ using Frame = std::array<std::uint8_t, 8>;
 [[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
                                         const VehicleState& veh,
                                         std::uint8_t        heartbeat,
-                                        std::uint8_t        tx_fail_count_lo) noexcept {
+                                        std::uint8_t        tx_fail_count_lo,
+                                        std::uint8_t        bms_task_state_byte = 0,
+                                        std::uint8_t        bms_seed_count_lo   = 0,
+                                        std::uint8_t        free_heap_kb        = 0) noexcept {
     Frame f = {};
     f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
     f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
     f[2] = static_cast<std::uint8_t>(clip_int8(bms.avg_tempC));
+#if defined(AMS_BMS_HIL_STUB)
+    // Bench: bytes 3..5 carry diagnostic probes for #123.
+    (void)veh;
+    f[3] = bms_task_state_byte;
+    f[4] = bms_seed_count_lo;
+    f[5] = free_heap_kb;
+#else
+    // Flight: bytes 3..4 carry dc_bus_V LE, byte 5 reserved.
+    (void)bms_task_state_byte;
+    (void)bms_seed_count_lo;
+    (void)free_heap_kb;
     f[3] = static_cast<std::uint8_t>(veh.dc_bus_V & 0xFFu);
     f[4] = static_cast<std::uint8_t>((veh.dc_bus_V >> 8) & 0xFFu);
     f[5] = 0;
+#endif
     f[6] = tx_fail_count_lo;
     f[7] = heartbeat;
     return f;
