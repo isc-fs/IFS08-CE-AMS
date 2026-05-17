@@ -225,6 +225,21 @@ void SafetyTask::run() noexcept {
             auto       frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat);
 
+            // Compiler-fence between the inline encoder calls and the
+            // diagnostic patches below. Without it, GCC at -O3 inlines
+            // encode_status/encode_temps, sees that f[3], f[5], f[6]
+            // are written to 0 inside the inline body AND written again
+            // immediately after, and folds the patch as a redundant
+            // store -> none of the diag bytes ever reach the wire.
+            // PR #134's sentinel-nibble experiment confirmed this:
+            // 0x4A0[3] read 0x00 (no 0xA prefix), meaning the patch
+            // didn't execute at all. The "" :: "memory" clobber tells
+            // the compiler "every memory location is potentially
+            // observed by external code here", which is enough to
+            // prevent the store-merging optimisation. Pure semantic
+            // ordering -- no actual instructions emitted.
+            __asm__ __volatile__("" ::: "memory");
+
             // Diagnostic bytes patched into the reserved slots of
             // 0x4A0 and 0x4A2. The pure-function encoders still
             // write 0 to these bytes (unit tests verify that); we
