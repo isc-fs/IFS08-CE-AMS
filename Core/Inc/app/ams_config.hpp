@@ -201,6 +201,7 @@ inline constexpr std::uint32_t kAppFlashBase    = 0x08020000u;
 inline constexpr std::uint32_t kAmsTelemStatusId = 0x4A0u;  // state + cell-V extremes
 inline constexpr std::uint32_t kAmsTelemPackId   = 0x4A1u;  // pack V + current
 inline constexpr std::uint32_t kAmsTelemTempsId  = 0x4A2u;  // temp extremes + dc bus + heartbeat
+inline constexpr std::uint32_t kAmsTelemDiagId   = 0x4A3u;  // diagnostic probes (#123); pure-fn encoder
 
 // ---------------------------------------------------------------------------
 // LTC6811-1 + isoSPI BMS chain. New AMS PCB drives a chain of 10 LTCs

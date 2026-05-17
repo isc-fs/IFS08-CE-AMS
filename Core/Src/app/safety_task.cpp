@@ -219,75 +219,40 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            // Diagnostic-byte plumbing for #123. The MainTask in-place
-            // patch on 0x4A0[3] / 0x4A2[5] / 0x4A2[6] was elided by
-            // every prior shape we tried: bare assignment (#132),
-            // "" ::: "memory" fence (#136), "+m" output constraint
-            // (#138). Each attempt got more aggressive but GCC at -O3
-            // kept finding ways to drop the writes -- the patch
-            // result would land in a scratch stack slot that was
-            // never copied into frame_status[3]'s actual offset.
-            //
-            // This version uses volatile-storage locals so EACH
-            // byte store is individually mandatory and cannot be
-            // elided even within an "observed at this single point"
-            // constraint window. The encoder result is copied byte-
-            // by-byte into the volatile array (volatile writes can
-            // not be merged or skipped), then the diagnostic bytes
-            // are overwritten on top, then the result is copied
-            // back into a non-volatile Frame for send_telem.
-            //
-            // Verbose but compiler-proof. Remove once #123 closes
-            // and the original encoder layout suffices again.
-
-            volatile std::uint8_t fs_v[8];
-            volatile std::uint8_t ft_v[8];
-            {
-                const auto fs = telemetry::encode_status(
-                    g_state_telemetry, ams_ok, bms_snap);
-                const auto ft = telemetry::encode_temps(
-                    bms_snap, veh_snap, heartbeat);
-                for (std::size_t i = 0; i < 8; ++i) {
-                    fs_v[i] = fs[i];
-                    ft_v[i] = ft[i];
-                }
-            }
-            const auto frame_pack = telemetry::encode_pack(bms_snap, cur_snap);
-
-            // 0x4A0[3]: BmsPollTask state, sentinel high-nibble 0xA.
-            //   0xFF -> BmsPollTaskHandle == NULL (silent osThreadNew fail)
-            //   0xA0 -> patch ran, osThreadGetState returned 0 (CMSIS quirk)
-            //   0xA1 -> Ready    0xA2 -> Running    0xA3 -> Blocked (healthy)
-            //   0xA4 -> Terminated     0xAF -> Error (-1 truncated)
-            if (BmsPollTaskHandle == nullptr) {
-                fs_v[3] = 0xFFu;
-            } else {
-                const std::uint8_t raw_state = static_cast<std::uint8_t>(
-                    osThreadGetState(BmsPollTaskHandle));
-                fs_v[3] = 0xA0u | (raw_state & 0x0Fu);
-            }
-
-            // 0x4A2[5]: low byte of g_bms_seed_count.
-            ft_v[5] = static_cast<std::uint8_t>(g_bms_seed_count & 0xFFu);
-            // 0x4A2[6]: free heap in 256-byte units (0xFF if > 64 KB).
-            const std::size_t free_heap = xPortGetFreeHeapSize();
-            ft_v[6] = (free_heap >= 0xFF00u)
-                ? 0xFFu
-                : static_cast<std::uint8_t>(free_heap >> 8);
-
-            // Copy volatile -> non-volatile Frame so send_telem (which
-            // expects const Frame&) can consume it. The copy from
-            // volatile is the second guaranteed-non-elidable read.
-            telemetry::Frame frame_status;
-            telemetry::Frame frame_temps;
-            for (std::size_t i = 0; i < 8; ++i) {
-                frame_status[i] = fs_v[i];
-                frame_temps[i]  = ft_v[i];
-            }
+            // Standard three telemetry frames -- back to the clean,
+            // pre-diagnostic shape. The reserved bytes (0x4A0[3],
+            // 0x4A2[5..6]) go back to encoder-set 0; their value as
+            // diagnostic surfaces was killed by GCC -O3 across five
+            // PRs of escalating barriers. The new 0x4A3 diag frame
+            // below carries the same probes via a dedicated encoder
+            // that the compiler can't fold against.
+            const auto frame_status = telemetry::encode_status(
+                g_state_telemetry, ams_ok, bms_snap);
+            const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
+            const auto frame_temps  = telemetry::encode_temps(
+                bms_snap, veh_snap, heartbeat);
 
             if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
             if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
             if (!send_telem(config::kAmsTelemTempsId,  frame_temps))  ++g_telemetry_tx_fail;
+
+            // 0x4A3 diag frame for #123. Bench-only; remove when the
+            // BmsPollTask seeder issue is resolved. Each call site here
+            // produces a value that flows directly into the encoder's
+            // arguments -- no overlay on an existing encoder output,
+            // so nothing for -O3 to fold or eliminate.
+            const std::uint8_t bms_poll_task_state_byte = (BmsPollTaskHandle == nullptr)
+                ? 0xFFu
+                : static_cast<std::uint8_t>(
+                    0xA0u | (static_cast<std::uint8_t>(
+                                 osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
+            const std::uint8_t  bms_seed_count_lo = static_cast<std::uint8_t>(
+                g_bms_seed_count & 0xFFu);
+            const std::uint32_t free_heap_bytes   = static_cast<std::uint32_t>(
+                xPortGetFreeHeapSize());
+            const auto frame_diag = telemetry::encode_diag(
+                bms_poll_task_state_byte, bms_seed_count_lo, free_heap_bytes);
+            if (!send_telem(config::kAmsTelemDiagId, frame_diag)) ++g_telemetry_tx_fail;
 
             ++heartbeat;  // 8-bit wraparound is intentional
         }
