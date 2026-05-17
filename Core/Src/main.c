@@ -359,11 +359,13 @@ int main(void)
      * IWDG starvation in the pre-scheduler / early-scheduler window
      * is confirmed as the root cause. Bench-only. */
     HAL_IWDG_Refresh(&hiwdg1);
-    /* #123 iter 20: heap snapshot before any FreeRTOS object is
-     * allocated. If this is dangerously low (< a few KB) the
-     * regression is static-init eating the pool, not the allocations
-     * themselves. payload = free heap in bytes (LE u32). */
-    hil_probe(0x7ACu, (uint32_t)xPortGetFreeHeapSize());
+    /* #123 iter 21: iter-20's pre-init xPortGetFreeHeapSize() call
+     * crashed (operator: heap_4 free-list head is uninitialized until
+     * the first pvPortMalloc). Replace with a sanity constant -- if
+     * 0x7AC fires now we've confirmed the heap-query was the killer;
+     * the real free-heap read moves to 0x7AD AFTER osKernelInitialize
+     * (which touches the heap internally and primes the free list). */
+    hil_probe(0x7ACu, 0xDEADBEEFu);
   }
 #endif
   /* USER CODE END 2 */
@@ -375,6 +377,9 @@ int main(void)
   osKernelInitialize();
 #if defined(AMS_BMS_HIL_STUB)
   hil_probe(0x7C0u, (uint32_t)osKernelGetState());  /* after */
+  /* #123 iter 21: real free-heap read, now safe because
+   * osKernelInitialize touches the heap and primes the free list. */
+  hil_probe(0x7ADu, (uint32_t)xPortGetFreeHeapSize());
 #endif
   /* Create the mutex(es) */
   /* creation of bms_mutex */
