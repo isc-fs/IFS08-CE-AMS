@@ -27,18 +27,25 @@ using Frame = std::array<std::uint8_t, 8>;
 //   byte 0   FSM state (0..5 per ams::fsm::State enum)
 //   byte 1   AMS_OK GPIO read-back (0 / 1)
 //   byte 2   module_online_mask (low byte of bms.module_online_mask)
-//   byte 3   reserved (0)
+//   byte 3   flight: reserved (0)
+//            HIL_STUB: app_init_progress (#123 diag, 0..7)
 //   bytes 4..5  min_cell_mV  big-endian uint16
 //   bytes 6..7  max_cell_mV  big-endian uint16
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_status(std::uint8_t       state,
                                          std::uint8_t       ams_ok,
-                                         const BmsState&    bms) noexcept {
+                                         const BmsState&    bms,
+                                         std::uint8_t       app_init_progress = 0) noexcept {
     Frame f = {};
     f[0] = state;
     f[1] = ams_ok ? 1u : 0u;
     f[2] = bms.module_online_mask;
+#if defined(AMS_BMS_HIL_STUB)
+    f[3] = app_init_progress;
+#else
+    (void)app_init_progress;
     f[3] = 0;
+#endif
     f[4] = static_cast<std::uint8_t>(bms.min_cell_mV >> 8);
     f[5] = static_cast<std::uint8_t>(bms.min_cell_mV & 0xFFu);
     f[6] = static_cast<std::uint8_t>(bms.max_cell_mV >> 8);
