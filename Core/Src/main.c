@@ -171,63 +171,7 @@ void StartCurrentSensorTask(void *argument);
 void StartTelemetryTask(void *argument);
 
 /* USER CODE BEGIN PFP */
-#if defined(AMS_BMS_HIL_STUB)
-/* FreeRTOS heap accessor -- safe pre-osKernelInitialize: it just reads
- * a counter on a static heap array. */
-extern size_t xPortGetFreeHeapSize(void);
 
-/* #123 iter 19: per-thread bring-up probe. Emits 0x7B0+idx on can0 with
- * payload[0]=marker, payload[1..4]=phase byte tag (0xBE = "before call"
- * / 0xAF = "after call returned"), payload[5..6] reserved, payload[7]=
- * 0xAA iter marker. Refreshes IWDG before queuing the frame to keep the
- * watchdog from biting mid-probe. Bench-only. */
-static void hil_thread_probe(uint8_t idx, uint8_t phase)
-{
-  HAL_IWDG_Refresh(&hiwdg1);
-  FDCAN_TxHeaderTypeDef tx = {0};
-  tx.Identifier          = 0x7B0u + idx;
-  tx.IdType              = FDCAN_STANDARD_ID;
-  tx.TxFrameType         = FDCAN_DATA_FRAME;
-  tx.DataLength          = FDCAN_DLC_BYTES_8;
-  tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-  tx.BitRateSwitch       = FDCAN_BRS_OFF;
-  tx.FDFormat            = FDCAN_CLASSIC_CAN;
-  tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-  tx.MessageMarker       = 0;
-  uint8_t data[8] = { idx, phase, 0, 0, 0, 0, 0, 0xAAu };
-  (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
-}
-
-/* #123 iter 20: generic pre-kernel probe. Emits arbitrary 11-bit ID
- * with payload[0]=id_lo, payload[1..4]=payload32 LE, payload[7]=0xAA.
- * Used to bracket osKernelInitialize + each mutex/queue allocation so
- * the bench can pinpoint which call dies (operator's iter-19 capture
- * showed even 0x7B0 BE doesn't emit -- crash is in the
- * osKernelInitialize / mutex / queue block before any osThreadNew). */
-static void hil_probe(uint16_t id, uint32_t payload32)
-{
-  HAL_IWDG_Refresh(&hiwdg1);
-  FDCAN_TxHeaderTypeDef tx = {0};
-  tx.Identifier          = id;
-  tx.IdType              = FDCAN_STANDARD_ID;
-  tx.TxFrameType         = FDCAN_DATA_FRAME;
-  tx.DataLength          = FDCAN_DLC_BYTES_8;
-  tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-  tx.BitRateSwitch       = FDCAN_BRS_OFF;
-  tx.FDFormat            = FDCAN_CLASSIC_CAN;
-  tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-  tx.MessageMarker       = 0;
-  uint8_t data[8] = {
-    (uint8_t)(id & 0xFFu),
-    (uint8_t)(payload32        & 0xFFu),
-    (uint8_t)((payload32 >>  8) & 0xFFu),
-    (uint8_t)((payload32 >> 16) & 0xFFu),
-    (uint8_t)((payload32 >> 24) & 0xFFu),
-    0, 0, 0xAAu,
-  };
-  (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
-}
-#endif
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -296,165 +240,19 @@ int main(void)
    * first place. App_InitTask still calls ErrorLatch::clear() under
    * the same flag as defence-in-depth against a backup register
    * surviving a previous (pre-phase-2) session. */
-#if defined(AMS_BMS_HIL_STUB)
-  /* #123 iter 17: pre-scheduler FDCAN_Start + boot-trace probe.
-   * All three FDCAN-config reverts (#159, #161, #163) failed to
-   * restore TX. The remaining suspects are SafetyTask / App_InitTask
-   * code paths, but we have no way to observe them on this bench
-   * without TX working. Move HAL_FDCAN_Start to here so we can
-   * emit a probe frame BEFORE any of the suspect code runs.
-   *
-   * If candump sees 0x7AA after this point, the FDCAN1 TX path
-   * itself works in this firmware tree -- the regression is
-   * downstream (App_InitTask hang, or osThreadNew failure for
-   * MainTask, or similar). If we see nothing, the regression is
-   * even earlier than HAL_FDCAN_Start succeeding (very unlikely
-   * given pre-#152 firmware transmitted with this same chip and
-   * the same RCC config). App_InitTask's own HAL_FDCAN_Start
-   * is now redundant but harmless (already in BUSY state).
-   *
-   * Bench-only -- flight keeps the post-scheduler Start in
-   * App_InitTask exactly as before.
-   */
-  if (HAL_FDCAN_Start(&hfdcan1) == HAL_OK) {
-    FDCAN_TxHeaderTypeDef tx = {0};
-    tx.Identifier          = 0x7AAu;
-    tx.IdType              = FDCAN_STANDARD_ID;
-    tx.TxFrameType         = FDCAN_DATA_FRAME;
-    tx.DataLength          = FDCAN_DLC_BYTES_8;
-    tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    tx.BitRateSwitch       = FDCAN_BRS_OFF;
-    tx.FDFormat            = FDCAN_CLASSIC_CAN;
-    tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-    tx.MessageMarker       = 0;
-    /* #123 iter 18: payload[1..4] carry IWDG->RLR (little-endian uint32)
-     * so the bench can confirm the configured reload counter without
-     * SWD. Bench observed ~2.1 s reset spacing -- if RLR encodes a
-     * value that matches 2.1 s at the LSI frequency (32 kHz / 32 div
-     * = 1 kHz tick -> RLR=2100 would yield ~2.1 s), IWDG is the
-     * smoking gun and SafetyTask::run never reaches Watchdog::refresh
-     * before expiry. Payload[5] = marker 0xAA so the bench can
-     * distinguish iter-18 frames from iter-17 frames (which had
-     * payload[1..7] all-zero). */
-    const uint32_t rlr = IWDG1->RLR;
-    uint8_t data[8] = {
-      0xA0u,
-      (uint8_t)(rlr        & 0xFFu),
-      (uint8_t)((rlr >>  8) & 0xFFu),
-      (uint8_t)((rlr >> 16) & 0xFFu),
-      (uint8_t)((rlr >> 24) & 0xFFu),
-      0xAAu, 0, 0,
-    };
-    (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
-    /* Give the hardware time to actually transmit before we move on
-     * to osKernelStart -- otherwise the FIFO write races the start
-     * of FreeRTOS scheduling and might not drain. ~1 ms at 500 kbps
-     * is well over the time needed to transmit one 8-byte frame
-     * (which takes ~250 us on the wire). */
-    HAL_Delay(2);
-    /* #123 iter 18: explicit IWDG refresh after the probe send.
-     * If this single refresh extends time-to-reset measurably (e.g.
-     * 0x7AA spacing becomes 4.2 s instead of 2.1 s, or the chip
-     * stops resetting once SafetyTask runs and refreshes again),
-     * IWDG starvation in the pre-scheduler / early-scheduler window
-     * is confirmed as the root cause. Bench-only. */
-    HAL_IWDG_Refresh(&hiwdg1);
-    /* #123 iter 22: operator pinned to "exactly one FDCAN TX per boot
-     * succeeds" -- 0x7AC never emits even with a sanity constant
-     * (no heap call), and disassembly confirms the call site exists.
-     * Two cheap discriminators added inline (NOT via hil_probe so we
-     * rule out the helper itself):
-     *
-     *   A) Inline-duplicate 0x7AA at ID 0x7A9 -- byte-for-byte copy
-     *      of the 0x7AA TxHeader and AddMessageToTxFifoQ call. If
-     *      0x7AA fires but 0x7A9 does not, the problem is per-TX
-     *      FDCAN state, not the hil_probe abstraction.
-     *
-     *   B) 0x7AE carrying FDCAN1->ECR (full u32 LE). H7 ECR layout:
-     *        bits  0..7  TEC  (TX error counter)
-     *        bits  8..14 REC  (RX error counter)
-     *        bit  15     RP   (RX passive)
-     *        bits 16..23 CEL  (CAN error logging)
-     *      If TEC > 0 right after first TX -> bus-off / error-passive
-     *      is the smoking gun (operator's hypothesis c). If TEC == 0
-     *      and REC == 0 the FDCAN is fine and we're chasing something
-     *      else (compiler / linker / stack).
-     */
-    {
-      FDCAN_TxHeaderTypeDef tx2 = {0};
-      tx2.Identifier          = 0x7A9u;
-      tx2.IdType              = FDCAN_STANDARD_ID;
-      tx2.TxFrameType         = FDCAN_DATA_FRAME;
-      tx2.DataLength          = FDCAN_DLC_BYTES_8;
-      tx2.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-      tx2.BitRateSwitch       = FDCAN_BRS_OFF;
-      tx2.FDFormat            = FDCAN_CLASSIC_CAN;
-      tx2.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-      tx2.MessageMarker       = 0;
-      uint8_t data2[8] = { 0xA9u, 0, 0, 0, 0, 0xAAu, 0, 0 };
-      (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx2, data2);
-      HAL_Delay(2);
-    }
-    {
-      const uint32_t ecr = FDCAN1->ECR;
-      FDCAN_TxHeaderTypeDef tx3 = {0};
-      tx3.Identifier          = 0x7AEu;
-      tx3.IdType              = FDCAN_STANDARD_ID;
-      tx3.TxFrameType         = FDCAN_DATA_FRAME;
-      tx3.DataLength          = FDCAN_DLC_BYTES_8;
-      tx3.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-      tx3.BitRateSwitch       = FDCAN_BRS_OFF;
-      tx3.FDFormat            = FDCAN_CLASSIC_CAN;
-      tx3.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-      tx3.MessageMarker       = 0;
-      uint8_t data3[8] = {
-        0xAEu,
-        (uint8_t)(ecr        & 0xFFu),
-        (uint8_t)((ecr >>  8) & 0xFFu),
-        (uint8_t)((ecr >> 16) & 0xFFu),
-        (uint8_t)((ecr >> 24) & 0xFFu),
-        0xAAu, 0, 0,
-      };
-      (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx3, data3);
-      HAL_Delay(2);
-    }
-    HAL_IWDG_Refresh(&hiwdg1);
-    /* Keep the original 0x7AC sanity-constant probe as well so the
-     * iter-21 vs iter-22 comparison is apples-to-apples. */
-    hil_probe(0x7ACu, 0xDEADBEEFu);
-  }
-#endif
   /* USER CODE END 2 */
 
   /* Init scheduler */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C0u, 0xBEEFCAFEu);  /* before osKernelInitialize */
-#endif
   osKernelInitialize();
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C0u, (uint32_t)osKernelGetState());  /* after */
-  /* #123 iter 21: real free-heap read, now safe because
-   * osKernelInitialize touches the heap and primes the free list. */
-  hil_probe(0x7ADu, (uint32_t)xPortGetFreeHeapSize());
-#endif
   /* Create the mutex(es) */
   /* creation of bms_mutex */
   bms_mutexHandle = osMutexNew(&bms_mutex_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C1u, (uint32_t)(uintptr_t)bms_mutexHandle);
-#endif
 
   /* creation of current_mutex */
   current_mutexHandle = osMutexNew(&current_mutex_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C2u, (uint32_t)(uintptr_t)current_mutexHandle);
-#endif
 
   /* creation of vehicle_mutex */
   vehicle_mutexHandle = osMutexNew(&vehicle_mutex_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C3u, (uint32_t)(uintptr_t)vehicle_mutexHandle);
-#endif
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -471,15 +269,9 @@ int main(void)
   /* Create the queue(s) */
   /* creation of acu_rx_queue */
   acu_rx_queueHandle = osMessageQueueNew (16, sizeof(CanFrame), &acu_rx_queue_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C4u, (uint32_t)(uintptr_t)acu_rx_queueHandle);
-#endif
 
   /* creation of acu_tx_queue */
   acu_tx_queueHandle = osMessageQueueNew (16, sizeof(CanFrame), &acu_tx_queue_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_probe(0x7C5u, (uint32_t)(uintptr_t)acu_tx_queueHandle);
-#endif
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
@@ -487,114 +279,31 @@ int main(void)
 
   /* Create the thread(s) */
   /* creation of defaultTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(0, 0xBEu);
-#endif
   defaultTaskHandle = osThreadNew(StartDefaultTask, NULL, &defaultTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(0, 0xAFu);
-#endif
 
   /* creation of App_InitTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(1, 0xBEu);
-#endif
   App_InitTaskHandle = osThreadNew(StartAppInitTask, NULL, &App_InitTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(1, 0xAFu);
-#endif
 
   /* creation of SafetyTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(2, 0xBEu);
-#endif
   SafetyTaskHandle = osThreadNew(StartSafetyTask, NULL, &SafetyTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(2, 0xAFu);
-#endif
 
   /* creation of StateTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(3, 0xBEu);
-#endif
   StateTaskHandle = osThreadNew(StartStateTask, NULL, &StateTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(3, 0xAFu);
-#endif
 
   /* creation of BmsPollTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(4, 0xBEu);
-#endif
   BmsPollTaskHandle = osThreadNew(StartBmsPollTask, NULL, &BmsPollTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(4, 0xAFu);
-#endif
 
   /* creation of AcuCanTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(5, 0xBEu);
-#endif
   AcuCanTaskHandle = osThreadNew(StartAcuCanTask, NULL, &AcuCanTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(5, 0xAFu);
-#endif
 
   /* creation of CurrentSensorTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(6, 0xBEu);
-#endif
   CurrentSensorTaskHandle = osThreadNew(StartCurrentSensorTask, NULL, &CurrentSensorTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(6, 0xAFu);
-#endif
 
   /* creation of TelemetryTask */
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(7, 0xBEu);
-#endif
   TelemetryTaskHandle = osThreadNew(StartTelemetryTask, NULL, &TelemetryTask_attributes);
-#if defined(AMS_BMS_HIL_STUB)
-  hil_thread_probe(7, 0xAFu);
-#endif
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
-#if defined(AMS_BMS_HIL_STUB)
-  /* #123 iter 18: post-osThreadNew / pre-osKernelStart probe (0x7AB).
-   * Brackets the FreeRTOS-init phase so the bench can tell whether
-   * the chip dies during osThreadNew (no 0x7AB) or after the
-   * scheduler actually starts (0x7AB present, but no later
-   * App_InitTask 0xB1..0xB7 trace and no 0x4A0/0x4A1/0x4A2). Also
-   * refreshes IWDG -- the osThreadNew + queue + mutex setup above
-   * can chew through tens of ms in -O0 builds; combined with the
-   * pre-scheduler HAL_Delay(2) and any LSI slack, it may be
-   * dangerously close to the 100-tick reload. Bench-only. */
-  {
-    FDCAN_TxHeaderTypeDef tx = {0};
-    tx.Identifier          = 0x7ABu;
-    tx.IdType              = FDCAN_STANDARD_ID;
-    tx.TxFrameType         = FDCAN_DATA_FRAME;
-    tx.DataLength          = FDCAN_DLC_BYTES_8;
-    tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    tx.BitRateSwitch       = FDCAN_BRS_OFF;
-    tx.FDFormat            = FDCAN_CLASSIC_CAN;
-    tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
-    tx.MessageMarker       = 0;
-    const uint32_t rlr = IWDG1->RLR;
-    uint8_t data[8] = {
-      0xABu,
-      (uint8_t)(rlr        & 0xFFu),
-      (uint8_t)((rlr >>  8) & 0xFFu),
-      (uint8_t)((rlr >> 16) & 0xFFu),
-      (uint8_t)((rlr >> 24) & 0xFFu),
-      0xAAu, 0, 0,
-    };
-    (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
-    HAL_Delay(2);
-    HAL_IWDG_Refresh(&hiwdg1);
-  }
-#endif
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
