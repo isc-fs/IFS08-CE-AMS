@@ -229,8 +229,10 @@ void SafetyTask::run() noexcept {
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
+            const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
+                g_telemetry_tx_fail & 0xFFu);
             const auto frame_temps  = telemetry::encode_temps(
-                bms_snap, veh_snap, heartbeat);
+                bms_snap, veh_snap, heartbeat, tx_fail_lo);
 
             if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
             if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;

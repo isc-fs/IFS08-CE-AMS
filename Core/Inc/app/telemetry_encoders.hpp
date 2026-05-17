@@ -76,7 +76,12 @@ using Frame = std::array<std::uint8_t, 8>;
 //   byte 1   max_tempC  signed int8
 //   byte 2   avg_tempC  signed int8
 //   bytes 3..4  dc_bus_V  little-endian uint16 (volts)
-//   bytes 5..6  reserved (0)
+//   byte 5   reserved (0)
+//   byte 6   tx_fail_count_lo  low byte of g_telemetry_tx_fail
+//            (#123 diagnostic; ticks +1 per failed send_telem call.
+//            Was previously reserved (0); flipped to a live counter
+//            because the 0x4A3 diag frame isn't reaching the wire
+//            and we need to confirm send_telem is returning false.)
 //   byte 7   heartbeat counter (caller supplies; wraps at 255)
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::int8_t clip_int8(std::int16_t v) noexcept {
@@ -87,7 +92,8 @@ using Frame = std::array<std::uint8_t, 8>;
 
 [[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
                                         const VehicleState& veh,
-                                        std::uint8_t        heartbeat) noexcept {
+                                        std::uint8_t        heartbeat,
+                                        std::uint8_t        tx_fail_count_lo) noexcept {
     Frame f = {};
     f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
     f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
@@ -95,7 +101,7 @@ using Frame = std::array<std::uint8_t, 8>;
     f[3] = static_cast<std::uint8_t>(veh.dc_bus_V & 0xFFu);
     f[4] = static_cast<std::uint8_t>((veh.dc_bus_V >> 8) & 0xFFu);
     f[5] = 0;
-    f[6] = 0;
+    f[6] = tx_fail_count_lo;
     f[7] = heartbeat;
     return f;
 }
