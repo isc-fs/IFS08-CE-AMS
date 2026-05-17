@@ -55,10 +55,6 @@ void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) 
     }
 }
 
-void CurrentService::set_charger_detected(bool detected) noexcept {
-    state_.charger_detected = detected;
-}
-
 CurrentState CurrentService::snapshot() const noexcept {
     return state_;
 }

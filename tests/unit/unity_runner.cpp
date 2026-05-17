@@ -28,9 +28,7 @@ void test_current_adc_symmetric_around_zero(void);
 
 // test_vehicle_service.cpp
 void test_decode_dc_bus_little_endian(void);
-void test_decode_start_button(void);
 void test_update_dc_bus_frame(void);
-void test_update_start_button_frame(void);
 void test_acu_frame_on_wrong_bus_rejected(void);
 void test_acu_unknown_id_rejected(void);
 
@@ -57,17 +55,23 @@ void test_predicates_boot_grace_does_not_suppress_force_error(void);
 void test_predicates_after_grace_zero_ticks_faults(void);
 
 // test_state_machine.cpp
-void test_fsm_start_waits_without_button(void);
-void test_fsm_start_transitions_to_precharge_on_button(void);
-void test_fsm_start_transitions_to_charge_on_charger(void);
+void test_fsm_start_waits_without_cockpit_inputs(void);
+void test_fsm_start_waits_with_tsms_only(void);
+void test_fsm_start_waits_with_rst_pil_only(void);
+void test_fsm_start_to_precharge_on_both_inputs(void);
 void test_fsm_precharge_reaches_target(void);
 void test_fsm_precharge_stays_below_target(void);
-void test_fsm_transition_holds_then_runs(void);
-void test_fsm_run_and_charge_are_terminal(void);
+void test_fsm_precharge_timeout_forces_error(void);
+void test_fsm_transition_holds_then_runs_in_car_mode(void);
+void test_fsm_transition_holds_then_charges_in_charger_mode(void);
+void test_fsm_transition_undecided_mode_forces_error(void);
+void test_fsm_transition_drops_voltage_to_error(void);
+void test_fsm_run_stays_while_cockpit_high(void);
+void test_fsm_run_to_error_on_tsms_drop(void);
+void test_fsm_run_to_error_on_rst_pil_drop(void);
+void test_fsm_charge_to_error_on_cockpit_drop(void);
 void test_fsm_any_state_to_error_on_fault(void);
 void test_fsm_error_is_sticky(void);
-void test_fsm_precharge_timeout_forces_error(void);
-void test_fsm_transition_drops_voltage_to_error(void);
 
 // test_ltc6811_decode.cpp
 void test_ltc6811_pec_datasheet_wrcfga(void);
@@ -121,6 +125,7 @@ void test_sil_nominal_startup_to_run(void);
 void test_sil_precharge_timeout_to_error(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
+void test_sil_tsms_drop_in_run_latches_error(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -144,9 +149,7 @@ int main(void) {
     RUN_TEST(test_current_adc_symmetric_around_zero);
 
     RUN_TEST(test_decode_dc_bus_little_endian);
-    RUN_TEST(test_decode_start_button);
     RUN_TEST(test_update_dc_bus_frame);
-    RUN_TEST(test_update_start_button_frame);
     RUN_TEST(test_acu_frame_on_wrong_bus_rejected);
     RUN_TEST(test_acu_unknown_id_rejected);
 
@@ -170,17 +173,23 @@ int main(void) {
     RUN_TEST(test_predicates_boot_grace_does_not_suppress_force_error);
     RUN_TEST(test_predicates_after_grace_zero_ticks_faults);
 
-    RUN_TEST(test_fsm_start_waits_without_button);
-    RUN_TEST(test_fsm_start_transitions_to_precharge_on_button);
-    RUN_TEST(test_fsm_start_transitions_to_charge_on_charger);
+    RUN_TEST(test_fsm_start_waits_without_cockpit_inputs);
+    RUN_TEST(test_fsm_start_waits_with_tsms_only);
+    RUN_TEST(test_fsm_start_waits_with_rst_pil_only);
+    RUN_TEST(test_fsm_start_to_precharge_on_both_inputs);
     RUN_TEST(test_fsm_precharge_reaches_target);
     RUN_TEST(test_fsm_precharge_stays_below_target);
-    RUN_TEST(test_fsm_transition_holds_then_runs);
-    RUN_TEST(test_fsm_run_and_charge_are_terminal);
+    RUN_TEST(test_fsm_precharge_timeout_forces_error);
+    RUN_TEST(test_fsm_transition_holds_then_runs_in_car_mode);
+    RUN_TEST(test_fsm_transition_holds_then_charges_in_charger_mode);
+    RUN_TEST(test_fsm_transition_undecided_mode_forces_error);
+    RUN_TEST(test_fsm_transition_drops_voltage_to_error);
+    RUN_TEST(test_fsm_run_stays_while_cockpit_high);
+    RUN_TEST(test_fsm_run_to_error_on_tsms_drop);
+    RUN_TEST(test_fsm_run_to_error_on_rst_pil_drop);
+    RUN_TEST(test_fsm_charge_to_error_on_cockpit_drop);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
     RUN_TEST(test_fsm_error_is_sticky);
-    RUN_TEST(test_fsm_precharge_timeout_forces_error);
-    RUN_TEST(test_fsm_transition_drops_voltage_to_error);
 
     RUN_TEST(test_ltc6811_pec_datasheet_wrcfga);
     RUN_TEST(test_ltc6811_pec_empty);
@@ -230,6 +239,7 @@ int main(void) {
     RUN_TEST(test_sil_precharge_timeout_to_error);
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
+    RUN_TEST(test_sil_tsms_drop_in_run_latches_error);
 
     return UNITY_END();
 }

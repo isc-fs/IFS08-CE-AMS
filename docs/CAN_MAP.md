@@ -164,25 +164,14 @@ silent failure mode.
 
 ## TX — AMS to vehicle / charger (FDCAN1)
 
-### `0x12C` — minimum cell voltage telemetry
+### `0x12C` — minimum cell voltage telemetry **[RETIRED — fix/48]**
 
-| Field | Value |
-|---|---|
-| Direction | TX (AMS → vehicle) |
-| Bus | FDCAN1 |
-| ID type | **Extended** |
-| DLC | 2 |
-| Period | 500 ms |
-| Suppressed when | charging |
-
-Payload (big-endian, mV):
-
-| Byte | Field |
-|---|---|
-| 0 | `MIN_V >> 8` |
-| 1 | `MIN_V & 0xFF` |
-
-Source: `select_state()` in `module_state_machine.cpp:150–157`.
+Used to TX every 500 ms while in `Run`, suppressed during `Charge`. The only
+reason to send it was the legacy "no balancing during charge" rule; now
+that the charger no longer communicates on CAN, the suppression became
+meaningless. Frame retired entirely; will return as a charge-state-only
+balance TX in a future PR (the firmware comment in `acu_can_task.cpp`
+marks the future re-entry point).
 
 ### `0x20` — AMS state reply
 
@@ -324,14 +313,27 @@ Standard 11-bit. DLC 8. Cadence 500 ms.
 
 Standard 11-bit. DLC 8. Cadence 500 ms.
 
+Flight layout:
+
 | Byte | Field | Notes |
 |:---:|---|---|
 | 0 | `min_tempC` | Signed int8, °C. `BmsState.min_tempC` clipped to int8 range |
 | 1 | `max_tempC` | Signed int8, °C |
 | 2 | `avg_tempC` | Signed int8, °C |
 | 3-4 | `dc_bus_V` | Little-endian uint16, V (from `VehicleState.dc_bus_V`) |
-| 5-6 | reserved | 0 |
+| 5 | reserved | 0 |
+| 6 | `tx_fail_lo` | Low byte of `g_telemetry_tx_fail` |
 | 7 | `heartbeat` | Wraparound 8-bit counter, increments per MainTask telemetry cycle (500 ms). Useful for detecting dropped frames on the receiver. |
+
+HIL_STUB layout (`-DAMS_BMS_HIL_STUB`): bytes 0..2 and 6..7 unchanged;
+bytes 3..5 carry bench diagnostic probes instead of `dc_bus_V`
+(the bench injects `dc_bus_V` from the host so visibility is unaffected):
+
+| Byte | Field | Notes |
+|:---:|---|---|
+| 3 | `bms_task_state_byte` | `0xA0 | (osThreadGetState(BmsPollTaskHandle) & 0x0F)`. `0xFF` if handle is NULL. |
+| 4 | `acu_rx_total_lo` | Low byte of `g_acu_rx_total` (ticks on any matched ACU RX frame; AcuCanTask + queue + dispatch liveness) |
+| 5 | `cockpit_byte` | `0x80 | (mode_locked << 2) | (TSMS<<1) | RST_PIL`. High bit `0x80` is a sentinel so older binaries' `0x00` stands out. mode_locked: `0`=Undecided, `1`=Car, `2`=Charger. |
 
 ---
 
@@ -355,17 +357,11 @@ Source: `CPU_MOD::parse()` `class_cpu.cpp:65–68`,
 **Refactor decision:** enforce a 200 ms freshness on `DC_BUS`. Stale
 voltage during precharge is a real fault.
 
-### `0x600` — start button
+### `0x600` — start button **[RETIRED — fix/48]**
 
-| Field | Value |
-|---|---|
-| Direction | RX (VCU → AMS) |
-| Bus | FDCAN1 (legacy code accepts on FDCAN2 too — VERIFY) |
-| ID type | Standard |
-| DLC | 1 |
-| Decode | byte 0 = 0/1, drives `start` → `transition` transition |
-
-Source: `parse_state()` `module_state_machine.cpp:329–331`.
+Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The
+FSM Start→Precharge transition now requires both `TSMS` and `RST_PIL`
+asserted; level-polled at the 20 ms FSM cadence in `safety_task.cpp`.
 
 ### `0x401 – 0x406` — accumulator temperature sensors
 
@@ -380,17 +376,15 @@ Source: `parse_state()` `module_state_machine.cpp:329–331`.
 
 Source: `Temperatures_MOD::parse()` `class_temperatures.cpp:73–134`.
 
-### `0x18FF50E7` — charger detected
+### `0x18FF50E7` — charger detected **[RETIRED — fix/48]**
 
-| Field | Value |
-|---|---|
-| Direction | RX (charger → AMS) |
-| Bus | FDCAN1 |
-| ID type | Extended (29-bit) |
-| Effect | Sets `flag_charger = 1` across all modules |
-| Side effects | Enables temperature forwarding, alters relay/state behaviour, suppresses balancing TX |
-
-Source: `parse_state()` `module_state_machine.cpp:350`.
+The charger no longer communicates over CAN; the only thing on the
+charger-assembly bus is an HMI for displaying cell V/T. Car-vs-charger
+context is now distinguished by VCU `0x100` heartbeat freshness at the
+moment of Start→Precharge transition: heard within `kVcuFreshMs`
+(1000 ms) → Car (target = Run), silent → Charger (target = Charge).
+The captured mode locks for the rest of the boot cycle and never
+re-evaluates.
 
 ---
 

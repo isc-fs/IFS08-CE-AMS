@@ -63,8 +63,10 @@ void Error_Handler(void);
 #define LTC6820_CS_GPIO_Port GPIOA
 #define AMS_OK_Pin GPIO_PIN_4
 #define AMS_OK_GPIO_Port GPIOB
-#define Charge_Button_Pin GPIO_PIN_7
-#define Charge_Button_GPIO_Port GPIOG
+#define TSMS_Pin GPIO_PIN_9
+#define TSMS_GPIO_Port GPIOF
+#define RST_PIL_Pin GPIO_PIN_10
+#define RST_PIL_GPIO_Port GPIOF
 #define RELAY_AIR_P_Pin GPIO_PIN_5
 #define RELAY_AIR_P_GPIO_Port GPIOB
 #define RELAY_AIR_N_Pin GPIO_PIN_6

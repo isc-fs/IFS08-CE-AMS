@@ -28,6 +28,13 @@ inline constexpr std::int32_t  kImaxMa   = 200000; // |I| max mA      -- COMMISS
 inline constexpr std::uint32_t kIStaleMs       =  200;  // current sensor stale
 inline constexpr std::uint32_t kBmsStaleMs     = 1500;  // any BMS module silent
 inline constexpr std::uint32_t kVcuStaleMs     =  200;  // VCU 0x100 stale
+// At the moment Start->Precharge fires (TSMS+RST_PIL asserted), the
+// FSM checks "have we heard a VCU 0x100 frame in the last kVcuFreshMs?"
+// to decide whether the pack is in the car (Run target) or at the
+// charger (Charge target). Looser than kVcuStaleMs because a slow VCU
+// bring-up shouldn't be misclassified as charger. Mode is locked at
+// the moment of transition and never re-evaluated.
+inline constexpr std::uint32_t kVcuFreshMs     = 1000;
 inline constexpr std::uint32_t kPrechargeMaxMs    = 1500;  // precharge timeout
 inline constexpr std::uint32_t kTransitionHoldMs  =  100;  // hold + verify
 
@@ -77,11 +84,15 @@ inline constexpr std::uint8_t  kCellsPerModule      = 19;
 inline constexpr std::uint8_t  kTempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 
 // Accumulator bus (FDCAN1).
-inline constexpr std::uint32_t kAcuRxDcBusId     = 0x100;   // extended
-inline constexpr std::uint32_t kAcuRxStartBtnId  = 0x600;   // standard
-inline constexpr std::uint32_t kAcuRxChargerId   = 0x18FF50E7;  // extended
+//
+// Retired in fix/48 (TSMS+RST_PIL FSM): kAcuRxStartBtnId (0x600) and
+// kAcuRxChargerId (0x18FF50E7) were the legacy Start->{Precharge,Charge}
+// triggers. Both replaced by physical GPIOs (TSMS_Pin / RST_PIL_Pin).
+// kAcuTxMinVoltId (0x12C) also retired -- it only ever existed to suppress
+// itself during Charge; will return as a charge-only balance TX in a
+// future PR.
+inline constexpr std::uint32_t kAcuRxDcBusId     = 0x100;   // extended; VCU DC bus heartbeat
 inline constexpr std::uint32_t kAcuTxStateId     = 0x020;   // extended
-inline constexpr std::uint32_t kAcuTxMinVoltId   = 0x12C;   // extended
 inline constexpr std::uint32_t kAcuTxCurrentId   = 0x450;
 inline constexpr std::uint32_t kAcuTxCurrWarnId  = 0x500;
 inline constexpr std::uint32_t kAcuTxCurrOverId  = 0x501;
