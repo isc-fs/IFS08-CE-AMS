@@ -230,9 +230,10 @@ void SafetyTask::run() noexcept {
             const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
                 g_telemetry_tx_fail & 0xFFu);
 
-            // Diag values are always computed -- they're cheap reads and
-            // encode_temps consumes them on the HIL_STUB build path.
-            // Flight builds ignore the args via (void) inside the encoder.
+#if defined(AMS_BMS_HIL_STUB)
+            // Bench-only diag values riding 0x4A2[3..5]. Skipped in
+            // flight so we don't burn an osThreadGetState() +
+            // xPortGetFreeHeapSize() pair per 500 ms tick.
             const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(
@@ -247,16 +248,18 @@ void SafetyTask::run() noexcept {
 
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap,
-#if defined(AMS_BMS_HIL_STUB)
-                /*app_init_progress=*/g_app_init_progress
-#else
-                /*app_init_progress=*/0u
-#endif
-            );
+                /*app_init_progress=*/g_app_init_progress);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo,
                 bms_task_state_byte, bms_seed_count_lo, free_heap_kb);
+#else
+            const auto frame_status = telemetry::encode_status(
+                g_state_telemetry, ams_ok, bms_snap);
+            const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
+            const auto frame_temps  = telemetry::encode_temps(
+                bms_snap, veh_snap, heartbeat, tx_fail_lo);
+#endif
 
             if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
             if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
