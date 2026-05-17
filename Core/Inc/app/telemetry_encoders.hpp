@@ -100,4 +100,46 @@ using Frame = std::array<std::uint8_t, 8>;
     return f;
 }
 
+// ---------------------------------------------------------------------------
+// 0x4A3  "AMS diag" (cadence 500 ms, alongside the other three frames)
+//
+//   byte 0   bms_poll_task_state
+//              0xA0..0xA4 with sentinel high-nibble 0xA -> osThreadGetState
+//                low nibble (1 Ready, 2 Running, 3 Blocked, 4 Terminated,
+//                0 means CMSIS quirk)
+//              0xAF                                     -> osThreadError
+//              0xFF                                     -> BmsPollTaskHandle == NULL
+//              0x00                                     -> something has eliminated
+//                                                          this byte (shouldn't
+//                                                          happen post #142)
+//   byte 1   bms_seed_count_lo  (low byte of g_bms_seed_count)
+//   bytes 2..3  free_heap_bytes  big-endian uint16, free heap in bytes
+//                                (saturates at 0xFFFF for > 64 KB)
+//   bytes 4..7  reserved (0) -- future probes
+//
+// Rationale: the original in-place patches on 0x4A0[3] / 0x4A2[5..6] kept
+// getting elided by -O3 (PRs #132, #134, #136, #138, #140 all lost to
+// either dead-store elimination or fold-back-to-encoder). A dedicated
+// encoder writes the diagnostic values into the frame from the start,
+// not as a patch on top of an existing constant -- nothing to elide.
+// Bench-only frame; remove once #123 closes.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_diag(std::uint8_t  bms_poll_task_state,
+                                       std::uint8_t  bms_seed_count_lo,
+                                       std::uint32_t free_heap_bytes) noexcept {
+    Frame f = {};
+    f[0] = bms_poll_task_state;
+    f[1] = bms_seed_count_lo;
+    const std::uint16_t fh = (free_heap_bytes > 0xFFFFu)
+                                 ? 0xFFFFu
+                                 : static_cast<std::uint16_t>(free_heap_bytes);
+    f[2] = static_cast<std::uint8_t>(fh >> 8);
+    f[3] = static_cast<std::uint8_t>(fh & 0xFFu);
+    f[4] = 0;
+    f[5] = 0;
+    f[6] = 0;
+    f[7] = 0;
+    return f;
+}
+
 }  // namespace ams::telemetry

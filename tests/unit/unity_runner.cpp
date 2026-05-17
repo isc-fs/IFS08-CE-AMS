@@ -105,6 +105,8 @@ void test_telem_temps_layout(void);
 void test_telem_temps_clip_to_int8_range(void);
 void test_telem_temps_heartbeat_passthrough(void);
 void test_telem_field_independence(void);
+void test_telem_diag_layout(void);
+void test_telem_diag_free_heap_saturates_at_64k(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
@@ -214,6 +216,8 @@ int main(void) {
     RUN_TEST(test_telem_temps_clip_to_int8_range);
     RUN_TEST(test_telem_temps_heartbeat_passthrough);
     RUN_TEST(test_telem_field_independence);
+    RUN_TEST(test_telem_diag_layout);
+    RUN_TEST(test_telem_diag_free_heap_saturates_at_64k);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
