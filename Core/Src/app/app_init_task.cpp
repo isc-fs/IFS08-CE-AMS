@@ -29,6 +29,39 @@ extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
 extern SPI_HandleTypeDef   hspi1;
 
+#if defined(AMS_BMS_HIL_STUB)
+// #123 iter 13: boot-trace frame on CAN ID 0x7FF, payload[0] = milestone
+// marker. Emitted inline at each App_InitTask milestone -- bypasses
+// MainTask entirely so the operator can observe init progress on the
+// bus even if MainTask never gets created or runs (operator's H4).
+// Pre-Start markers will silently fail HAL queuing (FDCAN not in
+// BUSY state yet); post-Start markers actually transmit. So:
+//   0 x 0x7FF seen   -> HAL_FDCAN_Start failed (H2) or PHY hardware (H3)
+//   >=1 x 0x7FF seen -> Start succeeded; payload[0] is the last milestone
+//                       that reached the call.
+static void send_boot_trace(std::uint8_t marker, std::uint32_t start_rc) noexcept {
+    FDCAN_TxHeaderTypeDef tx = {};
+    tx.Identifier          = 0x7FFu;
+    tx.IdType              = FDCAN_STANDARD_ID;
+    tx.TxFrameType         = FDCAN_DATA_FRAME;
+    tx.DataLength          = FDCAN_DLC_BYTES_8;
+    tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    tx.BitRateSwitch       = FDCAN_BRS_OFF;
+    tx.FDFormat            = FDCAN_CLASSIC_CAN;
+    tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+    tx.MessageMarker       = 0;
+    std::uint8_t data[8] = {
+        marker,
+        static_cast<std::uint8_t>(start_rc & 0xFFu),         // HAL return low byte
+        static_cast<std::uint8_t>((start_rc >> 8) & 0xFFu),
+        static_cast<std::uint8_t>((start_rc >> 16) & 0xFFu),
+        static_cast<std::uint8_t>((start_rc >> 24) & 0xFFu),
+        0, 0, 0,
+    };
+    (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
+}
+#endif
+
 // Diagnostic for #123 (HIL_STUB only): monotonic milestone counter
 // incremented at each App_InitTask init step. Surfaced in 0x4A0[3]
 // via encode_status so the bench can see how far this task got
@@ -59,6 +92,9 @@ void ams_app_init_task_run(void *argument)
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
     g_app_init_progress = 1u;   // post-ErrorLatch::init
+#if defined(AMS_BMS_HIL_STUB)
+    send_boot_trace(0xB1u, g_fdcan1_start_result);  // will silently fail (FDCAN not started)
+#endif
 
 #if defined(AMS_BMS_HIL_STUB)
     // HIL-only: VBAT-backed RTC_BKP_DR1 outlives long power-offs on
@@ -71,6 +107,7 @@ void ams_app_init_task_run(void *argument)
     // pre-charge / SDC events surviving a brown-out.
     ams::ErrorLatch::clear();
     g_app_init_progress = 2u;   // post-ErrorLatch::clear
+    send_boot_trace(0xB2u, g_fdcan1_start_result);  // also silent (pre-Start)
 #endif
 
     // FDCAN1 (accumulator + boot-trigger bus). FDCAN2 is left
@@ -88,13 +125,27 @@ void ams_app_init_task_run(void *argument)
         FDCAN_REJECT_REMOTE,
         FDCAN_REJECT_REMOTE);
     g_app_init_progress = 3u;   // post-ConfigGlobalFilter
+#if defined(AMS_BMS_HIL_STUB)
+    send_boot_trace(0xB3u, g_fdcan1_start_result);  // still pre-Start, silent
+#endif
 
     HAL_FDCAN_ActivateNotification(&hfdcan1,
                                    FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
     g_app_init_progress = 4u;   // post-ActivateNotification
+#if defined(AMS_BMS_HIL_STUB)
+    send_boot_trace(0xB4u, g_fdcan1_start_result);  // still pre-Start, silent
+#endif
 
     g_fdcan1_start_result = static_cast<std::uint32_t>(HAL_FDCAN_Start(&hfdcan1));
     g_app_init_progress   = (g_fdcan1_start_result == HAL_OK) ? 6u : 5u;
+#if defined(AMS_BMS_HIL_STUB)
+    // First call that can ACTUALLY transmit, assuming Start succeeded.
+    // If Start returned HAL_OK, this frame should appear on the bus
+    // with payload[0] = 0xB6 and payload[1..4] = 0 (HAL_OK = 0).
+    // If Start failed, this queues but never transmits.
+    send_boot_trace((g_fdcan1_start_result == HAL_OK) ? 0xB6u : 0xB5u,
+                    g_fdcan1_start_result);
+#endif
 
     // ----------------------------------------------------------------
     // LTC6811-1 chain bring-up + length discovery (#68 + #69).
@@ -146,6 +197,12 @@ void ams_app_init_task_run(void *argument)
 #endif
 
     g_app_init_progress = 7u;   // reached self-exit
+#if defined(AMS_BMS_HIL_STUB)
+    // Final trace before App_InitTask self-deletes. If both 0xB6 AND
+    // 0xB7 appear on the wire, App_InitTask ran end-to-end and the
+    // problem with MainTask telemetry is downstream.
+    send_boot_trace(0xB7u, g_fdcan1_start_result);
+#endif
 
     // Task is single-shot. CMSIS-RTOS v2: terminate self.
     osThreadExit();
