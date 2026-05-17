@@ -149,7 +149,7 @@ void SafetyTask::run() noexcept {
         // carrier). Polled every 10 ms; the 20 ms FSM step consumes
         // the latest reading.
         const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
-        const bool rst_pil = HAL_GPIO_ReadPin(RST_PIL_GPIO_Port, RST_PIL_Pin) == GPIO_PIN_SET;
+        const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
 
         // ---------------- Safety predicate (every 10 ms) ----------------
         const safety::Inputs pred_in = {
@@ -184,7 +184,7 @@ void SafetyTask::run() noexcept {
                 // freshness via the snapshot already taken this tick.
                 if (state == fsm::State::Start &&
                     mode_locked == fsm::Mode::Undecided &&
-                    tsms && rst_pil) {
+                    tsms && dash_chg) {
                     const bool vcu_fresh =
                         veh_snap.last_dc_bus_tick != 0u &&
                         (now - veh_snap.last_dc_bus_tick) <=
@@ -195,7 +195,7 @@ void SafetyTask::run() noexcept {
 
                 const fsm::Inputs fsm_in = {
                     state, bms_snap, cur_snap, veh_snap,
-                    tsms, rst_pil, mode_locked,
+                    tsms, dash_chg, mode_locked,
                     /*force_error_set=*/false,
                     now, state_entry_tick,
                 };
@@ -210,7 +210,7 @@ void SafetyTask::run() noexcept {
 
                     // Persist ERROR across resets even when the FSM
                     // got there without a predicate fault (e.g.
-                    // precharge timeout, or TSMS/RST_PIL dropped
+                    // precharge timeout, or TSMS/DASH_CHG dropped
                     // mid-Run).
                     if (state == fsm::State::Error) {
                         ErrorLatch::set();
@@ -250,7 +250,7 @@ void SafetyTask::run() noexcept {
             // 0x4A2[5] -- cockpit pin readback. High nibble 0x8 as a
             //             "this byte is live" sentinel (so 0x00 from
             //             older binaries stands out). Bit 1 = TSMS,
-            //             bit 0 = RST_PIL. Low nibble of mode_locked
+            //             bit 0 = DASH_CHG. Low nibble of mode_locked
             //             in bits 2..3 (00=Undecided, 01=Car, 10=Charger)
             //             so the bench can confirm the lock fired.
             const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
@@ -264,7 +264,7 @@ void SafetyTask::run() noexcept {
                 0x80u |
                 (static_cast<std::uint8_t>(mode_locked) << 2) |
                 (tsms    ? 0x02u : 0u) |
-                (rst_pil ? 0x01u : 0u));
+                (dash_chg ? 0x01u : 0u));
 
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap,

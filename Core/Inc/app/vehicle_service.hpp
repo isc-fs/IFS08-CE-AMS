@@ -4,7 +4,7 @@
 // "accumulator bus"). Currently a single signal: VCU DC-bus voltage
 // heartbeat (0x100, ext). The 0x600 start-button and 0x18FF50E7
 // charger-detect frames were retired in fix/48 -- their roles are now
-// owned by the TSMS_Pin / RST_PIL_Pin GPIOs read directly by
+// owned by the TSMS_Pin / DASH_CHG_Pin GPIOs read directly by
 // SafetyTask. last_dc_bus_tick is load-bearing: SafetyTask uses its
 // freshness against kVcuFreshMs to decide Car-vs-Charger mode at the
 // moment of Start->Precharge.

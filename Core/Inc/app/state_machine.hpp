@@ -44,7 +44,7 @@ struct Inputs {
     const CurrentState& current_sensor;
     const VehicleState& vehicle;
     bool                tsms;             // PF9 readback (active-high)
-    bool                rst_pil;          // PF10 readback (active-high)
+    bool                dash_chg;          // PF10 readback (active-high)
     Mode                mode_locked;      // set by SafetyTask at Start->Precharge
     bool                force_error_set;
     std::uint32_t       now_tick;
@@ -89,13 +89,13 @@ struct Output {
 
     switch (in.current) {
     case State::Start: {
-        // Wait for the cockpit gate: TSMS=1 AND RST_PIL=1, level-polled
+        // Wait for the cockpit gate: TSMS=1 AND DASH_CHG=1, level-polled
         // at the 20 ms FSM cadence. Same gate for both car and charger
         // -- SafetyTask decides which one it is by looking at the VCU
         // 0x100 freshness at this exact moment and captures the result
         // into in.mode_locked, which we'll consume on the way out of
         // Transition.
-        if (in.tsms && in.rst_pil) {
+        if (in.tsms && in.dash_chg) {
             return { State::Precharge,
                      events::safety::kCloseAirN |
                      events::safety::kClosePrecharge };
@@ -151,12 +151,12 @@ struct Output {
     }
 
     case State::Run: {
-        // Any drop of TSMS or RST_PIL while in Run latches Error and
+        // Any drop of TSMS or DASH_CHG while in Run latches Error and
         // opens all relays. Operator wanted conservative semantics:
         // every AIR-open event is a sticky fault requiring power
         // cycle (matches existing ErrorLatch backup-register design;
         // see error_latch.cpp).
-        if (!in.tsms || !in.rst_pil) {
+        if (!in.tsms || !in.dash_chg) {
             return { State::Error,
                      events::safety::kForceError |
                      events::safety::kOpenAirN | events::safety::kOpenAirP |
@@ -167,7 +167,7 @@ struct Output {
 
     case State::Charge: {
         // Same exit semantics as Run -- TSMS/RST drop latches Error.
-        if (!in.tsms || !in.rst_pil) {
+        if (!in.tsms || !in.dash_chg) {
             return { State::Error,
                      events::safety::kForceError |
                      events::safety::kOpenAirN | events::safety::kOpenAirP |

@@ -24,7 +24,7 @@ struct Harness {
     ams::CurrentState cur{};
     ams::VehicleState veh{};
     bool              tsms             = false;
-    bool              rst_pil          = false;
+    bool              dash_chg          = false;
     ams::fsm::Mode    mode_locked      = ams::fsm::Mode::Undecided;
     // Start past kSafetyBootGraceMs (2000) so the safety predicates
     // are active. Scenarios that need the grace itself live in
@@ -60,7 +60,7 @@ struct Harness {
     ams::fsm::Output step() {
         const ams::fsm::Inputs in = {
             state, bms, cur, veh,
-            tsms, rst_pil, mode_locked,
+            tsms, dash_chg, mode_locked,
             /*force_error_set=*/false,
             now, state_entry_tick,
         };
@@ -77,7 +77,7 @@ struct Harness {
 
 // ---------------------------------------------------------------------------
 // Scenario 1: nominal startup in CAR mode.
-// Start -> assert TSMS+RST_PIL (+ lock Mode::Car) -> Precharge ->
+// Start -> assert TSMS+DASH_CHG (+ lock Mode::Car) -> Precharge ->
 // bus reaches target -> Transition -> hold elapses -> Run.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_nominal_startup_to_run(void) {
@@ -89,7 +89,7 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
     // Assert cockpit and lock car mode (VCU heartbeat fresh per
     // Harness ctor).
     h.tsms        = true;
-    h.rst_pil     = true;
+    h.dash_chg     = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
@@ -119,7 +119,7 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_precharge_timeout_to_error(void) {
     Harness h;
-    h.tsms = true; h.rst_pil = true;
+    h.tsms = true; h.dash_chg = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.step();                                 // -> Precharge
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.state);
@@ -141,7 +141,7 @@ extern "C" void test_sil_precharge_timeout_to_error(void) {
 extern "C" void test_sil_bms_dropout_in_run(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
-    h.tsms = true; h.rst_pil = true;
+    h.tsms = true; h.dash_chg = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
 
@@ -158,7 +158,7 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_charger_path(void) {
     Harness h;
-    h.tsms = true; h.rst_pil = true;
+    h.tsms = true; h.dash_chg = true;
     h.mode_locked = ams::fsm::Mode::Charger;
 
     // Start -> Precharge
@@ -185,7 +185,7 @@ extern "C" void test_sil_charger_path(void) {
 extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
-    h.tsms = true; h.rst_pil = true;
+    h.tsms = true; h.dash_chg = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);
