@@ -2,8 +2,13 @@
 //
 // Bit positions for the two FreeRTOS event groups declared in AMS.ioc:
 //
-//   safety_events   <- StateTask, BMS freshness check, precharge timer
-//                       all set bits here; SafetyTask consumes.
+//   safety_events   <- legacy StateTask -> SafetyTask handshake.
+//                       Retired in refactor/19 phase 3: the FSM's
+//                       safety_flags bitmask is now consumed inline by
+//                       MainTask in the same iteration the FSM produced
+//                       it. The bit definitions below survive because
+//                       fsm::Output::safety_flags reuses the same bit
+//                       layout, but the osEventFlags handle is unused.
 //   bms_events      <- osTimer callbacks set kPollVDue / kPollTDue;
 //                       BmsPollTask consumes.
 //
@@ -16,12 +21,13 @@
 
 namespace ams::events::safety {
 
-// FSM-driven force-error (state-task / precharge-timeout / etc.).
+// FSM-driven force-error (precharge-timeout / transition drop / etc.).
 inline constexpr std::uint32_t kForceError     = 1u << 0;
 
-// Relay-action requests from StateTask. SafetyTask services them on
-// the clean (no-fault) path. If a fault is also active in the same
-// tick the relay-action bits are ignored -- safety wins.
+// Relay-action bits set by fsm::step's Output::safety_flags. MainTask
+// applies them inline on the clean (no-fault) path. If a fault is also
+// active in the same tick the relay-action bits are ignored -- safety
+// wins (relays already opened by latch_error_).
 inline constexpr std::uint32_t kCloseAirN      = 1u << 1;
 inline constexpr std::uint32_t kCloseAirP      = 1u << 2;
 inline constexpr std::uint32_t kClosePrecharge = 1u << 3;
