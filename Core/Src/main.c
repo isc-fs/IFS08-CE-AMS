@@ -172,6 +172,10 @@ void StartTelemetryTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 #if defined(AMS_BMS_HIL_STUB)
+/* FreeRTOS heap accessor -- safe pre-osKernelInitialize: it just reads
+ * a counter on a static heap array. */
+extern size_t xPortGetFreeHeapSize(void);
+
 /* #123 iter 19: per-thread bring-up probe. Emits 0x7B0+idx on can0 with
  * payload[0]=marker, payload[1..4]=phase byte tag (0xBE = "before call"
  * / 0xAF = "after call returned"), payload[5..6] reserved, payload[7]=
@@ -191,6 +195,36 @@ static void hil_thread_probe(uint8_t idx, uint8_t phase)
   tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
   tx.MessageMarker       = 0;
   uint8_t data[8] = { idx, phase, 0, 0, 0, 0, 0, 0xAAu };
+  (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
+}
+
+/* #123 iter 20: generic pre-kernel probe. Emits arbitrary 11-bit ID
+ * with payload[0]=id_lo, payload[1..4]=payload32 LE, payload[7]=0xAA.
+ * Used to bracket osKernelInitialize + each mutex/queue allocation so
+ * the bench can pinpoint which call dies (operator's iter-19 capture
+ * showed even 0x7B0 BE doesn't emit -- crash is in the
+ * osKernelInitialize / mutex / queue block before any osThreadNew). */
+static void hil_probe(uint16_t id, uint32_t payload32)
+{
+  HAL_IWDG_Refresh(&hiwdg1);
+  FDCAN_TxHeaderTypeDef tx = {0};
+  tx.Identifier          = id;
+  tx.IdType              = FDCAN_STANDARD_ID;
+  tx.TxFrameType         = FDCAN_DATA_FRAME;
+  tx.DataLength          = FDCAN_DLC_BYTES_8;
+  tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  tx.BitRateSwitch       = FDCAN_BRS_OFF;
+  tx.FDFormat            = FDCAN_CLASSIC_CAN;
+  tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
+  tx.MessageMarker       = 0;
+  uint8_t data[8] = {
+    (uint8_t)(id & 0xFFu),
+    (uint8_t)(payload32        & 0xFFu),
+    (uint8_t)((payload32 >>  8) & 0xFFu),
+    (uint8_t)((payload32 >> 16) & 0xFFu),
+    (uint8_t)((payload32 >> 24) & 0xFFu),
+    0, 0, 0xAAu,
+  };
   (void)HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data);
 }
 #endif
@@ -325,21 +359,41 @@ int main(void)
      * IWDG starvation in the pre-scheduler / early-scheduler window
      * is confirmed as the root cause. Bench-only. */
     HAL_IWDG_Refresh(&hiwdg1);
+    /* #123 iter 20: heap snapshot before any FreeRTOS object is
+     * allocated. If this is dangerously low (< a few KB) the
+     * regression is static-init eating the pool, not the allocations
+     * themselves. payload = free heap in bytes (LE u32). */
+    hil_probe(0x7ACu, (uint32_t)xPortGetFreeHeapSize());
   }
 #endif
   /* USER CODE END 2 */
 
   /* Init scheduler */
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C0u, 0xBEEFCAFEu);  /* before osKernelInitialize */
+#endif
   osKernelInitialize();
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C0u, (uint32_t)osKernelGetState());  /* after */
+#endif
   /* Create the mutex(es) */
   /* creation of bms_mutex */
   bms_mutexHandle = osMutexNew(&bms_mutex_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C1u, (uint32_t)(uintptr_t)bms_mutexHandle);
+#endif
 
   /* creation of current_mutex */
   current_mutexHandle = osMutexNew(&current_mutex_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C2u, (uint32_t)(uintptr_t)current_mutexHandle);
+#endif
 
   /* creation of vehicle_mutex */
   vehicle_mutexHandle = osMutexNew(&vehicle_mutex_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C3u, (uint32_t)(uintptr_t)vehicle_mutexHandle);
+#endif
 
   /* USER CODE BEGIN RTOS_MUTEX */
   /* add mutexes, ... */
@@ -356,9 +410,15 @@ int main(void)
   /* Create the queue(s) */
   /* creation of acu_rx_queue */
   acu_rx_queueHandle = osMessageQueueNew (16, sizeof(CanFrame), &acu_rx_queue_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C4u, (uint32_t)(uintptr_t)acu_rx_queueHandle);
+#endif
 
   /* creation of acu_tx_queue */
   acu_tx_queueHandle = osMessageQueueNew (16, sizeof(CanFrame), &acu_tx_queue_attributes);
+#if defined(AMS_BMS_HIL_STUB)
+  hil_probe(0x7C5u, (uint32_t)(uintptr_t)acu_tx_queueHandle);
+#endif
 
   /* USER CODE BEGIN RTOS_QUEUES */
   /* add queues, ... */
