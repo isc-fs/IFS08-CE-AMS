@@ -57,7 +57,7 @@ void test_predicates_after_grace_zero_ticks_faults(void);
 // test_state_machine.cpp
 void test_fsm_start_waits_without_cockpit_inputs(void);
 void test_fsm_start_waits_with_tsms_only(void);
-void test_fsm_start_waits_with_rst_pil_only(void);
+void test_fsm_start_waits_with_dash_chg_only(void);
 void test_fsm_start_to_precharge_on_both_inputs(void);
 void test_fsm_precharge_reaches_target(void);
 void test_fsm_precharge_stays_below_target(void);
@@ -68,7 +68,7 @@ void test_fsm_transition_undecided_mode_forces_error(void);
 void test_fsm_transition_drops_voltage_to_error(void);
 void test_fsm_run_stays_while_cockpit_high(void);
 void test_fsm_run_to_error_on_tsms_drop(void);
-void test_fsm_run_to_error_on_rst_pil_drop(void);
+void test_fsm_run_to_error_on_dash_chg_drop(void);
 void test_fsm_charge_to_error_on_cockpit_drop(void);
 void test_fsm_any_state_to_error_on_fault(void);
 void test_fsm_error_is_sticky(void);
@@ -175,7 +175,7 @@ int main(void) {
 
     RUN_TEST(test_fsm_start_waits_without_cockpit_inputs);
     RUN_TEST(test_fsm_start_waits_with_tsms_only);
-    RUN_TEST(test_fsm_start_waits_with_rst_pil_only);
+    RUN_TEST(test_fsm_start_waits_with_dash_chg_only);
     RUN_TEST(test_fsm_start_to_precharge_on_both_inputs);
     RUN_TEST(test_fsm_precharge_reaches_target);
     RUN_TEST(test_fsm_precharge_stays_below_target);
@@ -186,7 +186,7 @@ int main(void) {
     RUN_TEST(test_fsm_transition_drops_voltage_to_error);
     RUN_TEST(test_fsm_run_stays_while_cockpit_high);
     RUN_TEST(test_fsm_run_to_error_on_tsms_drop);
-    RUN_TEST(test_fsm_run_to_error_on_rst_pil_drop);
+    RUN_TEST(test_fsm_run_to_error_on_dash_chg_drop);
     RUN_TEST(test_fsm_charge_to_error_on_cockpit_drop);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
     RUN_TEST(test_fsm_error_is_sticky);

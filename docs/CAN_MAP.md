@@ -333,7 +333,7 @@ bytes 3..5 carry bench diagnostic probes instead of `dc_bus_V`
 |:---:|---|---|
 | 3 | `bms_task_state_byte` | `0xA0 | (osThreadGetState(BmsPollTaskHandle) & 0x0F)`. `0xFF` if handle is NULL. |
 | 4 | `acu_rx_total_lo` | Low byte of `g_acu_rx_total` (ticks on any matched ACU RX frame; AcuCanTask + queue + dispatch liveness) |
-| 5 | `cockpit_byte` | `0x80 | (mode_locked << 2) | (TSMS<<1) | RST_PIL`. High bit `0x80` is a sentinel so older binaries' `0x00` stands out. mode_locked: `0`=Undecided, `1`=Car, `2`=Charger. |
+| 5 | `cockpit_byte` | `0x80 | (mode_locked << 2) | (TSMS<<1) | DASH_CHG`. High bit `0x80` is a sentinel so older binaries' `0x00` stands out. mode_locked: `0`=Undecided, `1`=Car, `2`=Charger. |
 
 ---
 
@@ -360,7 +360,7 @@ voltage during precharge is a real fault.
 ### `0x600` — start button **[RETIRED — fix/48]**
 
 Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The
-FSM Start→Precharge transition now requires both `TSMS` and `RST_PIL`
+FSM Start→Precharge transition now requires both `TSMS` and `DASH_CHG`
 asserted; level-polled at the 20 ms FSM cadence in `safety_task.cpp`.
 
 ### `0x401 – 0x406` — accumulator temperature sensors

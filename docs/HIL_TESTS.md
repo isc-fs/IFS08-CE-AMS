@@ -33,7 +33,7 @@ green on the same firmware SHA.
 | BMS_LITE stack or LTC emulator | Real pack of 5 BMS_LITE modules (10 LTC6811-1, isoSPI daisy-chained) wired into the AMS SPI1 + LTC6820 master port; OR an LTC6811 emulator (e.g. Analog's eval kit, or a host-controlled rig that synthesises the chain replies) on the same connector. |
 | isoSPI cabling | Twisted-pair to the first BMS_LITE; transformer-coupled on both ends. Must withstand cable pulls (HIL-057). |
 | Logic analyser on SPI1 | PA4 (CS), PA5/6/7 (SCK/MISO/MOSI). Several Block D + Block F tests need it. |
-| ADC current input | Analog source on PF11 (ADC1 ch2). A bench DAC or a calibrated voltage source 0–3.3 V |
+| ADC current input | Analog source on PF7 (ADC3 ch3). A bench DAC or a calibrated voltage source 0–3.3 V |
 | GPIO inputs | Switch / signal generator on PG7 (`Charge_Button`). The legacy `DIGITAL1` SDC sense on PE9 was retired in PR #117 — the AMS no longer GPIO-senses the SDC. |
 | GPIO output read-back | DMM or logic analyser on PB6 (`RELAY_AIR_N`), PB5 (`RELAY_AIR_P`), PB7 (`RELAY_PRECHARGE`), PB4 (`AMS_OK`), PB9 (`TIM17_CH1` fan PWM). Pin map aligned with the v1.2 daughterboard schematic in PR #117. |
 | Power | 5 V or 3.3 V regulated rail to the target; VBAT-only test capability for HIL-006 |
@@ -312,7 +312,7 @@ Same shape; temp frame with temp[10] = 65 °C (above `kCellOTC` = 60).
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Inject a constant voltage on PF11 ≈ 2.5 V (zero current) for the warm-up.<br>3. Halt CurrentSensorTask via GDB (it's the only writer to `last_update_tick`).<br>4. Wait `kIStaleMs` (200 ms) + 50 ms. |
+| Steps | 1. AMS in Run.<br>2. Inject a constant voltage on PF7 ≈ 2.5 V (zero current) for the warm-up.<br>3. Halt CurrentSensorTask via GDB (it's the only writer to `last_update_tick`).<br>4. Wait `kIStaleMs` (200 ms) + 50 ms. |
 | Pass | Pins LOW within 300 ms. UART says `s=E`. |
 | Fail mode | Pins stay HIGH → freshness threshold mis-applied. |
 | Duration | 5 min |
@@ -527,7 +527,7 @@ the °C value lands in `cell_tempC`.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Inject 2.4 V on PF11 (≈ +17.5 A discharge).<br>3. `candump` FDCAN1 std-ID filter on `0x450`. |
+| Steps | 1. AMS in Run.<br>2. Inject 2.4 V on PF7 (≈ +17.5 A discharge).<br>3. `candump` FDCAN1 std-ID filter on `0x450`. |
 | Pass | Frame appears every 250 ms ± 50 ms. Payload [1] approximately 17 (= 17 A & 0xFF). |
 | Duration | 5 min |
 

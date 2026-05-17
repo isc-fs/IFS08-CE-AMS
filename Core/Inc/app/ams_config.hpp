@@ -28,7 +28,7 @@ inline constexpr std::int32_t  kImaxMa   = 200000; // |I| max mA      -- COMMISS
 inline constexpr std::uint32_t kIStaleMs       =  200;  // current sensor stale
 inline constexpr std::uint32_t kBmsStaleMs     = 1500;  // any BMS module silent
 inline constexpr std::uint32_t kVcuStaleMs     =  200;  // VCU 0x100 stale
-// At the moment Start->Precharge fires (TSMS+RST_PIL asserted), the
+// At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
 // FSM checks "have we heard a VCU 0x100 frame in the last kVcuFreshMs?"
 // to decide whether the pack is in the car (Run target) or at the
 // charger (Charge target). Looser than kVcuStaleMs because a slow VCU
@@ -85,9 +85,9 @@ inline constexpr std::uint8_t  kTempsPerModule      = 40;  // 20 per LTC * 2 LTC
 
 // Accumulator bus (FDCAN1).
 //
-// Retired in fix/48 (TSMS+RST_PIL FSM): kAcuRxStartBtnId (0x600) and
+// Retired in fix/48 (TSMS+DASH_CHG FSM): kAcuRxStartBtnId (0x600) and
 // kAcuRxChargerId (0x18FF50E7) were the legacy Start->{Precharge,Charge}
-// triggers. Both replaced by physical GPIOs (TSMS_Pin / RST_PIL_Pin).
+// triggers. Both replaced by physical GPIOs (TSMS_Pin / DASH_CHG_Pin).
 // kAcuTxMinVoltId (0x12C) also retired -- it only ever existed to suppress
 // itself during Charge; will return as a charge-only balance TX in a
 // future PR.
@@ -102,11 +102,16 @@ inline constexpr std::uint32_t kAcuTxCurrNormId  = 0x502;
 inline constexpr float         kPrechargeRatio   = 0.95f;
 
 // Current sensor calibration. Pack current measured via a Hall-effect
-// transducer on PF11 -> ADC1 channel 2. The legacy AMS used:
+// transducer on PF7 -> ADC3 channel 3 (relocated from PF11/ADC1 in
+// chore/49 along with the carrier-board redesign). PF8 -> ADC3
+// channel 7 is wired as analog input for a future DCDC current
+// measurement but not yet read by firmware. The legacy AMS used:
 //   - 2.5 V output at zero current
 //   - 5.7 mV per ampere sensitivity (sign: + = discharge, - = charge)
-// .ioc puts ADC1 in 12-bit + 64x oversampling + right-shift 6, so the
-// effective sample is 12-bit (0..4095) referenced to Vref ~ 3.3 V.
+// .ioc puts ADC3 in 12-bit single-channel regular conversion (no
+// oversampling by default; bump in CubeMX if calibration shows the
+// LSB noise floor is the limiting factor). Sample is 12-bit
+// (0..4095) referenced to Vref ~ 3.3 V.
 //
 // COMMISSION: kCurrentZeroMv and kCurrentMvPerAmpe1 MUST be calibrated
 // per real-hardware procedure in docs/COMMISSIONING.md §2 before

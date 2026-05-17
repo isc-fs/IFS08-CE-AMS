@@ -30,7 +30,7 @@ they're derived from.
 
 ## 2. Current sensor calibration
 
-The Hall transducer on `PF11` (ADC1 ch 2) is assumed to be **2.5 V at
+The Hall transducer on `PF7` (ADC3 ch 3) is assumed to be **2.5 V at
 zero, 5.7 mV/A sensitivity**. Real units drift; calibrate before
 v1.0.0.
 
