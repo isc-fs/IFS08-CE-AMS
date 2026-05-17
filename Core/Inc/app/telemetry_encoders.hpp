@@ -32,26 +32,38 @@ using Frame = std::array<std::uint8_t, 8>;
 //   bytes 4..5  min_cell_mV  big-endian uint16
 //   bytes 6..7  max_cell_mV  big-endian uint16
 // ---------------------------------------------------------------------------
+#if defined(AMS_BMS_HIL_STUB)
 [[nodiscard]] inline Frame encode_status(std::uint8_t       state,
                                          std::uint8_t       ams_ok,
                                          const BmsState&    bms,
-                                         std::uint8_t       app_init_progress = 0) noexcept {
+                                         std::uint8_t       app_init_progress) noexcept {
     Frame f = {};
     f[0] = state;
     f[1] = ams_ok ? 1u : 0u;
     f[2] = bms.module_online_mask;
-#if defined(AMS_BMS_HIL_STUB)
     f[3] = app_init_progress;
-#else
-    (void)app_init_progress;
-    f[3] = 0;
-#endif
     f[4] = static_cast<std::uint8_t>(bms.min_cell_mV >> 8);
     f[5] = static_cast<std::uint8_t>(bms.min_cell_mV & 0xFFu);
     f[6] = static_cast<std::uint8_t>(bms.max_cell_mV >> 8);
     f[7] = static_cast<std::uint8_t>(bms.max_cell_mV & 0xFFu);
     return f;
 }
+#else
+[[nodiscard]] inline Frame encode_status(std::uint8_t       state,
+                                         std::uint8_t       ams_ok,
+                                         const BmsState&    bms) noexcept {
+    Frame f = {};
+    f[0] = state;
+    f[1] = ams_ok ? 1u : 0u;
+    f[2] = bms.module_online_mask;
+    f[3] = 0;  // reserved
+    f[4] = static_cast<std::uint8_t>(bms.min_cell_mV >> 8);
+    f[5] = static_cast<std::uint8_t>(bms.min_cell_mV & 0xFFu);
+    f[6] = static_cast<std::uint8_t>(bms.max_cell_mV >> 8);
+    f[7] = static_cast<std::uint8_t>(bms.max_cell_mV & 0xFFu);
+    return f;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // 0x4A1  "AMS pack" (cadence 500 ms)
@@ -105,36 +117,45 @@ using Frame = std::array<std::uint8_t, 8>;
     return static_cast<std::int8_t>(v);
 }
 
+#if defined(AMS_BMS_HIL_STUB)
 [[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
                                         const VehicleState& veh,
                                         std::uint8_t        heartbeat,
                                         std::uint8_t        tx_fail_count_lo,
-                                        std::uint8_t        bms_task_state_byte = 0,
-                                        std::uint8_t        bms_seed_count_lo   = 0,
-                                        std::uint8_t        free_heap_kb        = 0) noexcept {
+                                        std::uint8_t        bms_task_state_byte,
+                                        std::uint8_t        bms_seed_count_lo,
+                                        std::uint8_t        free_heap_kb) noexcept {
     Frame f = {};
     f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
     f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
     f[2] = static_cast<std::uint8_t>(clip_int8(bms.avg_tempC));
-#if defined(AMS_BMS_HIL_STUB)
     // Bench: bytes 3..5 carry diagnostic probes for #123.
     (void)veh;
     f[3] = bms_task_state_byte;
     f[4] = bms_seed_count_lo;
     f[5] = free_heap_kb;
-#else
-    // Flight: bytes 3..4 carry dc_bus_V LE, byte 5 reserved.
-    (void)bms_task_state_byte;
-    (void)bms_seed_count_lo;
-    (void)free_heap_kb;
-    f[3] = static_cast<std::uint8_t>(veh.dc_bus_V & 0xFFu);
-    f[4] = static_cast<std::uint8_t>((veh.dc_bus_V >> 8) & 0xFFu);
-    f[5] = 0;
-#endif
     f[6] = tx_fail_count_lo;
     f[7] = heartbeat;
     return f;
 }
+#else
+[[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
+                                        const VehicleState& veh,
+                                        std::uint8_t        heartbeat,
+                                        std::uint8_t        tx_fail_count_lo) noexcept {
+    Frame f = {};
+    f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
+    f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
+    f[2] = static_cast<std::uint8_t>(clip_int8(bms.avg_tempC));
+    // Flight: bytes 3..4 carry dc_bus_V LE, byte 5 reserved.
+    f[3] = static_cast<std::uint8_t>(veh.dc_bus_V & 0xFFu);
+    f[4] = static_cast<std::uint8_t>((veh.dc_bus_V >> 8) & 0xFFu);
+    f[5] = 0;
+    f[6] = tx_fail_count_lo;
+    f[7] = heartbeat;
+    return f;
+}
+#endif
 
 // ---------------------------------------------------------------------------
 // 0x4A3  "AMS diag" (cadence 500 ms, alongside the other three frames)
