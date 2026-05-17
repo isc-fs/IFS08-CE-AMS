@@ -107,7 +107,8 @@ extern "C" void test_telem_temps_layout(void) {
     g_bms.avg_tempC = 30;
     g_veh.dc_bus_V  = 350;
 
-    const auto f = ams::telemetry::encode_temps(g_bms, g_veh, /*heartbeat=*/0x42u);
+    const auto f = ams::telemetry::encode_temps(
+        g_bms, g_veh, /*heartbeat=*/0x42u, /*tx_fail_count_lo=*/0x99u);
 
     TEST_ASSERT_EQUAL_INT8 (18,   static_cast<std::int8_t>(f[0]));
     TEST_ASSERT_EQUAL_INT8 (47,   static_cast<std::int8_t>(f[1]));
@@ -115,7 +116,7 @@ extern "C" void test_telem_temps_layout(void) {
     TEST_ASSERT_EQUAL_UINT8(0x5E, f[3]);   // 350 = 0x015E, LE
     TEST_ASSERT_EQUAL_UINT8(0x01, f[4]);
     TEST_ASSERT_EQUAL_UINT8(0x00, f[5]);   // reserved
-    TEST_ASSERT_EQUAL_UINT8(0x00, f[6]);   // reserved
+    TEST_ASSERT_EQUAL_UINT8(0x99, f[6]);   // tx_fail_count_lo (#123)
     TEST_ASSERT_EQUAL_UINT8(0x42, f[7]);   // heartbeat
 }
 
@@ -125,7 +126,7 @@ extern "C" void test_telem_temps_clip_to_int8_range(void) {
     g_bms.max_tempC =  300;      // above int8 max
     g_bms.avg_tempC =    5;
 
-    const auto f = ams::telemetry::encode_temps(g_bms, g_veh, 0u);
+    const auto f = ams::telemetry::encode_temps(g_bms, g_veh, 0u, /*tx_fail=*/0u);
 
     TEST_ASSERT_EQUAL_INT8(-128, static_cast<std::int8_t>(f[0]));
     TEST_ASSERT_EQUAL_INT8( 127, static_cast<std::int8_t>(f[1]));
@@ -135,7 +136,7 @@ extern "C" void test_telem_temps_clip_to_int8_range(void) {
 extern "C" void test_telem_temps_heartbeat_passthrough(void) {
     reset_all();
     for (std::uint8_t hb : { 0u, 1u, 127u, 200u, 255u }) {
-        const auto f = ams::telemetry::encode_temps(g_bms, g_veh, hb);
+        const auto f = ams::telemetry::encode_temps(g_bms, g_veh, hb, /*tx_fail=*/0u);
         TEST_ASSERT_EQUAL_UINT8(hb, f[7]);
     }
 }
