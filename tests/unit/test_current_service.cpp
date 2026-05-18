@@ -3,6 +3,10 @@
 // Pure-logic tests for CurrentService::adc_to_mA(). The mutex-using
 // public methods are exercised indirectly via the cmsis_os2 mock from
 // tests/unit/mocks/.
+//
+// Updated in fix/52 for the Bourns SSA-2-250A bipolar front-end:
+// zero at Vref/2 (1.65 V), sensitivity 20 mV/A at S_CURRENT,
+// discharge -> positive S_CURRENT (and positive mA).
 
 #include "ams_config.hpp"
 #include "current_service.hpp"
@@ -14,8 +18,8 @@
 
 // ---------------------------------------------------------------------------
 // adc_to_mA: zero-current calibration point reads (almost) 0 mA.
-// Sensor zero is 2.500 V = ADC count round((2500/3300)*4095) = 3102.
-// Plug that back through the conversion and confirm |mA| is small.
+// Sensor zero is now Vref/2 = 1.650 V (post-HW Vref/2 bias). ADC count =
+// round((1650/3300)*4095) = 2047. Plug that back and confirm |mA| is small.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_zero_point_reads_near_zero(void) {
     const std::uint16_t raw = static_cast<std::uint16_t>(
@@ -28,34 +32,32 @@ extern "C" void test_current_adc_zero_point_reads_near_zero(void) {
 }
 
 // ---------------------------------------------------------------------------
-// adc_to_mA: discharge (current OUT of pack) makes voltage drop below
-// 2.5 V, which yields positive mA. Pick raw = 2.4 V -> +100 mV delta
-// -> ~+17.5 A (100 mV / 5.7 mV/A).
+// adc_to_mA: discharge raises S_CURRENT above Vref/2, yielding positive mA.
+// Pick raw = 1.75 V -> +100 mV delta. At 20 mV/A sensitivity -> +5 A.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_discharge_positive(void) {
-    const std::int32_t target_mv = ams::config::kCurrentZeroMv - 100;
-    const std::uint16_t raw = static_cast<std::uint16_t>(
-        (target_mv * static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
-        ams::config::kAdcVrefMv);
-
-    const std::int32_t mA = ams::CurrentService::adc_to_mA(raw);
-    TEST_ASSERT_GREATER_THAN_INT32(15000, mA);
-    TEST_ASSERT_LESS_THAN_INT32   (20000, mA);
-}
-
-// ---------------------------------------------------------------------------
-// adc_to_mA: charging makes voltage rise above 2.5 V, yielding negative mA.
-// Pick raw = 2.6 V -> -100 mV delta -> ~-17.5 A.
-// ---------------------------------------------------------------------------
-extern "C" void test_current_adc_charge_negative(void) {
     const std::int32_t target_mv = ams::config::kCurrentZeroMv + 100;
     const std::uint16_t raw = static_cast<std::uint16_t>(
         (target_mv * static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
         ams::config::kAdcVrefMv);
 
     const std::int32_t mA = ams::CurrentService::adc_to_mA(raw);
-    TEST_ASSERT_LESS_THAN_INT32   (-15000, mA);
-    TEST_ASSERT_GREATER_THAN_INT32(-20000, mA);
+    // 100 mV / 20 mV/A = 5 A = 5000 mA. Allow +-200 mA rounding.
+    TEST_ASSERT_INT32_WITHIN(200, 5000, mA);
+}
+
+// ---------------------------------------------------------------------------
+// adc_to_mA: charging drops S_CURRENT below Vref/2, yielding negative mA.
+// Pick raw = 1.55 V -> -100 mV delta -> -5 A.
+// ---------------------------------------------------------------------------
+extern "C" void test_current_adc_charge_negative(void) {
+    const std::int32_t target_mv = ams::config::kCurrentZeroMv - 100;
+    const std::uint16_t raw = static_cast<std::uint16_t>(
+        (target_mv * static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
+        ams::config::kAdcVrefMv);
+
+    const std::int32_t mA = ams::CurrentService::adc_to_mA(raw);
+    TEST_ASSERT_INT32_WITHIN(200, -5000, mA);
 }
 
 // ---------------------------------------------------------------------------
@@ -72,11 +74,28 @@ extern "C" void test_current_adc_symmetric_around_zero(void) {
     const auto minus_50 = ams::CurrentService::adc_to_mA(
         static_cast<std::uint16_t>(zero_count - 50));
 
-    // Symmetry: plus and minus should mirror within rounding. The
-    // integer-uV math leaves a ~120 mA bias around the zero point
-    // (the truncation in v_uV = raw * Vref / 4095 is asymmetric for
-    // a non-power-of-two ADC max). Sensor noise floor is well above
-    // that, so this tolerance is meaningful only as a "no gross
-    // arithmetic error" check.
-    TEST_ASSERT_INT32_WITHIN(200, -plus_50, minus_50);
+    // Symmetry: |plus_50| ≈ |minus_50| within rounding (the integer-uV
+    // math has < 50 mA bias around the zero point at 12-bit + 3.3 V
+    // Vref). plus_50 is positive (discharge), minus_50 is negative.
+    TEST_ASSERT_INT32_WITHIN(200, -minus_50, plus_50);
+}
+
+// ---------------------------------------------------------------------------
+// adc_to_mA: full-scale discharge (S_CURRENT at the upper rail) maps
+// near the HW clipping limit of +82.5 A (kCurrentZeroMv + 1650 mV =
+// Vref). Anything beyond clips at the rail and is not observable.
+// ---------------------------------------------------------------------------
+extern "C" void test_current_adc_upper_rail_near_82500_mA(void) {
+    const std::uint16_t raw = ams::config::kAdcMaxCount;  // 4095 -> Vref
+    const std::int32_t mA   = ams::CurrentService::adc_to_mA(raw);
+    // 1650 mV / 20 mV/A = 82500 mA. Allow ±500 mA for integer rounding.
+    TEST_ASSERT_INT32_WITHIN(500, 82500, mA);
+}
+
+// ---------------------------------------------------------------------------
+// adc_to_mA: full-scale charge (S_CURRENT at 0 V rail) maps to -82.5 A.
+// ---------------------------------------------------------------------------
+extern "C" void test_current_adc_lower_rail_near_minus_82500_mA(void) {
+    const std::int32_t mA = ams::CurrentService::adc_to_mA(0);
+    TEST_ASSERT_INT32_WITHIN(500, -82500, mA);
 }

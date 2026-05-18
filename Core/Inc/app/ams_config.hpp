@@ -101,13 +101,34 @@ inline constexpr std::uint32_t kAcuTxCurrNormId  = 0x502;
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         kPrechargeRatio   = 0.95f;
 
-// Current sensor calibration. Pack current measured via a Hall-effect
-// transducer on PF7 -> ADC3 channel 3 (relocated from PF11/ADC1 in
-// chore/49 along with the carrier-board redesign). PF8 -> ADC3
-// channel 7 is wired as analog input for a future DCDC current
-// measurement but not yet read by firmware. The legacy AMS used:
-//   - 2.5 V output at zero current
-//   - 5.7 mV per ampere sensitivity (sign: + = discharge, - = charge)
+// Current sensor calibration. Pack current measured via a Bourns
+// SSA-2-250A shunt sensor (datasheet: pcbs/ssa-2.pdf). The sensor's
+// raw differential output OUTP/OUTN is bipolar at +/- 5 mV/A (250 A
+// nominal, 500 A max unclipped, common-mode +1.44 V). A discrete
+// difference amplifier on the carrier (MCP6001R, gain x4, R12 biased
+// to Vref/2 = 1.65 V) converts the differential signal to a
+// single-ended S_CURRENT routed to PF7 -> ADC3 channel 3:
+//
+//   S_CURRENT = 4 * (OUTP - OUTN) + 1.65 V
+//
+// Net sensitivity at the ADC pin: 5 mV/A * 4 = 20 mV/A. Zero current
+// reads as 1.65 V (mid-rail). Discharge -> positive (OUTP - OUTN) ->
+// S_CURRENT rises above 1.65 V. Charge -> negative (OUTP - OUTN) ->
+// S_CURRENT drops below 1.65 V.
+//
+// Bipolar range constrained by the 0..3.3 V ADC rail: +/- 1.65 V swing
+// around mid-rail = +/- 82.5 A measurable before clipping. Real
+// currents above that are not observable by firmware (the diff amp
+// saturates at the rail). The kImaxMa safety threshold is therefore
+// a defensive-only check in this HW revision -- it can never trip
+// from a clipping anomaly because the firmware's reading caps at
+// 82.5 A. Re-evaluate if the diff-amp gain ever drops.
+//
+// PF8 -> ADC3 channel 7 is configured as an analog input on the
+// carrier for a future DCDC supply-current measurement (separate
+// sensor; not the bipolar half of S_CURRENT). Firmware does NOT
+// trigger conversions to PF8 yet.
+//
 // .ioc puts ADC3 in 12-bit single-channel regular conversion (no
 // oversampling by default; bump in CubeMX if calibration shows the
 // LSB noise floor is the limiting factor). Sample is 12-bit
@@ -115,12 +136,13 @@ inline constexpr float         kPrechargeRatio   = 0.95f;
 //
 // COMMISSION: kCurrentZeroMv and kCurrentMvPerAmpe1 MUST be calibrated
 // per real-hardware procedure in docs/COMMISSIONING.md §2 before
-// v1.0.0. Real Hall units drift; the unit-test-passing defaults are
-// only for bring-up.
+// v1.0.0. The Vref/2 divider tolerance + R10..R13 mismatch can shift
+// the zero point by tens of mV; the unit-test-passing defaults
+// below are nominal only.
 inline constexpr std::uint16_t kAdcVrefMv          = 3300;
 inline constexpr std::uint16_t kAdcMaxCount        = 4095;
-inline constexpr std::int32_t  kCurrentZeroMv      = 2500;  // COMMISSION
-inline constexpr std::int32_t  kCurrentMvPerAmpe1  = 57;    // COMMISSION (5.7 mV/A x10)
+inline constexpr std::int32_t  kCurrentZeroMv      = 1650;  // Vref/2  COMMISSION
+inline constexpr std::int32_t  kCurrentMvPerAmpe1  = 200;   // COMMISSION (20 mV/A x10)
 inline constexpr std::uint8_t  kCurrentFilterShift = 4;     // tau ~ 16 samples
 
 // IIR low-pass filter coefficient is encoded as a shift so the filter

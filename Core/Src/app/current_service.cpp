@@ -15,15 +15,21 @@ CurrentService& CurrentService::instance() noexcept {
 }
 
 std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
-    // Work in microvolts to avoid the ~175 mA bias that integer-mV
-    // arithmetic introduces around the 2.500 V zero point (the unit
-    // test test_current_adc_symmetric_around_zero catches it).
+    // Work in microvolts to keep integer-mV bias out of the rounding
+    // around the zero point. Bipolar mapping after the carrier-board
+    // diff amp (gain x4, R12 biased to Vref/2): S_CURRENT = 4 *
+    // (OUTP - OUTN) + 1.65 V. Discharge -> positive S_CURRENT above
+    // 1.65 V; charge -> negative S_CURRENT below 1.65 V.
     //
-    //   v_uV    = raw * Vref_mV * 1000 / 4095
-    //   delta_uV = zero_mV * 1000 - v_uV
-    //   sensitivity = 5.7 mV/A = 5.7 uV/mA = kCurrentMvPerAmpe1 / 10 uV/mA
+    //   v_uV     = raw * Vref_mV * 1000 / 4095
+    //   delta_uV = v_uV - zero_mV * 1000        (+ above zero, - below)
+    //   sensitivity = 20 mV/A * 10 = 200 (10*mV / A)
     //   mA       = delta_uV / sensitivity_uV_per_mA
     //            = delta_uV * 10 / kCurrentMvPerAmpe1
+    //
+    // The "+ = discharge, - = charge" convention is preserved: with
+    // zero at 1.65 V and v_uV > zero on discharge, delta_uV is
+    // positive and so is the returned mA value.
     //
     // raw * Vref_mV * 1000 can reach 4095 * 3300 * 1000 ≈ 1.35e10, so
     // the multiplication must be done in int64.
@@ -32,7 +38,7 @@ std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
          static_cast<std::int64_t>(config::kAdcVrefMv) * 1000) /
         config::kAdcMaxCount;
     const std::int64_t delta_uV =
-        static_cast<std::int64_t>(config::kCurrentZeroMv) * 1000 - v_uV;
+        v_uV - static_cast<std::int64_t>(config::kCurrentZeroMv) * 1000;
     return static_cast<std::int32_t>(
         (delta_uV * 10) / config::kCurrentMvPerAmpe1);
 }
