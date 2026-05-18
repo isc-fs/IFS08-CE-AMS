@@ -206,7 +206,12 @@ enum class JumpReason : std::uint32_t {
 // the firmware_info `reserved[0]` slot so the pit-tool can verify at
 // flash time that the app it's writing matches the BL it's talking
 // to. Changing this requires re-building both halves.
-inline constexpr std::uint32_t kAmsNodeId = 0x02u;
+//
+// 2026-05-18: BL team adopted node ID 0x01 on MLC1 (matches the value
+// already in NVM from factory). This flip aligns the firmware-side
+// firmware_info.reserved[0] with the BL it now talks to. Confirmed
+// by IFS08_HIL#30 turning A-002/A-003 green.
+inline constexpr std::uint32_t kAmsNodeId = 0x01u;
 
 // Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
 // ORIGIN and the bootloader's BL_APP_BASE.
