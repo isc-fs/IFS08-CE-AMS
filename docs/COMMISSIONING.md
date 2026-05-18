@@ -30,16 +30,35 @@ they're derived from.
 
 ## 2. Current sensor calibration
 
-The Hall transducer on `PF7` (ADC3 ch 3) is assumed to be **2.5 V at
-zero, 5.7 mV/A sensitivity**. Real units drift; calibrate before
-v1.0.0.
+The pack current path uses a **Bourns SSA-2-250A** shunt sensor
+(datasheet at `pcbs/ssa-2.pdf`). The sensor's raw differential output
+is `±5 mV/A` around a common-mode voltage of `+1.44 V`. A discrete
+difference amplifier on the carrier (MCP6001R, gain ×4, R12 biased
+to `Vref/2 = 1.65 V`) converts the differential signal to a
+single-ended `S_CURRENT` routed to `PF7` (ADC3 ch 3, 12-bit):
+
+> `S_CURRENT = 4 × (OUTP − OUTN) + 1.65 V`
+
+Nominal calibration:
+- **Zero current** → S_CURRENT = 1650 mV (`kCurrentZeroMv`)
+- **Sensitivity** at the ADC pin = 5 mV/A × 4 = 20 mV/A
+  (`kCurrentMvPerAmpe1` = 200, i.e. 20 mV/A × 10)
+- **Sign convention**: discharge → positive `(OUTP − OUTN)` → S_CURRENT
+  rises above 1.65 V → positive mA. Charge does the opposite.
+- **Observable range**: bipolar `±82.5 A` (constrained by the 0–3.3 V
+  ADC rail). Currents beyond that clip at the rail and become
+  indistinguishable; `kImaxMa = 200 A` is therefore a defensive-only
+  predicate on this HW revision — see §2.4.
+
+Tolerance of the Vref/2 divider and R10..R13 mismatch can shift the
+zero point by tens of mV; calibrate before v1.0.0.
 
 ### 2.1 Zero-offset
 
 1. Disconnect the pack from anything that draws current.
-2. Read the raw ADC value via debugger (`hadc1` → start → poll → get).
-3. Compute the implied zero-voltage `v_mV = raw * 3300 / 4095`.
-4. If `v_mV` differs from 2500 by more than 30 mV, update
+2. Read the raw ADC value via debugger (`hadc3` → start → poll → get).
+3. Compute the implied voltage `v_mV = raw * 3300 / 4095`.
+4. If `v_mV` differs from `1650` by more than 30 mV, update
    `kCurrentZeroMv` in `ams_config.hpp` to the measured value.
 
 ### 2.2 Sensitivity
@@ -47,19 +66,34 @@ v1.0.0.
 1. Connect a calibrated current source in series with the pack.
 2. Run **+10 A** discharge. Note the new ADC raw.
 3. Run **−10 A** charge (regen or external charger). Note ADC raw.
-4. Sensitivity = `(v_zero_mV − v_at_+10A_mV) / 10`, in mV/A.
+4. Sensitivity = `(v_at_+10A_mV − v_zero_mV) / 10`, in mV/A. (Note
+   the sign — discharge raises voltage on this HW revision.)
 5. Update `kCurrentMvPerAmpe1` (scaled ×10): set it to
-   `round(sensitivity_mV_per_A × 10)`.
-6. Confirm symmetry by comparing the −10 A reading; if it deviates >
-   2 %, log a non-linearity warning in the project log and consider a
+   `round(sensitivity_mV_per_A × 10)`. Nominal is 200.
+6. Confirm symmetry by comparing the −10 A reading; if `|v_at_-10A_mV
+   − v_zero_mV|` differs from `|v_at_+10A_mV − v_zero_mV|` by > 2 %,
+   log a non-linearity warning in the project log and consider a
    per-direction calibration table (out of v1.0.0 scope).
 
 ### 2.3 Absolute limit
 
-`kImaxMa` defaults to 200 000 mA (200 A). Set it to the lower of:
-- The pack discharge rating from the FS rules
-- The contactor's continuous rating
-- The cell datasheet's `I_max_continuous`
+`kImaxMa` defaults to 200 000 mA (200 A). On the current HW revision
+the ADC clips at ±82.5 A, so the predicate `|filtered_mA| > kImaxMa`
+never trips in practice — it's a defensive-only check. If you want a
+real over-limit safety, lower `kImaxMa` to e.g. 75 000 mA (75 A, with
+10 % margin from the clipping rail). Otherwise leave at the FS-rules
+value and treat clipping at the rail as the de-facto trip.
+
+### 2.4 Charge-current observability caveat
+
+The diff-amp gain (×4) plus the Vref/2 bias means the full 3.3 V rail
+maps to ±82.5 A. Real currents above that are not observable. Two
+HW design choices that affect this:
+- **Lower the gain** (e.g. ×2) to widen the range to ±165 A at the
+  cost of doubling the LSB per ampere (10 mV/A noise floor).
+- **Add a second sensor** on `S_CURRENT_DCDC` (PF8 → ADC3 ch 7,
+  currently configured as analog input but not read by firmware).
+Both are tracked as v1.5 follow-ups.
 
 ---
 
