@@ -88,15 +88,47 @@ inline constexpr std::uint8_t  kTempsPerModule      = 40;  // 20 per LTC * 2 LTC
 // Retired in fix/48 (TSMS+DASH_CHG FSM): kAcuRxStartBtnId (0x600) and
 // kAcuRxChargerId (0x18FF50E7) were the legacy Start->{Precharge,Charge}
 // triggers. Both replaced by physical GPIOs (TSMS_Pin / DASH_CHG_Pin).
-// kAcuTxMinVoltId (0x12C) also retired -- it only ever existed to suppress
-// itself during Charge; will return as a charge-only balance TX in a
-// future PR.
+//
+// ACU RX (FDCAN1): VCU 0x100 DC-bus heartbeat (LE uint16 V). The
+// car/charger mode lock at Start->Precharge consumes its freshness.
 inline constexpr std::uint32_t kAcuRxDcBusId     = 0x100;   // extended; VCU DC bus heartbeat
-inline constexpr std::uint32_t kAcuTxStateId     = 0x020;   // extended
-inline constexpr std::uint32_t kAcuTxCurrentId   = 0x450;
-inline constexpr std::uint32_t kAcuTxCurrWarnId  = 0x500;
-inline constexpr std::uint32_t kAcuTxCurrOverId  = 0x501;
-inline constexpr std::uint32_t kAcuTxCurrNormId  = 0x502;
+
+// ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
+// FDCAN1, so the ECU sees these frames and forwards them to real-time
+// telemetry. All standard 11-bit IDs, big-endian payloads.
+// See docs/CAN_MAP.md for full byte layouts.
+//
+// Cadences (acu_can_task per-frame deadline scheduler):
+//   kEcuFastTxMs (50 ms)   -> 0x135 currents
+//   kEcuMidTxMs  (100 ms)  -> 0x020 ok_precarga + 0x12C vmin
+//                              + 0x131..0x134 per-module V
+//   kEcuSlowTxMs (250 ms)  -> 0x136..0x137 per-module temps
+//
+// 0x130 (SOC) deferred: no SOC estimator in firmware yet.
+inline constexpr std::uint32_t kAcuTxOkPrechargeId    = 0x020;  // 1 byte: 1 if FSM in Run|Charge
+inline constexpr std::uint32_t kAcuTxMinVoltId        = 0x12C;  // BE u16 mV (pack-wide cell min)
+inline constexpr std::uint32_t kAcuTxVminModuleAId    = 0x131;  // BE u16 mV x3 (modules 0..2)
+inline constexpr std::uint32_t kAcuTxVminModuleBId    = 0x132;  // BE u16 mV x2 (modules 3..4)
+inline constexpr std::uint32_t kAcuTxVmaxModuleAId    = 0x133;  // BE u16 mV x3 (modules 0..2)
+inline constexpr std::uint32_t kAcuTxVmaxModuleBId    = 0x134;  // BE u16 mV x2 (modules 3..4)
+inline constexpr std::uint32_t kAcuTxCurrentsId       = 0x135;  // BE i16 deciamps x2 (accu, dcdc)
+inline constexpr std::uint32_t kAcuTxTempMaxModuleAId = 0x136;  // BE i16 degC x3 (modules 0..2)
+inline constexpr std::uint32_t kAcuTxTempMaxModuleBId = 0x137;  // BE i16 degC x3 (mod 3, 4, dcdc-stub)
+
+// Legacy 0x450 current frame retired in fix/53 -- superseded by 0x135
+// (signed deciamps + DCDC in the same frame). kAcuTxCurrWarn/Over/
+// NormId reserved for future use.
+inline constexpr std::uint32_t kAcuTxCurrWarnId       = 0x500;
+inline constexpr std::uint32_t kAcuTxCurrOverId       = 0x501;
+inline constexpr std::uint32_t kAcuTxCurrNormId       = 0x502;
+
+inline constexpr std::uint32_t kEcuFastTxMs           = 50;
+inline constexpr std::uint32_t kEcuMidTxMs            = 100;
+inline constexpr std::uint32_t kEcuSlowTxMs           = 250;
+
+// Stub sentinel for the temp_dcdc byte (0x137 data[4..5]) while the
+// DCDC temperature sensor is not wired. INT16_MIN = "not available".
+inline constexpr std::int16_t  kTempDcdcStubValue     = -32768;
 
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         kPrechargeRatio   = 0.95f;

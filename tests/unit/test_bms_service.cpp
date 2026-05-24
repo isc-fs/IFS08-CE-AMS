@@ -323,3 +323,54 @@ extern "C" void test_bms_temp_short_buffer_rejected(void) {
         0, reply, sizeof(reply)));
 }
 
+// ---------------------------------------------------------------------------
+// fix/53 per-module aggregates: after a clean chain response the per-
+// module vmin / vmax pick the right cells per the build_clean_chain
+// pattern (cell_mV[m][c] = 3000 + m*100 + c). For each module:
+//   vmin = 3000 + m*100 + 0           (cell index 0)
+//   vmax = 3000 + m*100 + 18          (cell index 18)
+// tmax is filled by the temperature path; without a temp update it
+// stays at INT16_MIN (sentinel).
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_per_module_v_aggregates_after_clean_response(void) {
+    std::uint8_t resp[kRespBytes];
+    build_clean_chain(resp);
+    fake_set_tick(5000);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 5000);
+
+    const auto s = BmsService::instance().snapshot();
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        const std::uint16_t expect_min = static_cast<std::uint16_t>(3000 + m * 100 + 0);
+        const std::uint16_t expect_max = static_cast<std::uint16_t>(3000 + m * 100 + 18);
+        TEST_ASSERT_EQUAL_UINT16(expect_min, s.vmin_modulo[m]);
+        TEST_ASSERT_EQUAL_UINT16(expect_max, s.vmax_modulo[m]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// fix/53 per-module temp aggregates: after a temperature sweep that
+// writes ~25 degC across all populated channels, tmax_modulo[m] should
+// be near 25 for every module that was updated.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
+    std::uint8_t resp[kRespBytes];
+    build_clean_chain(resp);
+    fake_set_tick(6000);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 6000);
+
+    // Drive a uniform-room-temp sweep across the populated channels so
+    // every module's tmax_modulo gets a real value.
+    for (std::uint8_t ch = 0; ch < config::kTempsPerLtc; ++ch) {
+        std::uint8_t reply[kAuxReplyBytes];
+        for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
+            encode_aux_segment(reply + ic * kSeg, kAux25C_mV);
+        }
+        BmsService::instance().update_temperature(ch, reply, sizeof(reply));
+    }
+
+    const auto s = BmsService::instance().snapshot();
+    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+        TEST_ASSERT_INT16_WITHIN(2, 25, s.tmax_modulo[m]);
+    }
+}
+

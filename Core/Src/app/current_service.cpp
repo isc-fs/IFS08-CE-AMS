@@ -61,6 +61,26 @@ void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) 
     }
 }
 
+void CurrentService::update_dcdc_from_adc(std::uint16_t raw,
+                                          std::uint32_t now_tick) noexcept {
+    // Same diff-amp topology + same SSA-2 sensor model as the pack
+    // channel, so adc_to_mA is reused. If a future revision wires a
+    // different sensor or different gain on the DCDC path, split this
+    // into its own converter.
+    const std::int32_t mA = adc_to_mA(raw);
+
+    state_.dcdc_raw_mA           = mA;
+    state_.last_dcdc_update_tick = now_tick;
+    state_.dcdc_sensor_fault     = false;
+
+    if (state_.dcdc_filtered_mA == 0 && mA != 0) {
+        state_.dcdc_filtered_mA = mA;
+    } else {
+        state_.dcdc_filtered_mA -= (state_.dcdc_filtered_mA >> config::kCurrentFilterShift);
+        state_.dcdc_filtered_mA += (mA >> config::kCurrentFilterShift);
+    }
+}
+
 CurrentState CurrentService::snapshot() const noexcept {
     return state_;
 }

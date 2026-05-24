@@ -31,6 +31,15 @@ struct BmsState {
     std::int16_t  max_tempC;
     std::int16_t  avg_tempC;
 
+    // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
+    // ECU TX matrix (fix/53). Recomputed in recompute_summaries_()
+    // from cell_mV / cell_tempC; no extra cost beyond a single pass
+    // per cycle. vmin/vmax in mV, tmax in degC (signed int16, clipped
+    // from the per-cell int16 range).
+    std::uint16_t vmin_modulo[config::kBmsModuleCount];
+    std::uint16_t vmax_modulo[config::kBmsModuleCount];
+    std::int16_t  tmax_modulo[config::kBmsModuleCount];
+
     // Per-module freshness for the SafetyTask staleness check. Updated
     // on a successful poll where BOTH LTCs of the module reported
     // PEC-clean.

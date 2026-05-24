@@ -19,6 +19,29 @@ void test_bms_temp_rail_reading_skips_slot(void);
 void test_bms_temp_pec_fail_skips_slot(void);
 void test_bms_temp_bad_channel_idx_rejected(void);
 void test_bms_temp_short_buffer_rejected(void);
+void test_bms_per_module_v_aggregates_after_clean_response(void);
+void test_bms_per_module_tmax_after_temp_sweep(void);
+
+// test_acu_tx_encoders.cpp
+void test_acu_tx_ok_precarga_high_in_run(void);
+void test_acu_tx_ok_precarga_high_in_charge(void);
+void test_acu_tx_ok_precarga_low_in_start(void);
+void test_acu_tx_ok_precarga_low_in_precharge_and_transition(void);
+void test_acu_tx_ok_precarga_low_in_error(void);
+void test_acu_tx_min_voltage_big_endian(void);
+void test_acu_tx_vmin_module_a_layout(void);
+void test_acu_tx_vmin_module_b_layout(void);
+void test_acu_tx_vmax_module_a_layout(void);
+void test_acu_tx_vmax_module_b_layout(void);
+void test_acu_tx_currents_zero(void);
+void test_acu_tx_currents_positive_pack(void);
+void test_acu_tx_currents_negative_pack_two_complement(void);
+void test_acu_tx_currents_rounding_to_nearest_dA(void);
+void test_acu_tx_currents_saturates_at_int16_extremes(void);
+void test_acu_tx_currents_dcdc_in_bytes_2_3(void);
+void test_acu_tx_tmax_module_a_layout(void);
+void test_acu_tx_tmax_module_b_includes_dcdc_stub(void);
+void test_acu_tx_tmax_handles_negative_degC(void);
 
 // test_current_service.cpp
 void test_current_adc_zero_point_reads_near_zero(void);
@@ -144,6 +167,28 @@ int main(void) {
     RUN_TEST(test_bms_temp_pec_fail_skips_slot);
     RUN_TEST(test_bms_temp_bad_channel_idx_rejected);
     RUN_TEST(test_bms_temp_short_buffer_rejected);
+    RUN_TEST(test_bms_per_module_v_aggregates_after_clean_response);
+    RUN_TEST(test_bms_per_module_tmax_after_temp_sweep);
+
+    RUN_TEST(test_acu_tx_ok_precarga_high_in_run);
+    RUN_TEST(test_acu_tx_ok_precarga_high_in_charge);
+    RUN_TEST(test_acu_tx_ok_precarga_low_in_start);
+    RUN_TEST(test_acu_tx_ok_precarga_low_in_precharge_and_transition);
+    RUN_TEST(test_acu_tx_ok_precarga_low_in_error);
+    RUN_TEST(test_acu_tx_min_voltage_big_endian);
+    RUN_TEST(test_acu_tx_vmin_module_a_layout);
+    RUN_TEST(test_acu_tx_vmin_module_b_layout);
+    RUN_TEST(test_acu_tx_vmax_module_a_layout);
+    RUN_TEST(test_acu_tx_vmax_module_b_layout);
+    RUN_TEST(test_acu_tx_currents_zero);
+    RUN_TEST(test_acu_tx_currents_positive_pack);
+    RUN_TEST(test_acu_tx_currents_negative_pack_two_complement);
+    RUN_TEST(test_acu_tx_currents_rounding_to_nearest_dA);
+    RUN_TEST(test_acu_tx_currents_saturates_at_int16_extremes);
+    RUN_TEST(test_acu_tx_currents_dcdc_in_bytes_2_3);
+    RUN_TEST(test_acu_tx_tmax_module_a_layout);
+    RUN_TEST(test_acu_tx_tmax_module_b_includes_dcdc_stub);
+    RUN_TEST(test_acu_tx_tmax_handles_negative_degC);
 
     RUN_TEST(test_current_adc_zero_point_reads_near_zero);
     RUN_TEST(test_current_adc_discharge_positive);

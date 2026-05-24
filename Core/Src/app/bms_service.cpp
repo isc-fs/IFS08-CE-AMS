@@ -110,21 +110,40 @@ void BmsService::recompute_summaries_() noexcept {
     std::uint32_t n_t      = 0;
 
     for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
-        if ((state_.module_online_mask & (1u << m)) == 0u) continue;
+        // Per-module aggregates default to safe sentinels even when
+        // the module hasn't reported yet -- consumers (0x131..0x134,
+        // 0x136..0x137 TX in acu_can_task.cpp) read these
+        // unconditionally per cycle.
+        std::uint16_t mod_min_v = std::numeric_limits<std::uint16_t>::max();
+        std::uint16_t mod_max_v = 0;
+        std::int16_t  mod_max_t = std::numeric_limits<std::int16_t>::min();
 
-        for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
-            const std::uint16_t v = state_.cell_mV[m][c];
-            sum_v_mV += v;
-            if (v < min_mV) min_mV = v;
-            if (v > max_mV) max_mV = v;
+        if ((state_.module_online_mask & (1u << m)) != 0u) {
+            for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
+                const std::uint16_t v = state_.cell_mV[m][c];
+                sum_v_mV += v;
+                if (v < min_mV)    min_mV    = v;
+                if (v > max_mV)    max_mV    = v;
+                if (v < mod_min_v) mod_min_v = v;
+                if (v > mod_max_v) mod_max_v = v;
+            }
+            for (std::uint8_t t = 0; t < config::kTempsPerModule; ++t) {
+                const std::int16_t tc = state_.cell_tempC[m][t];
+                if (tc < min_t)    min_t    = tc;
+                if (tc > max_t)    max_t    = tc;
+                if (tc > mod_max_t) mod_max_t = tc;
+                sum_t += tc;
+                ++n_t;
+            }
         }
-        for (std::uint8_t t = 0; t < config::kTempsPerModule; ++t) {
-            const std::int16_t tc = state_.cell_tempC[m][t];
-            if (tc < min_t) min_t = tc;
-            if (tc > max_t) max_t = tc;
-            sum_t += tc;
-            ++n_t;
-        }
+
+        // For an offline module, leave the per-module aggregates at
+        // sentinels: vmin=0xFFFF, vmax=0, tmax=INT16_MIN. The ECU
+        // can flag those as "no data" on its side.
+        state_.vmin_modulo[m] = (mod_min_v == std::numeric_limits<std::uint16_t>::max())
+                                ? std::uint16_t{0xFFFFu} : mod_min_v;
+        state_.vmax_modulo[m] = mod_max_v;  // 0 if offline
+        state_.tmax_modulo[m] = mod_max_t;  // INT16_MIN if offline
     }
 
     state_.pack_voltage_mV = sum_v_mV;
