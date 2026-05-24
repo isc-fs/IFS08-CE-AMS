@@ -83,4 +83,11 @@ CurrentState CurrentService::snapshot() const noexcept {
     return state_;
 }
 
+bool CurrentService::is_dcdc_fresh(std::uint32_t now_tick) const noexcept {
+    if (state_.dcdc_sensor_fault)                                              return false;
+    if (state_.last_dcdc_update_tick == 0u)                                    return false;
+    if (now_tick - state_.last_dcdc_update_tick > config::DcdcIStaleMs)        return false;
+    return true;
+}
+
 }  // namespace ams

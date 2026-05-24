@@ -50,6 +50,16 @@ encode_ok_precharge(std::uint8_t fsm_state) noexcept {
         (fsm_state == 3u /*Run*/ || fsm_state == 4u /*Charge*/) ? 1u : 0u) };
 }
 
+// 0x130 SoC % — DEFERRED. No SOC estimator in firmware yet. Stub
+// returns the "unknown" sentinel 0xFF so consumers can distinguish
+// "no estimator running" from a real 0..100 value once one lands.
+// Not currently called by acu_can_task.cpp's TX scheduler -- reserve
+// the encoder for the contract-first day someone wires a real SoC.
+[[nodiscard]] inline std::array<std::uint8_t, 1>
+encode_soc_stub() noexcept {
+    return { std::uint8_t{0xFFu} };
+}
+
 // 0x12C v_cell_min — BE u16 mV (pack-wide cell min).
 [[nodiscard]] inline std::array<std::uint8_t, 2>
 encode_min_voltage(const BmsState& bms) noexcept {

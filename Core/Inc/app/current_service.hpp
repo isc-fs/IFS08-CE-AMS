@@ -46,6 +46,14 @@ public:
     // Atomic read of the full state.
     [[nodiscard]] CurrentState snapshot() const noexcept;
 
+    // DCDC freshness probe. Informational only -- the DCDC channel is
+    // not part of the safety predicate (DCDC failure is recoverable,
+    // unlike pack-current sensor failure which has to latch Error).
+    // Available for future telemetry surfaces / diagnostic frames.
+    // True iff the last DCDC ADC update landed within DcdcIStaleMs
+    // (500 ms) of now_tick.
+    [[nodiscard]] bool is_dcdc_fresh(std::uint32_t now_tick) const noexcept;
+
     // Pure helper, exposed for unit testing. Maps a 12-bit ADC reading
     // (0..4095 referenced to Vref) to a signed current in mA using
     // the constants in ams_config. Static -> no mutex.
