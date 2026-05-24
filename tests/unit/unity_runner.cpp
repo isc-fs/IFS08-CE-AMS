@@ -23,11 +23,11 @@ void test_bms_per_module_v_aggregates_after_clean_response(void);
 void test_bms_per_module_tmax_after_temp_sweep(void);
 
 // test_acu_tx_encoders.cpp
-void test_acu_tx_ok_precarga_high_in_run(void);
-void test_acu_tx_ok_precarga_high_in_charge(void);
-void test_acu_tx_ok_precarga_low_in_start(void);
-void test_acu_tx_ok_precarga_low_in_precharge_and_transition(void);
-void test_acu_tx_ok_precarga_low_in_error(void);
+void test_acu_tx_ok_precharge_high_in_run(void);
+void test_acu_tx_ok_precharge_high_in_charge(void);
+void test_acu_tx_ok_precharge_low_in_start(void);
+void test_acu_tx_ok_precharge_low_in_precharge_and_transition(void);
+void test_acu_tx_ok_precharge_low_in_error(void);
 void test_acu_tx_min_voltage_big_endian(void);
 void test_acu_tx_vmin_module_a_layout(void);
 void test_acu_tx_vmin_module_b_layout(void);
@@ -170,11 +170,11 @@ int main(void) {
     RUN_TEST(test_bms_per_module_v_aggregates_after_clean_response);
     RUN_TEST(test_bms_per_module_tmax_after_temp_sweep);
 
-    RUN_TEST(test_acu_tx_ok_precarga_high_in_run);
-    RUN_TEST(test_acu_tx_ok_precarga_high_in_charge);
-    RUN_TEST(test_acu_tx_ok_precarga_low_in_start);
-    RUN_TEST(test_acu_tx_ok_precarga_low_in_precharge_and_transition);
-    RUN_TEST(test_acu_tx_ok_precarga_low_in_error);
+    RUN_TEST(test_acu_tx_ok_precharge_high_in_run);
+    RUN_TEST(test_acu_tx_ok_precharge_high_in_charge);
+    RUN_TEST(test_acu_tx_ok_precharge_low_in_start);
+    RUN_TEST(test_acu_tx_ok_precharge_low_in_precharge_and_transition);
+    RUN_TEST(test_acu_tx_ok_precharge_low_in_error);
     RUN_TEST(test_acu_tx_min_voltage_big_endian);
     RUN_TEST(test_acu_tx_vmin_module_a_layout);
     RUN_TEST(test_acu_tx_vmin_module_b_layout);

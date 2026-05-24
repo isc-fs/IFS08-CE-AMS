@@ -175,7 +175,7 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 
 `0x130` (SOC) deferred — no SOC estimator in firmware yet.
 
-### `0x020` — ok_precarga
+### `0x020` — ok_precharge
 
 | Field | Value |
 |---|---|
@@ -187,7 +187,7 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 
 | Byte | Field | Notes |
 |:---:|---|---|
-| 0 | `ok_precarga` | `1` iff FSM state ∈ {Run, Charge} (AIRs closed and ready). `0` otherwise. |
+| 0 | `ok_precharge` | `1` iff FSM state ∈ {Run, Charge} (AIRs closed and ready). `0` otherwise. |
 
 ### `0x12C` — minimum cell voltage (pack-wide)
 
@@ -201,7 +201,7 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 
 | Byte | Field |
 |:---:|---|
-| 0–1 | `v_celda_min` BE uint16, mV (`BmsState.min_cell_mV`) |
+| 0–1 | `v_cell_min` BE uint16, mV (`BmsState.min_cell_mV`) |
 
 ### `0x131` — vmin per module (modules 0..2)
 
@@ -214,9 +214,9 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 
 | Bytes | Field |
 |:---:|---|
-| 0–1 | `vmin_modulo[0]` BE uint16, mV |
-| 2–3 | `vmin_modulo[1]` BE uint16, mV |
-| 4–5 | `vmin_modulo[2]` BE uint16, mV |
+| 0–1 | `vmin_module[0]` BE uint16, mV |
+| 2–3 | `vmin_module[1]` BE uint16, mV |
+| 4–5 | `vmin_module[2]` BE uint16, mV |
 
 For an offline module, sentinel `0xFFFF`.
 
@@ -228,16 +228,16 @@ For an offline module, sentinel `0xFFFF`.
 
 | Bytes | Field |
 |:---:|---|
-| 0–1 | `vmin_modulo[3]` BE uint16, mV |
-| 2–3 | `vmin_modulo[4]` BE uint16, mV |
+| 0–1 | `vmin_module[3]` BE uint16, mV |
+| 2–3 | `vmin_module[4]` BE uint16, mV |
 
 ### `0x133` — vmax per module (modules 0..2)
 
-Same layout as `0x131` with `vmax_modulo[0..2]`. Sentinel for offline module: `0x0000`.
+Same layout as `0x131` with `vmax_module[0..2]`. Sentinel for offline module: `0x0000`.
 
 ### `0x134` — vmax per module (modules 3..4)
 
-Same layout as `0x132` with `vmax_modulo[3..4]`.
+Same layout as `0x132` with `vmax_module[3..4]`.
 
 ### `0x135` — pack + DCDC current (signed deciamps)
 
@@ -250,8 +250,8 @@ Same layout as `0x132` with `vmax_modulo[3..4]`.
 
 | Bytes | Field |
 |:---:|---|
-| 0–1 | `corriente_accu` BE int16, deciamps (1 LSB = 0.1 A; `+` = discharge) |
-| 2–3 | `corriente_dcdc` BE int16, deciamps |
+| 0–1 | `current_accu` BE int16, deciamps (1 LSB = 0.1 A; `+` = discharge) |
+| 2–3 | `current_dcdc` BE int16, deciamps |
 
 Sign convention preserved from `+ = discharge, − = charge`. Pack current
 saturates at int16 extremes (the HW caps at ±82.5 A so saturation is
@@ -265,9 +265,9 @@ unreachable in practice). Supersedes the retired `0x450`.
 
 | Bytes | Field |
 |:---:|---|
-| 0–1 | `temp_max_modulo[0]` BE int16, °C |
-| 2–3 | `temp_max_modulo[1]` BE int16, °C |
-| 4–5 | `temp_max_modulo[2]` BE int16, °C |
+| 0–1 | `temp_max_module[0]` BE int16, °C |
+| 2–3 | `temp_max_module[1]` BE int16, °C |
+| 4–5 | `temp_max_module[2]` BE int16, °C |
 
 Sentinel for offline module: `INT16_MIN` = `0x8000`.
 
@@ -279,8 +279,8 @@ Sentinel for offline module: `INT16_MIN` = `0x8000`.
 
 | Bytes | Field |
 |:---:|---|
-| 0–1 | `temp_max_modulo[3]` BE int16, °C |
-| 2–3 | `temp_max_modulo[4]` BE int16, °C |
+| 0–1 | `temp_max_module[3]` BE int16, °C |
+| 2–3 | `temp_max_module[4]` BE int16, °C |
 | 4–5 | `temp_dcdc` BE int16, °C **[STUB — `INT16_MIN`]** until the DCDC temp sensor is wired |
 
 ### `0x450` — current measurement **[RETIRED — fix/53]**
@@ -291,7 +291,7 @@ deciamps + DCDC current in the same frame).
 ### `0x20` — AMS state reply **[LEGACY DOC — superseded by `0x020`]**
 
 The legacy AMS used the extended-ID `0x20` with 5-value state byte. The
-current firmware emits `0x020` (standard) as a simple `ok_precarga`
+current firmware emits `0x020` (standard) as a simple `ok_precharge`
 boolean (see above). Full state mirror still lives in `0x4A0[0]` for
 diagnostic consumers that want it. Kept as a doc anchor so spelunkers in
 old logs can find the cross-reference.

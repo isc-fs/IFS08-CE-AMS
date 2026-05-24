@@ -140,10 +140,10 @@ void BmsService::recompute_summaries_() noexcept {
         // For an offline module, leave the per-module aggregates at
         // sentinels: vmin=0xFFFF, vmax=0, tmax=INT16_MIN. The ECU
         // can flag those as "no data" on its side.
-        state_.vmin_modulo[m] = (mod_min_v == std::numeric_limits<std::uint16_t>::max())
+        state_.vmin_module[m] = (mod_min_v == std::numeric_limits<std::uint16_t>::max())
                                 ? std::uint16_t{0xFFFFu} : mod_min_v;
-        state_.vmax_modulo[m] = mod_max_v;  // 0 if offline
-        state_.tmax_modulo[m] = mod_max_t;  // INT16_MIN if offline
+        state_.vmax_module[m] = mod_max_v;  // 0 if offline
+        state_.tmax_module[m] = mod_max_t;  // INT16_MIN if offline
     }
 
     state_.pack_voltage_mV = sum_v_mV;

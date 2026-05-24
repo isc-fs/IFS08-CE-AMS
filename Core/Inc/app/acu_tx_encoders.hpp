@@ -43,14 +43,14 @@ inline void be_put_i16(std::uint8_t *p, std::int16_t v) noexcept {
 
 // ----- Frame builders ---------------------------------------------------
 
-// 0x020 ok_precarga — 1 byte, 1 iff FSM in Run|Charge.
+// 0x020 ok_precharge — 1 byte, 1 iff FSM in Run|Charge.
 [[nodiscard]] inline std::array<std::uint8_t, 1>
-encode_ok_precarga(std::uint8_t fsm_state) noexcept {
+encode_ok_precharge(std::uint8_t fsm_state) noexcept {
     return { static_cast<std::uint8_t>(
         (fsm_state == 3u /*Run*/ || fsm_state == 4u /*Charge*/) ? 1u : 0u) };
 }
 
-// 0x12C v_celda_min — BE u16 mV (pack-wide cell min).
+// 0x12C v_cell_min — BE u16 mV (pack-wide cell min).
 [[nodiscard]] inline std::array<std::uint8_t, 2>
 encode_min_voltage(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 2> out{};
@@ -62,9 +62,9 @@ encode_min_voltage(const BmsState& bms) noexcept {
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_vmin_module_a(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 6> out{};
-    be_put_u16(out.data() + 0, bms.vmin_modulo[0]);
-    be_put_u16(out.data() + 2, bms.vmin_modulo[1]);
-    be_put_u16(out.data() + 4, bms.vmin_modulo[2]);
+    be_put_u16(out.data() + 0, bms.vmin_module[0]);
+    be_put_u16(out.data() + 2, bms.vmin_module[1]);
+    be_put_u16(out.data() + 4, bms.vmin_module[2]);
     return out;
 }
 
@@ -72,8 +72,8 @@ encode_vmin_module_a(const BmsState& bms) noexcept {
 [[nodiscard]] inline std::array<std::uint8_t, 4>
 encode_vmin_module_b(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 4> out{};
-    be_put_u16(out.data() + 0, bms.vmin_modulo[3]);
-    be_put_u16(out.data() + 2, bms.vmin_modulo[4]);
+    be_put_u16(out.data() + 0, bms.vmin_module[3]);
+    be_put_u16(out.data() + 2, bms.vmin_module[4]);
     return out;
 }
 
@@ -81,9 +81,9 @@ encode_vmin_module_b(const BmsState& bms) noexcept {
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_vmax_module_a(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 6> out{};
-    be_put_u16(out.data() + 0, bms.vmax_modulo[0]);
-    be_put_u16(out.data() + 2, bms.vmax_modulo[1]);
-    be_put_u16(out.data() + 4, bms.vmax_modulo[2]);
+    be_put_u16(out.data() + 0, bms.vmax_module[0]);
+    be_put_u16(out.data() + 2, bms.vmax_module[1]);
+    be_put_u16(out.data() + 4, bms.vmax_module[2]);
     return out;
 }
 
@@ -91,8 +91,8 @@ encode_vmax_module_a(const BmsState& bms) noexcept {
 [[nodiscard]] inline std::array<std::uint8_t, 4>
 encode_vmax_module_b(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 4> out{};
-    be_put_u16(out.data() + 0, bms.vmax_modulo[3]);
-    be_put_u16(out.data() + 2, bms.vmax_modulo[4]);
+    be_put_u16(out.data() + 0, bms.vmax_module[3]);
+    be_put_u16(out.data() + 2, bms.vmax_module[4]);
     return out;
 }
 
@@ -109,9 +109,9 @@ encode_currents(const CurrentState& cur) noexcept {
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_tmax_module_a(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 6> out{};
-    be_put_i16(out.data() + 0, bms.tmax_modulo[0]);
-    be_put_i16(out.data() + 2, bms.tmax_modulo[1]);
-    be_put_i16(out.data() + 4, bms.tmax_modulo[2]);
+    be_put_i16(out.data() + 0, bms.tmax_module[0]);
+    be_put_i16(out.data() + 2, bms.tmax_module[1]);
+    be_put_i16(out.data() + 4, bms.tmax_module[2]);
     return out;
 }
 
@@ -119,8 +119,8 @@ encode_tmax_module_a(const BmsState& bms) noexcept {
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_tmax_module_b(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 6> out{};
-    be_put_i16(out.data() + 0, bms.tmax_modulo[3]);
-    be_put_i16(out.data() + 2, bms.tmax_modulo[4]);
+    be_put_i16(out.data() + 0, bms.tmax_module[3]);
+    be_put_i16(out.data() + 2, bms.tmax_module[4]);
     be_put_i16(out.data() + 4, config::kTempDcdcStubValue);
     return out;
 }

@@ -100,7 +100,7 @@ inline constexpr std::uint32_t kAcuRxDcBusId     = 0x100;   // extended; VCU DC 
 //
 // Cadences (acu_can_task per-frame deadline scheduler):
 //   kEcuFastTxMs (50 ms)   -> 0x135 currents
-//   kEcuMidTxMs  (100 ms)  -> 0x020 ok_precarga + 0x12C vmin
+//   kEcuMidTxMs  (100 ms)  -> 0x020 ok_precharge + 0x12C vmin
 //                              + 0x131..0x134 per-module V
 //   kEcuSlowTxMs (250 ms)  -> 0x136..0x137 per-module temps
 //

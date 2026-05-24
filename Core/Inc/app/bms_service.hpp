@@ -36,9 +36,9 @@ struct BmsState {
     // from cell_mV / cell_tempC; no extra cost beyond a single pass
     // per cycle. vmin/vmax in mV, tmax in degC (signed int16, clipped
     // from the per-cell int16 range).
-    std::uint16_t vmin_modulo[config::kBmsModuleCount];
-    std::uint16_t vmax_modulo[config::kBmsModuleCount];
-    std::int16_t  tmax_modulo[config::kBmsModuleCount];
+    std::uint16_t vmin_module[config::kBmsModuleCount];
+    std::uint16_t vmax_module[config::kBmsModuleCount];
+    std::int16_t  tmax_module[config::kBmsModuleCount];
 
     // Per-module freshness for the SafetyTask staleness check. Updated
     // on a successful poll where BOTH LTCs of the module reported

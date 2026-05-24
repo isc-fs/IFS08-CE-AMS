@@ -342,14 +342,14 @@ extern "C" void test_bms_per_module_v_aggregates_after_clean_response(void) {
     for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
         const std::uint16_t expect_min = static_cast<std::uint16_t>(3000 + m * 100 + 0);
         const std::uint16_t expect_max = static_cast<std::uint16_t>(3000 + m * 100 + 18);
-        TEST_ASSERT_EQUAL_UINT16(expect_min, s.vmin_modulo[m]);
-        TEST_ASSERT_EQUAL_UINT16(expect_max, s.vmax_modulo[m]);
+        TEST_ASSERT_EQUAL_UINT16(expect_min, s.vmin_module[m]);
+        TEST_ASSERT_EQUAL_UINT16(expect_max, s.vmax_module[m]);
     }
 }
 
 // ---------------------------------------------------------------------------
 // fix/53 per-module temp aggregates: after a temperature sweep that
-// writes ~25 degC across all populated channels, tmax_modulo[m] should
+// writes ~25 degC across all populated channels, tmax_module[m] should
 // be near 25 for every module that was updated.
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
@@ -359,7 +359,7 @@ extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
     BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 6000);
 
     // Drive a uniform-room-temp sweep across the populated channels so
-    // every module's tmax_modulo gets a real value.
+    // every module's tmax_module gets a real value.
     for (std::uint8_t ch = 0; ch < config::kTempsPerLtc; ++ch) {
         std::uint8_t reply[kAuxReplyBytes];
         for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
@@ -370,7 +370,7 @@ extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
 
     const auto s = BmsService::instance().snapshot();
     for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
-        TEST_ASSERT_INT16_WITHIN(2, 25, s.tmax_modulo[m]);
+        TEST_ASSERT_INT16_WITHIN(2, 25, s.tmax_module[m]);
     }
 }
 

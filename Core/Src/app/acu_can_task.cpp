@@ -11,11 +11,11 @@
 //  ams_config.hpp for byte layouts.
 //
 //    50 ms: 0x135 currents (i16 deciamps; accu, dcdc)
-//   100 ms: 0x020 ok_precarga
-//           0x12C v_celda_min (pack-wide min cell mV)
-//           0x131/0x132 vmin_modulo  (5 modules over two frames)
-//           0x133/0x134 vmax_modulo
-//   250 ms: 0x136/0x137 temp_max_modulo (+ temp_dcdc stub on 0x137)
+//   100 ms: 0x020 ok_precharge
+//           0x12C v_cell_min (pack-wide min cell mV)
+//           0x131/0x132 vmin_module  (5 modules over two frames)
+//           0x133/0x134 vmax_module
+//   250 ms: 0x136/0x137 temp_max_module (+ temp_dcdc stub on 0x137)
 //
 // 0x130 (SOC) deferred until firmware has an estimator.
 // 0x450 retired -- 0x135 is the successor.
@@ -49,7 +49,7 @@ extern FDCAN_HandleTypeDef hfdcan1;
 extern "C" osMessageQueueId_t acu_rx_queueHandle;
 
 // FSM state mirror maintained by safety_task.cpp; used here for
-// ok_precarga (= 1 iff state in {Run=3, Charge=4}).
+// ok_precharge (= 1 iff state in {Run=3, Charge=4}).
 extern "C" volatile std::uint8_t g_state_telemetry;
 
 namespace {
@@ -88,9 +88,9 @@ inline void send_or_fail(std::uint32_t id,
     }
 }
 
-void tx_ok_precarga() noexcept {
+void tx_ok_precharge() noexcept {
     send_or_fail(ams::config::kAcuTxOkPrechargeId,
-                 ams::acu_tx::encode_ok_precarga(g_state_telemetry));
+                 ams::acu_tx::encode_ok_precharge(g_state_telemetry));
 }
 void tx_min_voltage(const ams::BmsState& b) noexcept {
     send_or_fail(ams::config::kAcuTxMinVoltId,        ams::acu_tx::encode_min_voltage(b));
@@ -163,7 +163,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             last_fast_tx = now2;
         }
         if (now2 - last_mid_tx >= ams::config::kEcuMidTxMs) {
-            tx_ok_precarga();
+            tx_ok_precharge();
             tx_min_voltage(bms);
             tx_vmin_module_a(bms);
             tx_vmin_module_b(bms);

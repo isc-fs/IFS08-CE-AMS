@@ -20,21 +20,21 @@ ams::BmsState make_bms() {
     // Distinct per-module values so byte-layout regressions show up
     // immediately.
     b.min_cell_mV       = 3700;
-    b.vmin_modulo[0]    = 3701;
-    b.vmin_modulo[1]    = 3702;
-    b.vmin_modulo[2]    = 3703;
-    b.vmin_modulo[3]    = 3704;
-    b.vmin_modulo[4]    = 3705;
-    b.vmax_modulo[0]    = 3801;
-    b.vmax_modulo[1]    = 3802;
-    b.vmax_modulo[2]    = 3803;
-    b.vmax_modulo[3]    = 3804;
-    b.vmax_modulo[4]    = 3805;
-    b.tmax_modulo[0]    = 30;
-    b.tmax_modulo[1]    = 31;
-    b.tmax_modulo[2]    = 32;
-    b.tmax_modulo[3]    = 33;
-    b.tmax_modulo[4]    = 34;
+    b.vmin_module[0]    = 3701;
+    b.vmin_module[1]    = 3702;
+    b.vmin_module[2]    = 3703;
+    b.vmin_module[3]    = 3704;
+    b.vmin_module[4]    = 3705;
+    b.vmax_module[0]    = 3801;
+    b.vmax_module[1]    = 3802;
+    b.vmax_module[2]    = 3803;
+    b.vmax_module[3]    = 3804;
+    b.vmax_module[4]    = 3805;
+    b.tmax_module[0]    = 30;
+    b.tmax_module[1]    = 31;
+    b.tmax_module[2]    = 32;
+    b.tmax_module[3]    = 33;
+    b.tmax_module[4]    = 34;
     return b;
 }
 
@@ -48,30 +48,30 @@ ams::CurrentState make_cur(std::int32_t pack_mA, std::int32_t dcdc_mA) {
 }  // namespace
 
 // ---------------------------------------------------------------------------
-// 0x020 ok_precarga
+// 0x020 ok_precharge
 // ---------------------------------------------------------------------------
-extern "C" void test_acu_tx_ok_precarga_high_in_run(void) {
-    const auto f = encode_ok_precarga(/*Run=*/3);
+extern "C" void test_acu_tx_ok_precharge_high_in_run(void) {
+    const auto f = encode_ok_precharge(/*Run=*/3);
     TEST_ASSERT_EQUAL_UINT8(1, f[0]);
 }
-extern "C" void test_acu_tx_ok_precarga_high_in_charge(void) {
-    const auto f = encode_ok_precarga(/*Charge=*/4);
+extern "C" void test_acu_tx_ok_precharge_high_in_charge(void) {
+    const auto f = encode_ok_precharge(/*Charge=*/4);
     TEST_ASSERT_EQUAL_UINT8(1, f[0]);
 }
-extern "C" void test_acu_tx_ok_precarga_low_in_start(void) {
-    const auto f = encode_ok_precarga(/*Start=*/0);
+extern "C" void test_acu_tx_ok_precharge_low_in_start(void) {
+    const auto f = encode_ok_precharge(/*Start=*/0);
     TEST_ASSERT_EQUAL_UINT8(0, f[0]);
 }
-extern "C" void test_acu_tx_ok_precarga_low_in_precharge_and_transition(void) {
-    TEST_ASSERT_EQUAL_UINT8(0, encode_ok_precarga(/*Precharge=*/1)[0]);
-    TEST_ASSERT_EQUAL_UINT8(0, encode_ok_precarga(/*Transition=*/2)[0]);
+extern "C" void test_acu_tx_ok_precharge_low_in_precharge_and_transition(void) {
+    TEST_ASSERT_EQUAL_UINT8(0, encode_ok_precharge(/*Precharge=*/1)[0]);
+    TEST_ASSERT_EQUAL_UINT8(0, encode_ok_precharge(/*Transition=*/2)[0]);
 }
-extern "C" void test_acu_tx_ok_precarga_low_in_error(void) {
-    TEST_ASSERT_EQUAL_UINT8(0, encode_ok_precarga(/*Error=*/5)[0]);
+extern "C" void test_acu_tx_ok_precharge_low_in_error(void) {
+    TEST_ASSERT_EQUAL_UINT8(0, encode_ok_precharge(/*Error=*/5)[0]);
 }
 
 // ---------------------------------------------------------------------------
-// 0x12C v_celda_min — BE u16 of bms.min_cell_mV
+// 0x12C v_cell_min — BE u16 of bms.min_cell_mV
 // ---------------------------------------------------------------------------
 extern "C" void test_acu_tx_min_voltage_big_endian(void) {
     auto b = make_bms();
@@ -184,7 +184,7 @@ extern "C" void test_acu_tx_tmax_module_b_includes_dcdc_stub(void) {
 }
 extern "C" void test_acu_tx_tmax_handles_negative_degC(void) {
     auto b = make_bms();
-    b.tmax_modulo[0] = -10;   // 0xFFF6 BE
+    b.tmax_module[0] = -10;   // 0xFFF6 BE
     const auto f = encode_tmax_module_a(b);
     TEST_ASSERT_EQUAL_UINT8(0xFF, f[0]);
     TEST_ASSERT_EQUAL_UINT8(0xF6, f[1]);
