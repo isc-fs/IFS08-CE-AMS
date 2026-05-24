@@ -99,3 +99,22 @@ extern "C" void test_current_adc_lower_rail_near_minus_82500_mA(void) {
     const std::int32_t mA = ams::CurrentService::adc_to_mA(0);
     TEST_ASSERT_INT32_WITHIN(500, -82500, mA);
 }
+
+// ---------------------------------------------------------------------------
+// is_dcdc_fresh: false before any DCDC sample, true after a recent one,
+// false again after DcdcIStaleMs elapses. (Pack channel staleness is
+// covered indirectly via the safety-predicate tests; DCDC is purely
+// informational so its own helper gets a focused test here.)
+// ---------------------------------------------------------------------------
+extern "C" void test_current_is_dcdc_fresh_lifecycle(void) {
+    auto& cs = ams::CurrentService::instance();
+    // Pristine state: never updated -> not fresh at any tick.
+    cs.update_dcdc_from_adc(2047, 0);     // seeds last_dcdc_update_tick=0; still "no data"
+    TEST_ASSERT_FALSE(cs.is_dcdc_fresh(0));
+
+    // Real update at tick=1000.
+    cs.update_dcdc_from_adc(2047, 1000);
+    TEST_ASSERT_TRUE(cs.is_dcdc_fresh(1000));
+    TEST_ASSERT_TRUE(cs.is_dcdc_fresh(1000 + ams::config::DcdcIStaleMs));
+    TEST_ASSERT_FALSE(cs.is_dcdc_fresh(1000 + ams::config::DcdcIStaleMs + 1));
+}

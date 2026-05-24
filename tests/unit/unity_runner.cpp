@@ -42,6 +42,7 @@ void test_acu_tx_currents_dcdc_in_bytes_2_3(void);
 void test_acu_tx_tmax_module_a_layout(void);
 void test_acu_tx_tmax_module_b_includes_dcdc_stub(void);
 void test_acu_tx_tmax_handles_negative_degC(void);
+void test_acu_tx_soc_stub_returns_unknown_sentinel(void);
 
 // test_current_service.cpp
 void test_current_adc_zero_point_reads_near_zero(void);
@@ -50,6 +51,7 @@ void test_current_adc_charge_negative(void);
 void test_current_adc_symmetric_around_zero(void);
 void test_current_adc_upper_rail_near_82500_mA(void);
 void test_current_adc_lower_rail_near_minus_82500_mA(void);
+void test_current_is_dcdc_fresh_lifecycle(void);
 
 // test_vehicle_service.cpp
 void test_decode_dc_bus_little_endian(void);
@@ -189,6 +191,7 @@ int main(void) {
     RUN_TEST(test_acu_tx_tmax_module_a_layout);
     RUN_TEST(test_acu_tx_tmax_module_b_includes_dcdc_stub);
     RUN_TEST(test_acu_tx_tmax_handles_negative_degC);
+    RUN_TEST(test_acu_tx_soc_stub_returns_unknown_sentinel);
 
     RUN_TEST(test_current_adc_zero_point_reads_near_zero);
     RUN_TEST(test_current_adc_discharge_positive);
@@ -196,6 +199,7 @@ int main(void) {
     RUN_TEST(test_current_adc_symmetric_around_zero);
     RUN_TEST(test_current_adc_upper_rail_near_82500_mA);
     RUN_TEST(test_current_adc_lower_rail_near_minus_82500_mA);
+    RUN_TEST(test_current_is_dcdc_fresh_lifecycle);
 
     RUN_TEST(test_decode_dc_bus_little_endian);
     RUN_TEST(test_update_dc_bus_frame);

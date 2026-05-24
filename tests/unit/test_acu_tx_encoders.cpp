@@ -189,3 +189,13 @@ extern "C" void test_acu_tx_tmax_handles_negative_degC(void) {
     TEST_ASSERT_EQUAL_UINT8(0xFF, f[0]);
     TEST_ASSERT_EQUAL_UINT8(0xF6, f[1]);
 }
+
+// ---------------------------------------------------------------------------
+// 0x130 SOC stub -- single byte, sentinel 0xFF until a real estimator
+// lands. Not currently scheduled by the TX matrix; encoder exists so
+// the contract is committed and the slot is reserved.
+// ---------------------------------------------------------------------------
+extern "C" void test_acu_tx_soc_stub_returns_unknown_sentinel(void) {
+    const auto f = encode_soc_stub();
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[0]);
+}

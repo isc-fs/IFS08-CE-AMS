@@ -25,7 +25,8 @@ inline constexpr std::int16_t  CellUnderTempC  =   -10;  // under-temp °C   -- 
 inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- COMMISSION
 inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
 
-inline constexpr std::uint32_t IStaleMs       =  200;  // current sensor stale
+inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
+inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate sensor on PF8 and DCDC failure is recoverable)
 inline constexpr std::uint32_t BmsStaleMs     = 1500;  // any BMS module silent
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
@@ -107,6 +108,7 @@ inline constexpr std::uint32_t AcuRxDcBusId     = 0x100;   // extended; VCU DC b
 // 0x130 (SOC) deferred: no SOC estimator in firmware yet.
 inline constexpr std::uint32_t AcuTxOkPrechargeId    = 0x020;  // 1 byte: 1 if FSM in Run|Charge
 inline constexpr std::uint32_t AcuTxMinVoltId        = 0x12C;  // BE u16 mV (pack-wide cell min)
+inline constexpr std::uint32_t AcuTxSocId            = 0x130;  // 1 byte SoC % [DEFERRED -- no estimator yet; ID reserved + stub encoder available, not scheduled for TX]
 inline constexpr std::uint32_t AcuTxVminModuleAId    = 0x131;  // BE u16 mV x3 (modules 0..2)
 inline constexpr std::uint32_t AcuTxVminModuleBId    = 0x132;  // BE u16 mV x2 (modules 3..4)
 inline constexpr std::uint32_t AcuTxVmaxModuleAId    = 0x133;  // BE u16 mV x3 (modules 0..2)
