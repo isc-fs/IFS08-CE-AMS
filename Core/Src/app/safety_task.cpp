@@ -54,6 +54,18 @@ extern volatile std::uint32_t g_acu_rx_total;
 #endif
 }
 
+#if defined(AMS_BMS_HIL_STUB)
+// HIL-only fault-injection hook for Block B safety-predicate tests
+// (e.g. B-024 current overlimit, B-025 sensor-fault paths). The bench
+// flips this via GDB / SWD / a CAN backdoor; SafetyTask passes it to
+// safety::evaluate_fault as `force_error_set`, which short-circuits
+// to true on the next 10 ms tick -> latched Error.
+//
+// Gated under HIL_STUB so flight builds have NO writable backdoor
+// into the safety supervisor.
+extern "C" volatile bool g_force_error_request = false;
+#endif
+
 // FSM state mirror exposed for BmsPollTask / other read-only consumers.
 // Updated on every transition.
 extern "C" volatile std::uint8_t g_state_telemetry = 0;
@@ -154,9 +166,14 @@ void SafetyTask::run() noexcept {
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
 
         // ---------------- Safety predicate (every 10 ms) ----------------
+#if defined(AMS_BMS_HIL_STUB)
+        const bool force_error_set = g_force_error_request;
+#else
+        constexpr bool force_error_set = false;  // no flight-side setter
+#endif
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
-            /*force_error_set=*/false,   // legacy hook; no live setter
+            force_error_set,
             now,
         };
         const bool fault = error_latched_ || safety::evaluate_fault(pred_in);
@@ -198,7 +215,7 @@ void SafetyTask::run() noexcept {
                 const fsm::Inputs fsm_in = {
                     state, bms_snap, cur_snap, veh_snap,
                     tsms, dash_chg, mode_locked,
-                    /*force_error_set=*/false,
+                    force_error_set,
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);
@@ -231,13 +248,11 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            // Three telemetry frames. The 0x4A3 diag frame from PR #142
-            // was retired in #152 -- it never reached the wire despite
-            // five iterations chasing the H7 FDCAN TX scheduler. The
-            // diagnostic probes now ride the 0x4A2 encoder's bytes 3..5
-            // under -DAMS_BMS_HIL_STUB (dropping dc_bus_V from 0x4A2 in
-            // that build only; the bench injects dc_bus_V from the host
-            // anyway). Flight builds keep the dc_bus_V layout unchanged.
+            // Three telemetry frames. Under AMS_BMS_HIL_STUB the
+            // 0x4A2 encoder repurposes bytes 3..5 as diagnostic probes
+            // (dropping dc_bus_V on this build only; the bench injects
+            // dc_bus_V from the host). Flight builds keep the
+            // standard 0x4A2 layout.
 
             const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
                 g_telemetry_tx_fail & 0xFFu);

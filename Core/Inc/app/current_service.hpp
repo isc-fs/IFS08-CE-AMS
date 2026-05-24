@@ -46,10 +46,6 @@ public:
     // Atomic read of the full state.
     [[nodiscard]] CurrentState snapshot() const noexcept;
 
-    // True iff the last update was within IStaleMs and no sensor
-    // fault is latched. Consumed by SafetyTask.
-    [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
-
     // Pure helper, exposed for unit testing. Maps a 12-bit ADC reading
     // (0..4095 referenced to Vref) to a signed current in mA using
     // the constants in ams_config. Static -> no mutex.

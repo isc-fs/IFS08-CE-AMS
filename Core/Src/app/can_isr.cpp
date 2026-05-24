@@ -20,6 +20,15 @@ extern "C" {
 
 extern osMessageQueueId_t acu_rx_queueHandle;
 
+// ISR-side drop counter: incremented when osMessageQueuePut returns
+// non-osOK in the callback below (typically the queue is full because
+// AcuCanTask hasn't drained fast enough, or pre-scheduler bursts).
+// Distinct from g_acu_rx_dropped_unknown (acu_can_task.cpp), which
+// counts frames that DID land in the queue but whose ID didn't match
+// any known ACU dispatch case. Read via GDB / SWD / a future diag
+// telemetry frame.
+volatile uint32_t g_acu_rx_isr_drop = 0;
+
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
                                uint32_t RxFifo0ITs)
 {
@@ -50,9 +59,13 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
             frame.data[i] = rxbuf[i];
         }
 
-        // Non-blocking from ISR context: drop on full queue. Surfaced
-        // via g_acu_rx_dropped_unknown / a future drop counter.
-        (void)osMessageQueuePut(acu_rx_queueHandle, &frame, 0u, 0u);
+        // Non-blocking from ISR context: drop on full queue and
+        // bump the ISR-drop counter. The unknown-ID drop counter
+        // (g_acu_rx_dropped_unknown) lives task-side and counts a
+        // different failure mode.
+        if (osMessageQueuePut(acu_rx_queueHandle, &frame, 0u, 0u) != osOK) {
+            ++g_acu_rx_isr_drop;
+        }
     }
 }
 

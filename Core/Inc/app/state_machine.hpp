@@ -57,14 +57,20 @@ struct Output {
 };
 
 // Precharge target: DC bus must be at least 95% of the measured pack
-// voltage (sum of cells). Pack voltage in BmsState is mV, vehicle
-// DC bus is V; convert and compare.
+// voltage (sum of cells). Compare entirely in mV so a sub-1V pack
+// (truncates to 0 V if divided to volts) doesn't silently bypass
+// the "no data yet" guard. Vehicle dc_bus_V is uint16 V, multiply
+// by 1000 to land in mV; max possible value 65535 * 1000 = 6.5e7
+// fits in uint32 with headroom.
 [[nodiscard]] inline bool precharge_target_reached(const BmsState& bms,
                                                    const VehicleState& veh) noexcept {
-    const std::uint32_t pack_V = bms.pack_voltage_mV / 1000u;
-    if (pack_V == 0) return false;  // no BMS data yet
-    return static_cast<std::uint32_t>(veh.dc_bus_V) * 100u >=
-           pack_V * 95u;
+    // "No data yet" guard: pack_voltage_mV is 0 until BmsPollTask
+    // (or the HIL stub) has written at least one cycle. A real pack
+    // can never reach 0 mV in-service, so 0 reliably means "no data".
+    if (bms.pack_voltage_mV == 0u) return false;
+    const std::uint64_t bus_mV  = static_cast<std::uint64_t>(veh.dc_bus_V) * 1000u;
+    const std::uint64_t pack_mV = bms.pack_voltage_mV;
+    return bus_mV * 100u >= pack_mV * 95u;
 }
 
 [[nodiscard]] inline Output step(const Inputs& in) noexcept {
