@@ -6,7 +6,7 @@
 // charger-detect frames were retired in fix/48 -- their roles are now
 // owned by the TSMS_Pin / DASH_CHG_Pin GPIOs read directly by
 // SafetyTask. last_dc_bus_tick is load-bearing: SafetyTask uses its
-// freshness against kVcuFreshMs to decide Car-vs-Charger mode at the
+// freshness against VcuFreshMs to decide Car-vs-Charger mode at the
 // moment of Start->Precharge.
 //
 // Single-writer: AcuCanTask. Many readers: MainTask.

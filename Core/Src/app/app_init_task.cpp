@@ -157,7 +157,7 @@ void ams_app_init_task_run(void *argument)
     // 1. Wake every IC in the daisy-chain with a CS pulse train.
     // 2. Issue a low-impact read (RDCFGA -- never triggers an ADC,
     //    just shifts back the current configuration register of every
-    //    IC plus its PEC). If kLtcChainLength ICs answer with PEC-
+    //    IC plus its PEC). If LtcChainLength ICs answer with PEC-
     //    clean payloads, the pack wiring is sound.
     // 3. Mismatch -> latch ERROR before any relay close becomes
     //    possible. A missing or PEC-noisy module makes the pack
@@ -172,17 +172,17 @@ void ams_app_init_task_run(void *argument)
                       ams::ltc6820::CsPin{ LTC6820_CS_GPIO_Port, LTC6820_CS_Pin });
     ltc_bus.wakeup();
 
-    const auto cmd_rdcfga = ams::ltc6811::pack_command(ams::ltc6811::kCmdRDCFGA);
-    std::uint8_t reply[8 * ams::config::kLtcChainLength] = {};
+    const auto cmd_rdcfga = ams::ltc6811::pack_command(ams::ltc6811::CmdRDCFGA);
+    std::uint8_t reply[8 * ams::config::LtcChainLength] = {};
     const bool   read_ok  = ltc_bus.read_register_group(cmd_rdcfga.data(),
                                                        reply, sizeof(reply));
 
     const std::uint8_t discovered = read_ok
         ? ams::ltc6811::count_pec_valid_segments(reply, sizeof(reply),
-                                                 ams::config::kLtcChainLength)
+                                                 ams::config::LtcChainLength)
         : 0u;
 
-    if (discovered != ams::config::kLtcChainLength) {
+    if (discovered != ams::config::LtcChainLength) {
         // Sticky-latch the fault in backup RAM (survives the watchdog
         // reset that may follow) and open all relays. MainTask will
         // see ErrorLatch::is_set()==true on its first iteration and
@@ -195,7 +195,7 @@ void ams_app_init_task_run(void *argument)
     }
 #else
     // HIL stub: no LTC chain on the bench. Skipping discovery avoids
-    // the guaranteed-fail path that would re-latch + post kForceError
+    // the guaranteed-fail path that would re-latch + post ForceError
     // right after we just cleared the latch above.
     (void)hspi1;
 #endif

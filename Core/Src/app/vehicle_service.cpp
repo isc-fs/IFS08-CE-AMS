@@ -18,8 +18,8 @@ extern "C" volatile std::uint32_t g_acu_rx_total = 0;
 namespace ams {
 
 VehicleService& VehicleService::instance() noexcept {
-    static VehicleService kInstance;
-    return kInstance;
+    static VehicleService Instance;
+    return Instance;
 }
 
 std::uint16_t VehicleService::decode_dc_bus_V(const std::uint8_t *data) noexcept {
@@ -36,7 +36,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
     ++g_acu_rx_total;
 #endif
 
-    if (f.id == config::kAcuRxDcBusId) {
+    if (f.id == config::AcuRxDcBusId) {
         if (f.dlc < 2) return false;
         state_.dc_bus_V         = decode_dc_bus_V(f.data);
         state_.last_dc_bus_tick = f.timestamp_ms;

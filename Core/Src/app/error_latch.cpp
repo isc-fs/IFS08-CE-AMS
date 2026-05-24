@@ -9,18 +9,18 @@ namespace ams {
 
 namespace {
 
-// kBkpErrorReg selects which RTC_BKPxR register holds the flag (default
-// 0 from ams_config). kBkpErrorMagic is the only value we recognise as
+// BkpErrorReg selects which RTC_BKPxR register holds the flag (default
+// 0 from ams_config). BkpErrorMagic is the only value we recognise as
 // "latched"; any other value, including the post-power-on garbage, is
 // treated as "not latched".
-constexpr std::uint32_t kReg   = ams::config::kBkpErrorReg;
-constexpr std::uint32_t kMagic = ams::config::kBkpErrorMagic;
+constexpr std::uint32_t Reg   = ams::config::BkpErrorReg;
+constexpr std::uint32_t Magic = ams::config::BkpErrorMagic;
 
 inline volatile std::uint32_t* bkp_register() noexcept {
     // The H733 maps BKP0R..BKP31R as consecutive uint32_t members on
     // the RTC peripheral. Indexing past 31 is undefined.
-    static_assert(kReg < 32, "kBkpErrorReg out of range");
-    return &(&RTC->BKP0R)[kReg];
+    static_assert(Reg < 32, "BkpErrorReg out of range");
+    return &(&RTC->BKP0R)[Reg];
 }
 
 }  // namespace
@@ -33,11 +33,11 @@ void ErrorLatch::init() noexcept {
 }
 
 bool ErrorLatch::is_set() noexcept {
-    return *bkp_register() == kMagic;
+    return *bkp_register() == Magic;
 }
 
 void ErrorLatch::set() noexcept {
-    *bkp_register() = kMagic;
+    *bkp_register() = Magic;
 }
 
 void ErrorLatch::clear() noexcept {

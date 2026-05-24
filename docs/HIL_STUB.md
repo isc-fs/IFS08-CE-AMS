@@ -45,7 +45,7 @@ phase 2, PR #119). Two sites in the code, both guarded by
 #if defined(AMS_BMS_HIL_STUB)
     for (;;) {
         ams::BmsService::instance().seed_for_hil_stub(osKernelGetTickCount());
-        osDelay(ams::config::kBmsPollVoltMs);
+        osDelay(ams::config::BmsPollVoltMs);
     }
 #else
     // ... real ADCV / RDCV[A-D] / mux sweep / balance WRCFGA ...
@@ -56,7 +56,7 @@ Under the flag, the BmsPollTask body collapses to a 250 ms loop that
 calls `BmsService::seed_for_hil_stub(now_tick)`. The seeder stamps a
 nominal-healthy snapshot into `BmsState`:
 
-- `module_online_mask = kAllModulesMask` (all 5 modules present)
+- `module_online_mask = AllModulesMask` (all 5 modules present)
 - `last_rx_tick[m] = now_tick` (freshness check passes)
 - `cell_mV[m][c] = 3750` (mid-pack nominal, in range)
 - `cell_tempC[m][t] = 25` (ambient, in range)
@@ -110,7 +110,7 @@ flight and stub builds alike. The stub flag changes what the data
 This means: the cell V/T threshold logic in
 `safety_predicates.hpp` is exercised on the bench every time you
 boot a stub build — the seeded `cell_mV = 3750` is well within the
-`[kCellUVmV, kCellOVmV]` window, so the predicate sees "healthy"
+`[CellUnderVoltageMv, CellOverVoltageMv]` window, so the predicate sees "healthy"
 and lets the FSM out of Start. If you want to exercise the
 predicate's *fault* paths under stub, set
 `force_error_set = true` via whatever hook your bench uses (today
@@ -170,7 +170,7 @@ SHA before tagging.
 - Telemetry frames 0x4A0/4A1/4A2 emit with the seeded values
   (3750 mV nominal, 25 °C). Use this to sanity-check that your
   bench-side decoder is reading the layout correctly.
-- The boot-grace window (`kSafetyBootGraceMs = 2000`) is unchanged
+- The boot-grace window (`SafetyBootGraceMs = 2000`) is unchanged
   in a stub build. It still suppresses data-dependent predicates
   for the first 2 s; that's harmless because the stub's seeded
   values pass the predicate anyway. The seeder runs once on each

@@ -44,19 +44,19 @@ namespace ams::ltc6811 {
 // Command codes (datasheet table 38). 11 bits each; the on-wire
 // command frame is 4 bytes: [cmd_hi, cmd_lo, pec_hi, pec_lo].
 // ---------------------------------------------------------------------------
-inline constexpr std::uint16_t kCmdWRCFGA  = 0x0001;
-inline constexpr std::uint16_t kCmdRDCFGA  = 0x0002;
-inline constexpr std::uint16_t kCmdRDCVA   = 0x0004;  // cells 1..3
-inline constexpr std::uint16_t kCmdRDCVB   = 0x0006;  // cells 4..6
-inline constexpr std::uint16_t kCmdRDCVC   = 0x0008;  // cells 7..9
-inline constexpr std::uint16_t kCmdRDCVD   = 0x000A;  // cells 10..12
-inline constexpr std::uint16_t kCmdRDAUXA  = 0x000C;  // GPIO 1..3 + REF
-inline constexpr std::uint16_t kCmdRDAUXB  = 0x000E;  // GPIO 4..5 + spare
-inline constexpr std::uint16_t kCmdRDSTATA = 0x0010;
-inline constexpr std::uint16_t kCmdRDSTATB = 0x0012;
-inline constexpr std::uint16_t kCmdWRCOMM  = 0x0721;
-inline constexpr std::uint16_t kCmdRDCOMM  = 0x0722;
-inline constexpr std::uint16_t kCmdSTCOMM  = 0x0723;
+inline constexpr std::uint16_t CmdWRCFGA  = 0x0001;
+inline constexpr std::uint16_t CmdRDCFGA  = 0x0002;
+inline constexpr std::uint16_t CmdRDCVA   = 0x0004;  // cells 1..3
+inline constexpr std::uint16_t CmdRDCVB   = 0x0006;  // cells 4..6
+inline constexpr std::uint16_t CmdRDCVC   = 0x0008;  // cells 7..9
+inline constexpr std::uint16_t CmdRDCVD   = 0x000A;  // cells 10..12
+inline constexpr std::uint16_t CmdRDAUXA  = 0x000C;  // GPIO 1..3 + REF
+inline constexpr std::uint16_t CmdRDAUXB  = 0x000E;  // GPIO 4..5 + spare
+inline constexpr std::uint16_t CmdRDSTATA = 0x0010;
+inline constexpr std::uint16_t CmdRDSTATB = 0x0012;
+inline constexpr std::uint16_t CmdWRCOMM  = 0x0721;
+inline constexpr std::uint16_t CmdRDCOMM  = 0x0722;
+inline constexpr std::uint16_t CmdSTCOMM  = 0x0723;
 
 // ADCV / ADAX are not single 11-bit constants -- they're composed of
 // the base plus mode (MD), discharge-permit (DCP), and channel (CH/CHG)
@@ -64,8 +64,8 @@ inline constexpr std::uint16_t kCmdSTCOMM  = 0x0723;
 
 // Mode encoding shared by ADCV and ADAX.
 //   00 = 422 Hz  (very slow, only the most-filtered)
-//   01 =   27 kHz (fast)
-//   10 =    7 kHz (normal -- the bring-up default)
+//   01 =   27 Hz (fast)
+//   10 =    7 Hz (normal -- the bring-up default)
 //   11 =   26 Hz  (filtered, most accurate)
 enum class AdcMode : std::uint8_t { Slow422Hz = 0, Fast27kHz = 1, Norm7kHz = 2, Filt26Hz = 3 };
 
@@ -118,7 +118,7 @@ enum class AuxSel   : std::uint8_t { All = 0, Gpio1 = 1, Gpio2 = 2, Gpio3 = 3,
 
 // For broadcast WRITE commands (WRCFGA, WRCOMM): build a frame of
 //   [cmd(2) | pec(2) | (data(6) | pec(2)) * N]
-// where N is kLtcChainLength. The bottom of the chain is the first
+// where N is LtcChainLength. The bottom of the chain is the first
 // 8-byte group after the command frame (the LTC6811 shifts addresses
 // "backwards" through the chain, so chain order is reversed on the
 // wire relative to logical "module 0..4 / LTC 0..1" ordering -- see

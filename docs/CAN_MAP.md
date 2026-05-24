@@ -162,41 +162,34 @@ silent failure mode.
 
 ---
 
-## TX — AMS to vehicle / charger (FDCAN1)
+## TX — AMS to ECU (FDCAN1) — ECU forwards to real-time telemetry
 
-### `0x12C` — minimum cell voltage telemetry **[RETIRED — fix/48]**
+The ECU's FDCAN2 peripheral is wired to AMS FDCAN1; these frames feed the
+ECU's onboard logic + the real-time telemetry uplink. All standard 11-bit
+IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
+`acu_can_task.cpp`):
 
-Used to TX every 500 ms while in `Run`, suppressed during `Charge`. The only
-reason to send it was the legacy "no balancing during charge" rule; now
-that the charger no longer communicates on CAN, the suppression became
-meaningless. Frame retired entirely; will return as a charge-state-only
-balance TX in a future PR (the firmware comment in `acu_can_task.cpp`
-marks the future re-entry point).
+- 50 ms — `0x135` currents
+- 100 ms — `0x020`, `0x12C`, `0x131..0x134`
+- 250 ms — `0x136..0x137`
 
-### `0x20` — AMS state reply
+`0x130` (SOC) deferred — no SOC estimator in firmware yet.
+
+### `0x020` — ok_precharge
 
 | Field | Value |
 |---|---|
-| Direction | TX (AMS → vehicle) |
+| Direction | TX (AMS → ECU) |
 | Bus | FDCAN1 |
-| ID type | Extended |
+| ID type | Standard |
 | DLC | 1 |
-| Trigger | On RX of `0x100` when `DC_BUS > 280 V` |
+| Period | 100 ms |
 
-Byte 0:
+| Byte | Field | Notes |
+|:---:|---|---|
+| 0 | `ok_precharge` | `1` iff FSM state ∈ {Run, Charge} (AIRs closed and ready). `0` otherwise. |
 
-| Value | State |
-|---|---|
-| 0 | CPU_POWER (running) |
-| 1 | CPU_PRECHARGE |
-| 2 | CPU_DISCONNECTED |
-| 3 | CPU_ERROR |
-| 4 | CPU_CHARGING |
-
-Source: `CPU_MOD::parse()` / `updateState()` in `class_cpu.cpp:71` and
-`module_state_machine.cpp:109–111`.
-
-### `0x450` — current measurement
+### `0x12C` — minimum cell voltage (pack-wide)
 
 | Field | Value |
 |---|---|
@@ -204,19 +197,109 @@ Source: `CPU_MOD::parse()` / `updateState()` in `class_cpu.cpp:71` and
 | Bus | FDCAN1 |
 | ID type | Standard |
 | DLC | 2 |
-| Period | 250 ms (`TIME_LIM_SEND`) |
-
-Payload:
+| Period | 100 ms |
 
 | Byte | Field |
+|:---:|---|
+| 0–1 | `v_cell_min` BE uint16, mV (`BmsState.min_cell_mV`) |
+
+### `0x131` — vmin per module (modules 0..2)
+
+| Field | Value |
 |---|---|
-| 0 | 0x00 |
-| 1 | `Current & 0xFF` (amps, lower byte only — legacy limitation) |
+| Direction | TX |
+| ID type | Standard |
+| DLC | 6 |
+| Period | 100 ms |
 
-Source: `Current_MOD::query()` in `class_curent.cpp:130–136`.
+| Bytes | Field |
+|:---:|---|
+| 0–1 | `vmin_module[0]` BE uint16, mV |
+| 2–3 | `vmin_module[1]` BE uint16, mV |
+| 4–5 | `vmin_module[2]` BE uint16, mV |
 
-**Refactor decision:** widen to a 16-bit signed mA value with a defined
-sign convention (+ discharge / − charge). Coordinate with VCU.
+For an offline module, sentinel `0xFFFF`.
+
+### `0x132` — vmin per module (modules 3..4)
+
+| Field | Value |
+|---|---|
+| DLC | 4 | Period | 100 ms |
+
+| Bytes | Field |
+|:---:|---|
+| 0–1 | `vmin_module[3]` BE uint16, mV |
+| 2–3 | `vmin_module[4]` BE uint16, mV |
+
+### `0x133` — vmax per module (modules 0..2)
+
+Same layout as `0x131` with `vmax_module[0..2]`. Sentinel for offline module: `0x0000`.
+
+### `0x134` — vmax per module (modules 3..4)
+
+Same layout as `0x132` with `vmax_module[3..4]`.
+
+### `0x135` — pack + DCDC current (signed deciamps)
+
+| Field | Value |
+|---|---|
+| Direction | TX |
+| ID type | Standard |
+| DLC | 4 |
+| Period | 50 ms |
+
+| Bytes | Field |
+|:---:|---|
+| 0–1 | `current_accu` BE int16, deciamps (1 LSB = 0.1 A; `+` = discharge) |
+| 2–3 | `current_dcdc` BE int16, deciamps |
+
+Sign convention preserved from `+ = discharge, − = charge`. Pack current
+saturates at int16 extremes (the HW caps at ±82.5 A so saturation is
+unreachable in practice). Supersedes the retired `0x450`.
+
+### `0x136` — temp_max per module (modules 0..2)
+
+| Field | Value |
+|---|---|
+| DLC | 6 | Period | 250 ms |
+
+| Bytes | Field |
+|:---:|---|
+| 0–1 | `temp_max_module[0]` BE int16, °C |
+| 2–3 | `temp_max_module[1]` BE int16, °C |
+| 4–5 | `temp_max_module[2]` BE int16, °C |
+
+Sentinel for offline module: `INT16_MIN` = `0x8000`.
+
+### `0x137` — temp_max per module (modules 3..4) + temp_dcdc
+
+| Field | Value |
+|---|---|
+| DLC | 6 | Period | 250 ms |
+
+| Bytes | Field |
+|:---:|---|
+| 0–1 | `temp_max_module[3]` BE int16, °C |
+| 2–3 | `temp_max_module[4]` BE int16, °C |
+| 4–5 | `temp_dcdc` BE int16, °C **[STUB — `INT16_MIN`]** until the DCDC temp sensor is wired |
+
+### `0x450` — current measurement **[RETIRED — fix/53]**
+
+Legacy 2-byte unsigned current frame. Superseded by `0x135` (signed
+deciamps + DCDC current in the same frame).
+
+### `0x20` — AMS state reply **[LEGACY DOC — superseded by `0x020`]**
+
+The legacy AMS used the extended-ID `0x20` with 5-value state byte. The
+current firmware emits `0x020` (standard) as a simple `ok_precharge`
+boolean (see above). Full state mirror still lives in `0x4A0[0]` for
+diagnostic consumers that want it. Kept as a doc anchor so spelunkers in
+old logs can find the cross-reference.
+
+### `0x450` — current measurement **[RETIRED — fix/53, see above]**
+
+Legacy 2-byte unsigned current frame. Removed; `0x135` is the successor.
+Kept as a doc anchor for log-archaeology.
 
 ### `0x500` — current warning, 80%–100% of `C_MAX`
 
@@ -381,7 +464,7 @@ Source: `Temperatures_MOD::parse()` `class_temperatures.cpp:73–134`.
 The charger no longer communicates over CAN; the only thing on the
 charger-assembly bus is an HMI for displaying cell V/T. Car-vs-charger
 context is now distinguished by VCU `0x100` heartbeat freshness at the
-moment of Start→Precharge transition: heard within `kVcuFreshMs`
+moment of Start→Precharge transition: heard within `VcuFreshMs`
 (1000 ms) → Car (target = Run), silent → Charger (target = Charge).
 The captured mode locks for the rest of the boot cycle and never
 re-evaluates.
@@ -410,7 +493,7 @@ update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-boo
 | Effect | `AcuCanTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting flash commands on FDCAN2. |
 | Failure modes | Wrong bus, wrong ID, wrong DLC, or any byte of the payload differing → frame silently dropped, no reboot. |
 
-Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`kBlBootReqCanId`, `kBlBootReqPayload`, `kBlBootReqDlc`).
+Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`BlBootReqCanId`, `BlBootReqPayload`, `BlBootReqDlc`).
 
 ---
 

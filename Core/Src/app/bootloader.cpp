@@ -27,9 +27,9 @@ void Bootloader::request_reboot(config::JumpReason reason) noexcept {
     // we'd rather end up in app-mode with a stale reason than in
     // BL-mode with no reason at all (post-mortem can still proceed).
     HAL_PWR_EnableBkUpAccess();
-    (&RTC->BKP0R)[config::kBkpJumpReasonReg] =
+    (&RTC->BKP0R)[config::BkpJumpReasonReg] =
         static_cast<std::uint32_t>(reason);
-    (&RTC->BKP0R)[config::kBlBootReqReg]     = config::kBlBootReqMagic;
+    (&RTC->BKP0R)[config::BlBootReqReg]     = config::BlBootReqMagic;
 
     // 4) Trigger HW reset. NVIC_SystemReset issues a DSB + writes
     // AIRCR, then spins; the CPU resets within a few cycles. The

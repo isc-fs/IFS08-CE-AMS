@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
 // Aggregates per-module cell voltages and (in #71) temperatures from
-// the LTC6811-1 daisy-chain (kLtcChainLength = 10 ICs feeding 5 BMS
+// the LTC6811-1 daisy-chain (LtcChainLength = 10 ICs feeding 5 BMS
 // modules at 2 ICs each). Single-writer (BmsPollTask, #72); many
 // readers (MainTask, AcuCanTask, BalanceController).
 //
@@ -20,8 +20,8 @@
 namespace ams {
 
 struct BmsState {
-    std::uint16_t cell_mV     [config::kBmsModuleCount][config::kCellsPerModule];
-    std::int16_t  cell_tempC  [config::kBmsModuleCount][config::kTempsPerModule];
+    std::uint16_t cell_mV     [config::BmsModuleCount][config::CellsPerModule];
+    std::int16_t  cell_tempC  [config::BmsModuleCount][config::TempsPerModule];
 
     // Derived summaries (recomputed on each frame; cheap, < 200 cells).
     std::uint32_t pack_voltage_mV;
@@ -31,13 +31,22 @@ struct BmsState {
     std::int16_t  max_tempC;
     std::int16_t  avg_tempC;
 
+    // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
+    // ECU TX matrix (fix/53). Recomputed in recompute_summaries_()
+    // from cell_mV / cell_tempC; no extra cost beyond a single pass
+    // per cycle. vmin/vmax in mV, tmax in degC (signed int16, clipped
+    // from the per-cell int16 range).
+    std::uint16_t vmin_module[config::BmsModuleCount];
+    std::uint16_t vmax_module[config::BmsModuleCount];
+    std::int16_t  tmax_module[config::BmsModuleCount];
+
     // Per-module freshness for the SafetyTask staleness check. Updated
     // on a successful poll where BOTH LTCs of the module reported
     // PEC-clean.
-    std::uint32_t last_rx_tick[config::kBmsModuleCount];
+    std::uint32_t last_rx_tick[config::BmsModuleCount];
 
     // Bit N set <=> module N has reported PEC-clean at least once.
-    // Compared against config::kAllModulesMask (0x1F) by SafetyTask.
+    // Compared against config::AllModulesMask (0x1F) by SafetyTask.
     // Sticky: dynamic disappearance is detected via the staleness
     // window, not by clearing this mask.
     std::uint8_t  module_online_mask;
@@ -55,14 +64,14 @@ public:
     // ------------------------------------------------------------------
     // Active data path (v1.2.0+): one call per polling cycle of
     // BmsPollTask. Walks 4 register groups (RDCVA + RDCVB + RDCVC +
-    // RDCVD), kLtcChainLength ICs each, 8 bytes per IC (6 data + 2
+    // RDCVD), LtcChainLength ICs each, 8 bytes per IC (6 data + 2
     // PEC). Expected buffer layout, all 4 groups concatenated in
     // RDCV_A,B,C,D order:
     //
     //   [group_A[ic0]..[ic9]] [group_B[ic0]..[ic9]]
     //   [group_C[ic0]..[ic9]] [group_D[ic0]..[ic9]]
     //
-    //   total len = 4 * kLtcChainLength * 8 = 320 bytes
+    //   total len = 4 * LtcChainLength * 8 = 320 bytes
     //
     // Per-IC cell-slot mapping inside the module's 19-cell window:
     //
@@ -96,7 +105,7 @@ public:
     // ------------------------------------------------------------------
     // Temperature path. Called once per mux step in the 20-channel
     // sweep, with the RDAUXA reply for the chain
-    // (kLtcChainLength * 8 bytes; 6 data + 2 PEC per IC). AUX1 of
+    // (LtcChainLength * 8 bytes; 6 data + 2 PEC per IC). AUX1 of
     // each IC carries the buffered ADG731 output for the channel
     // currently selected, so one call writes one column of
     // cell_tempC -- specifically:
@@ -105,7 +114,7 @@ public:
     //   slot 20..39 on cell_tempC[m]  <- LTC_2 of module m (chain_idx 2m+1)
     //
     // channel_idx is the 0..19 temperature-table index (NOT the raw
-    // ADG731 channel; that's hidden behind config::kAdg731ChannelMap
+    // ADG731 channel; that's hidden behind config::Adg731ChannelMap
     // in BmsPollTask). Out-of-range or PEC-failed readings keep the
     // previous value (so unpopulated NTCs don't disturb min/max/avg).
     // Returns true on PEC-clean decode of at least one IC.
@@ -117,7 +126,7 @@ public:
     // mutex is released before this returns.
     [[nodiscard]] BmsState snapshot() const noexcept;
 
-    // True iff all 5 modules have reported within kBmsStaleMs and
+    // True iff all 5 modules have reported within BmsStaleMs and
     // module_online_mask covers them. Used by SafetyTask.
     [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
 
@@ -125,7 +134,7 @@ public:
     // HIL-only: stamp a nominal-healthy snapshot into the state so the
     // safety predicate sees fresh, in-range BMS data without an actual
     // LTC chain on the bench. Refreshes last_rx_tick for every module
-    // to now_tick and forces module_online_mask = kAllModulesMask.
+    // to now_tick and forces module_online_mask = AllModulesMask.
     // Cell V/T arrays are filled with plausible nominal values. Called
     // by BmsPollTask under the same flag on its 250 ms cadence.
     //
@@ -148,7 +157,7 @@ private:
 };
 
 // Per-IC PEC error counter, exported for telemetry diagnostics
-// (#72 / #75). 10 ICs == kLtcChainLength.
-extern "C" volatile std::uint32_t g_ltc_pec_err_count[config::kLtcChainLength];
+// (#72 / #75). 10 ICs == LtcChainLength.
+extern "C" volatile std::uint32_t g_ltc_pec_err_count[config::LtcChainLength];
 
 }  // namespace ams

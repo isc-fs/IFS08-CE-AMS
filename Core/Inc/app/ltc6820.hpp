@@ -4,7 +4,7 @@
 // handles:
 //   * the LTC6811 chain wakeup sequence (CSBM low-pulse train)
 //   * cs-asserted SPI transfers ("transaction" helpers)
-//   * timing budget for chain length (kLtcChainLength from ams_config)
+//   * timing budget for chain length (LtcChainLength from ams_config)
 //
 // The LTC6820 is a transparent SPI <-> isoSPI bridge: from the MCU
 // side it looks like a plain SPI slave, the chip handles isoSPI
@@ -22,7 +22,7 @@
 //   Mode:      CPOL = HIGH, CPHA = 2-edge   (SPI Mode 3)
 //   Format:    MSB first, 8-bit data
 //   Baud:      <= 1 MHz  (LTC6820 datasheet figure 10 caps SCK at 1 MHz
-//              for full daisy-chain operation; we run at ~500 kHz to
+//              for full daisy-chain operation; we run at ~500 Hz to
 //              give headroom for cable runs to the BMS modules).
 //   NSS:       software-managed (we drive PA4 manually so we can hold
 //              CS low across multi-byte chain transactions).
@@ -79,7 +79,7 @@ class Bus {
     // Wake the chain. Per LTC6811 datasheet § "Core LTC6811 State
     // Transitions": each IC needs >=  10 µs of CS-low to leave IDLE,
     // and a fresh pulse for every IC in the chain (the wakeup signal
-    // does not propagate transparently). We send kLtcChainLength
+    // does not propagate transparently). We send LtcChainLength
     // pulses with a generous margin so a freshly-powered chain is
     // ready to talk before the first command goes out.
     void wakeup() noexcept;
@@ -97,7 +97,7 @@ class Bus {
     bool send_command(const std::uint8_t cmd_frame_4[4]) noexcept;
 
     // Convenience: send command frame then clock in
-    //   kLtcChainLength * 8 bytes
+    //   LtcChainLength * 8 bytes
     // of slave reply (cell-voltage groups, AUX groups, status). The
     // caller decodes per IC with ams::ltc6811::decode_*_group.
     bool read_register_group(const std::uint8_t cmd_frame_4[4],
@@ -107,14 +107,14 @@ class Bus {
     // Drive a broadcast WRITE command: cmd frame + per-IC 6-byte
     // payload + per-IC PEC, packed by ams::ltc6811::build_write_frame.
     // Used by WRCOMM (mux address load), WRCFGA (balancing config),
-    // etc. per_ic_data must point to kLtcChainLength rows of 6 bytes.
+    // etc. per_ic_data must point to LtcChainLength rows of 6 bytes.
     bool write_chain_command(std::uint16_t        cmd,
                              const std::uint8_t   per_ic_data[][6]) noexcept;
 
     // STCOMM: shift the COMM register out of every LTC's GPIO SPI
     // port to the attached slave (ADG731 mux). The LTC needs the
     // master to keep clocking SCK for 24 cycles per IC after the
-    // command, which we provide by sending 3 * kLtcChainLength
+    // command, which we provide by sending 3 * LtcChainLength
     // dummy bytes after the 4-byte command frame.
     bool stcomm() noexcept;
 

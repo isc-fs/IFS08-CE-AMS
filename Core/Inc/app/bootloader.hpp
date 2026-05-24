@@ -20,7 +20,7 @@
 // retired BmsRxTask the only listener on FDCAN2 was the bootloader-
 // reboot frame -- moving it to FDCAN1 lets the pit-tool talk to the
 // AMS over the same bus it already uses for VCU telemetry. See
-// docs/CAN_MAP.md and ams_config.hpp::kBlBootReqCanId.
+// docs/CAN_MAP.md and ams_config.hpp::BlBootReqCanId.
 
 #pragma once
 
@@ -40,18 +40,18 @@ public:
     // can be read by the BL (or by the next app boot, if the BL
     // forwards control without clearing it).
     [[noreturn]] static void request_reboot(
-        config::JumpReason reason = config::JumpReason::kManualRequest) noexcept;
+        config::JumpReason reason = config::JumpReason::ManualRequest) noexcept;
 
     // True iff a CanFrame matches the boot-request trigger. Pure
     // logic, inlined in the header so the host unit-test build can
     // exercise it without pulling in HAL / FreeRTOS.
     [[nodiscard]] static bool matches_trigger(const CanFrame& f) noexcept {
         if (f.bus != static_cast<std::uint8_t>(CanBus::Acu)) return false;
-        if (f.id  != config::kBlBootReqCanId)                return false;
-        if (f.dlc != config::kBlBootReqDlc)                  return false;
+        if (f.id  != config::BlBootReqCanId)                return false;
+        if (f.dlc != config::BlBootReqDlc)                  return false;
         return std::memcmp(f.data,
-                           config::kBlBootReqPayload,
-                           config::kBlBootReqDlc) == 0;
+                           config::BlBootReqPayload,
+                           config::BlBootReqDlc) == 0;
     }
 };
 

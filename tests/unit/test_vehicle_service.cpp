@@ -38,7 +38,7 @@ extern "C" void test_decode_dc_bus_little_endian(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_update_dc_bus_frame(void) {
     const std::uint8_t data[8] = { 0xF4, 0x01, 0, 0, 0, 0, 0, 0 };  // 0x01F4 = 500 V
-    auto f = make_acu_frame(ams::config::kAcuRxDcBusId, 8, data);
+    auto f = make_acu_frame(ams::config::AcuRxDcBusId, 8, data);
     f.timestamp_ms = 1234;
 
     TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
@@ -53,7 +53,7 @@ extern "C" void test_update_dc_bus_frame(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_acu_frame_on_wrong_bus_rejected(void) {
     const std::uint8_t data[8] = { 0x2C, 0x01, 0, 0, 0, 0, 0, 0 };
-    auto f = make_acu_frame(ams::config::kAcuRxDcBusId, 8, data);
+    auto f = make_acu_frame(ams::config::AcuRxDcBusId, 8, data);
     f.bus = static_cast<std::uint8_t>(ams::CanBus::Bms);  // wrong bus
 
     TEST_ASSERT_FALSE(ams::VehicleService::instance().update_from_frame(f));

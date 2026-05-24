@@ -34,7 +34,7 @@ enum class State : std::uint8_t {
 // here only as an FSM input.
 enum class Mode : std::uint8_t {
     Undecided = 0,    // before Start->Precharge has fired
-    Car       = 1,    // VCU 0x100 heard within kVcuFreshMs at the trigger
+    Car       = 1,    // VCU 0x100 heard within VcuFreshMs at the trigger
     Charger   = 2,    // VCU 0x100 silent at the trigger
 };
 
@@ -72,7 +72,7 @@ struct Output {
     // task writes the backup-register magic; App_InitTask reads it
     // and seeds State::Error at boot).
     if (in.current == State::Error) {
-        return { State::Error, events::safety::kForceError };
+        return { State::Error, events::safety::ForceError };
     }
 
     // Any fault from the predicate set forces ERROR + opens AIRs.
@@ -82,9 +82,9 @@ struct Output {
     };
     if (safety::evaluate_fault(pred)) {
         return { State::Error,
-                 events::safety::kForceError |
-                 events::safety::kOpenAirN | events::safety::kOpenAirP |
-                 events::safety::kOpenPrecharge };
+                 events::safety::ForceError |
+                 events::safety::OpenAirN | events::safety::OpenAirP |
+                 events::safety::OpenPrecharge };
     }
 
     switch (in.current) {
@@ -98,41 +98,41 @@ struct Output {
         // on the way out of Transition.
         if (in.tsms && in.dash_chg) {
             return { State::Precharge,
-                     events::safety::kCloseAirN |
-                     events::safety::kClosePrecharge };
+                     events::safety::CloseAirN |
+                     events::safety::ClosePrecharge };
         }
         return { State::Start, 0u };
     }
 
     case State::Precharge: {
         // Hard deadline: if we don't hit precharge target within
-        // kPrechargeMaxMs, something is wrong (stuck contactor, low
+        // PrechargeMaxMs, something is wrong (stuck contactor, low
         // pack V, mismeasured DC bus). Force ERROR.
-        if (in.now_tick - in.state_entry_tick > config::kPrechargeMaxMs) {
+        if (in.now_tick - in.state_entry_tick > config::PrechargeMaxMs) {
             return { State::Error,
-                     events::safety::kForceError |
-                     events::safety::kOpenAirN | events::safety::kOpenAirP |
-                     events::safety::kOpenPrecharge };
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
         }
         if (precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Transition,
-                     events::safety::kCloseAirP |
-                     events::safety::kOpenPrecharge };
+                     events::safety::CloseAirP |
+                     events::safety::OpenPrecharge };
         }
         return { State::Precharge, 0u };
     }
 
     case State::Transition: {
-        // Hold for kTransitionHoldMs and require that the DC bus
+        // Hold for TransitionHoldMs and require that the DC bus
         // STAYS at or above the precharge target the entire time --
         // if it slumps (a contactor opens, cap leaks) we go to ERROR.
         if (!precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Error,
-                     events::safety::kForceError |
-                     events::safety::kOpenAirN | events::safety::kOpenAirP |
-                     events::safety::kOpenPrecharge };
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
         }
-        if (in.now_tick - in.state_entry_tick >= config::kTransitionHoldMs) {
+        if (in.now_tick - in.state_entry_tick >= config::TransitionHoldMs) {
             // Branch on the mode SafetyTask captured at Start->Precharge.
             // Mode::Undecided here would be a programming error
             // (Transition reached without going through Start); treat
@@ -144,9 +144,9 @@ struct Output {
                 return { State::Charge, 0u };
             }
             return { State::Error,
-                     events::safety::kForceError |
-                     events::safety::kOpenAirN | events::safety::kOpenAirP |
-                     events::safety::kOpenPrecharge };
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
         }
         return { State::Transition, 0u };
     }
@@ -159,9 +159,9 @@ struct Output {
         // see error_latch.cpp).
         if (!in.tsms || !in.dash_chg) {
             return { State::Error,
-                     events::safety::kForceError |
-                     events::safety::kOpenAirN | events::safety::kOpenAirP |
-                     events::safety::kOpenPrecharge };
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
         }
         return { State::Run, 0u };
     }
@@ -170,9 +170,9 @@ struct Output {
         // Same exit semantics as Run -- TSMS/RST drop latches Error.
         if (!in.tsms || !in.dash_chg) {
             return { State::Error,
-                     events::safety::kForceError |
-                     events::safety::kOpenAirN | events::safety::kOpenAirP |
-                     events::safety::kOpenPrecharge };
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
         }
         return { State::Charge, 0u };
     }
@@ -180,7 +180,7 @@ struct Output {
     case State::Error:
     default:
         // Already handled at function entry; defensive default.
-        return { State::Error, events::safety::kForceError };
+        return { State::Error, events::safety::ForceError };
     }
 }
 

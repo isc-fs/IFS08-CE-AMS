@@ -9,7 +9,7 @@
 //                       it. The bit definitions below survive because
 //                       fsm::Output::safety_flags reuses the same bit
 //                       layout, but the osEventFlags handle is unused.
-//   bms_events      <- osTimer callbacks set kPollVDue / kPollTDue;
+//   bms_events      <- osTimer callbacks set PollVDue / PollTDue;
 //                       BmsPollTask consumes.
 //
 // CMSIS-RTOS v2 represents event groups as 24-bit values (bits 24..31
@@ -22,34 +22,34 @@
 namespace ams::events::safety {
 
 // FSM-driven force-error (precharge-timeout / transition drop / etc.).
-inline constexpr std::uint32_t kForceError     = 1u << 0;
+inline constexpr std::uint32_t ForceError     = 1u << 0;
 
 // Relay-action bits set by fsm::step's Output::safety_flags. MainTask
 // applies them inline on the clean (no-fault) path. If a fault is also
 // active in the same tick the relay-action bits are ignored -- safety
 // wins (relays already opened by latch_error_).
-inline constexpr std::uint32_t kCloseAirN      = 1u << 1;
-inline constexpr std::uint32_t kCloseAirP      = 1u << 2;
-inline constexpr std::uint32_t kClosePrecharge = 1u << 3;
-inline constexpr std::uint32_t kOpenAirN       = 1u << 4;
-inline constexpr std::uint32_t kOpenAirP       = 1u << 5;
-inline constexpr std::uint32_t kOpenPrecharge  = 1u << 6;
+inline constexpr std::uint32_t CloseAirN      = 1u << 1;
+inline constexpr std::uint32_t CloseAirP      = 1u << 2;
+inline constexpr std::uint32_t ClosePrecharge = 1u << 3;
+inline constexpr std::uint32_t OpenAirN       = 1u << 4;
+inline constexpr std::uint32_t OpenAirP       = 1u << 5;
+inline constexpr std::uint32_t OpenPrecharge  = 1u << 6;
 
-inline constexpr std::uint32_t kAllRequest =
-    kForceError    | kCloseAirN | kCloseAirP | kClosePrecharge |
-    kOpenAirN      | kOpenAirP  | kOpenPrecharge;
+inline constexpr std::uint32_t AllRequest =
+    ForceError    | CloseAirN | CloseAirP | ClosePrecharge |
+    OpenAirN      | OpenAirP  | OpenPrecharge;
 
-inline constexpr std::uint32_t kAllRelayActions =
-    kCloseAirN | kCloseAirP | kClosePrecharge |
-    kOpenAirN  | kOpenAirP  | kOpenPrecharge;
+inline constexpr std::uint32_t AllRelayActions =
+    CloseAirN | CloseAirP | ClosePrecharge |
+    OpenAirN  | OpenAirP  | OpenPrecharge;
 
 }  // namespace ams::events::safety
 
 namespace ams::events::bms {
 
-inline constexpr std::uint32_t kPollVDue = 1u << 0;
-inline constexpr std::uint32_t kPollTDue = 1u << 1;
+inline constexpr std::uint32_t PollVDue = 1u << 0;
+inline constexpr std::uint32_t PollTDue = 1u << 1;
 
-inline constexpr std::uint32_t kAll = kPollVDue | kPollTDue;
+inline constexpr std::uint32_t All = PollVDue | PollTDue;
 
 }  // namespace ams::events::bms
