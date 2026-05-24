@@ -22,12 +22,25 @@ inline bool read_pin(GPIO_TypeDef *port, uint16_t pin) noexcept {
 void Relays::open_all() noexcept {
     // Single-write atomic open of all three contactors. Uses BSRR
     // semantics (HAL_GPIO_WritePin -> BSRR) so this is interrupt-safe
-    // without disabling IRQs. Port is GPIOB on the v1.2 daughterboard
-    // (PB5 / PB6 / PB7); was GPIOD pre-#117 -- the port literal here
-    // wasn't updated in that PR, so on the post-#117 firmware this
-    // call wrote to unconfigured PD5/6/7 instead of opening the real
-    // relays. Caught in #128.
-    HAL_GPIO_WritePin(GPIOB,
+    // without disabling IRQs.
+    //
+    // INVARIANT: all three relay outputs MUST share the same GPIO
+    // port for the atomic mask-write to be valid. main.h defines them
+    // as PB5/PB6/PB7 per AMS.ioc; using RELAY_AIR_N_GPIO_Port as the
+    // canonical port reference means a future .ioc port relocation
+    // updates this call transparently. Pre-#117 / #128 history: this
+    // function previously hardcoded GPIOB (and before that, GPIOD on
+    // the legacy daughterboard) -- when PR #117 moved the relays
+    // GPIOD->GPIOB the literal here wasn't updated, leaving the
+    // fault-path silently writing to unconfigured PD pins. Caught
+    // in #128. The macro reference below makes that class of
+    // regression impossible.
+    //
+    // If a future board variant splits the relays across ports, this
+    // function (and the entire BSRR-atomic semantic of "open all in
+    // one cycle") must be revisited. Per-pin open via the individual
+    // open_air_*/open_precharge() helpers is the safe fallback.
+    HAL_GPIO_WritePin(RELAY_AIR_N_GPIO_Port,
                       RELAY_AIR_N_Pin | RELAY_AIR_P_Pin | RELAY_PRECHARGE_Pin,
                       GPIO_PIN_RESET);
 }

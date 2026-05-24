@@ -4,8 +4,6 @@
 
 
 
-#include <cstdlib>
-
 
 namespace ams {
 
@@ -83,14 +81,6 @@ void CurrentService::update_dcdc_from_adc(std::uint16_t raw,
 
 CurrentState CurrentService::snapshot() const noexcept {
     return state_;
-}
-
-bool CurrentService::is_healthy(std::uint32_t now_tick) const noexcept {
-    if (state_.sensor_fault)                                            return false;
-    if (state_.last_update_tick == 0)                                   return false;
-    if (now_tick - state_.last_update_tick > config::IStaleMs)         return false;
-    if (std::abs(state_.filtered_mA) > config::CurrentMaxMa)                 return false;
-    return true;
 }
 
 }  // namespace ams
