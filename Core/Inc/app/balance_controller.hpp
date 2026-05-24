@@ -37,6 +37,13 @@ struct Mask {
     Mask out = {};
 
     if (fsm_state != fsm::State::Charge)       return out;
+    // Bang-bang thermal lockout: no hysteresis because compute_mask
+    // is stateless by design (pure function, unit-testable in
+    // isolation). At the 1 Hz balance-update cadence and the slow
+    // thermal time-constants of the pack, oscillation across the
+    // threshold isn't a realistic failure mode. If a future
+    // hysteresis becomes warranted, move the state into a small
+    // BalanceController class that owns the latched lockout flag.
     if (s.max_tempC > config::BalanceTempMax) return out;
 
     // Bottom of the pack we're trying to match. Use the snapshot's
