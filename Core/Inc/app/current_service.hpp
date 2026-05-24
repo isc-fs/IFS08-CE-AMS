@@ -46,7 +46,7 @@ public:
     // Atomic read of the full state.
     [[nodiscard]] CurrentState snapshot() const noexcept;
 
-    // True iff the last update was within kIStaleMs and no sensor
+    // True iff the last update was within IStaleMs and no sensor
     // fault is latched. Consumed by SafetyTask.
     [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
 

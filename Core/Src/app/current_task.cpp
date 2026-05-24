@@ -11,7 +11,7 @@
 //   4. Feed into CurrentService::update_dcdc_from_adc
 //   5. On HAL error at any step: skip that channel's update so the
 //      corresponding last_*_update_tick does not advance -> SafetyTask
-//      trips on staleness for the pack channel (kIStaleMs = 200 ms) and
+//      trips on staleness for the pack channel (IStaleMs = 200 ms) and
 //      forces ERROR. DCDC staleness is informational only (no FSM impact).
 //
 // The channel-swap costs ~10 us of HAL overhead per swap; total cycle
@@ -81,7 +81,7 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
     std::uint32_t last_wake = osKernelGetTickCount();
 
     for (;;) {
-        last_wake += ams::config::kCurrentPeriodMs;
+        last_wake += ams::config::CurrentPeriodMs;
         osDelayUntil(last_wake);
 
         // --- Pack current (PF7 / ADC3_INP3) ---

@@ -23,11 +23,11 @@ using namespace ams;
 // (min_cell_mV, max_tempC) we rely on inside compute_mask.
 BmsState make_uniform_state(std::uint16_t base_mV, std::int16_t base_C) {
     BmsState s{};
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
-        for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
             s.cell_mV[m][c] = base_mV;
         }
-        for (std::uint8_t t = 0; t < config::kTempsPerModule; ++t) {
+        for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
             s.cell_tempC[m][t] = base_C;
         }
     }
@@ -39,8 +39,8 @@ BmsState make_uniform_state(std::uint16_t base_mV, std::int16_t base_C) {
 }
 
 bool any_set(const balance::Mask& m) {
-    for (std::uint8_t mm = 0; mm < config::kBmsModuleCount; ++mm) {
-        for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
+    for (std::uint8_t mm = 0; mm < config::BmsModuleCount; ++mm) {
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
             if (m.cell[mm][c]) return true;
         }
     }
@@ -49,7 +49,7 @@ bool any_set(const balance::Mask& m) {
 
 std::uint8_t count_set_in_module(const balance::Mask& m, std::uint8_t module) {
     std::uint8_t n = 0;
-    for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
+    for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
         if (m.cell[module][c]) ++n;
     }
     return n;
@@ -68,7 +68,7 @@ extern "C" void test_balance_uniform_pack_no_discharge(void) {
 
 // ---------------------------------------------------------------------------
 // 2. One cell 80 mV above min in Charge -> that cell discharges.
-//    Other cells stay quiet (delta below kBalanceDeltaMv = 50 mV).
+//    Other cells stay quiet (delta below BalanceDeltaMv = 50 mV).
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_single_hot_cell_in_charge(void) {
     auto state = make_uniform_state(4100, 25);
@@ -80,7 +80,7 @@ extern "C" void test_balance_single_hot_cell_in_charge(void) {
     // Only that one cell -- floor + 50 is the threshold, others sit
     // exactly at the floor so none should be selected.
     TEST_ASSERT_EQUAL_UINT8(1u, count_set_in_module(mask, 2));
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         if (m == 2) continue;
         TEST_ASSERT_EQUAL_UINT8(0u, count_set_in_module(mask, m));
     }
@@ -88,7 +88,7 @@ extern "C" void test_balance_single_hot_cell_in_charge(void) {
 
 // ---------------------------------------------------------------------------
 // 3. Six cells in one module above the threshold -- the controller
-//    must cap to kBalanceMaxActive (4) and pick the ones with the
+//    must cap to BalanceMaxActive (4) and pick the ones with the
 //    largest excess.
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_caps_at_max_active_per_module(void) {
@@ -101,7 +101,7 @@ extern "C" void test_balance_caps_at_max_active_per_module(void) {
     state.max_cell_mV = state.cell_mV[1][5];
 
     const auto mask = balance::compute_mask(state, fsm::State::Charge);
-    TEST_ASSERT_EQUAL_UINT8(config::kBalanceMaxActive,
+    TEST_ASSERT_EQUAL_UINT8(config::BalanceMaxActive,
                             count_set_in_module(mask, 1));
     TEST_ASSERT_TRUE(mask.cell[1][5]);
     TEST_ASSERT_TRUE(mask.cell[1][4]);
@@ -130,14 +130,14 @@ extern "C" void test_balance_disabled_outside_charge(void) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Thermal lockout: max_tempC > kBalanceTempMax forces all-zero
+// 5. Thermal lockout: max_tempC > BalanceTempMax forces all-zero
 //    even if cells are imbalanced and FSM is in Charge.
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_thermal_lockout(void) {
     auto state = make_uniform_state(4100, 25);
     state.cell_mV[3][9] = 4200;
     state.max_cell_mV   = 4200;
-    state.max_tempC     = static_cast<std::int16_t>(config::kBalanceTempMax + 1);
+    state.max_tempC     = static_cast<std::int16_t>(config::BalanceTempMax + 1);
 
     const auto mask = balance::compute_mask(state, fsm::State::Charge);
     TEST_ASSERT_FALSE(any_set(mask));
@@ -149,7 +149,7 @@ extern "C" void test_balance_thermal_lockout(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_threshold_strict_inequality(void) {
     auto state = make_uniform_state(4100, 25);
-    state.cell_mV[4][18] = static_cast<std::uint16_t>(4100 + config::kBalanceDeltaMv);
+    state.cell_mV[4][18] = static_cast<std::uint16_t>(4100 + config::BalanceDeltaMv);
     state.max_cell_mV    = state.cell_mV[4][18];
 
     const auto mask = balance::compute_mask(state, fsm::State::Charge);

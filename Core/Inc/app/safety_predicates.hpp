@@ -23,7 +23,7 @@ struct Inputs {
     const BmsState&     bms;
     const CurrentState& current;
     const VehicleState& vehicle;
-    bool                force_error_set; // safety_events kForceError pending
+    bool                force_error_set; // safety_events ForceError pending
     std::uint32_t       now_tick;
 };
 
@@ -49,23 +49,23 @@ struct Inputs {
     // needed: unsigned subtraction `now_tick - 0 = now_tick` will
     // naturally exceed the staleness window for any service that
     // hasn't yet reported -- equivalent fault, fewer special cases.
-    if (in.now_tick < config::kSafetyBootGraceMs) return false;
+    if (in.now_tick < config::SafetyBootGraceMs) return false;
 
     // BMS module-online mask + freshness. Under -DAMS_BMS_HIL_STUB the
     // BmsPollTask seeds these fields with nominal-healthy values every
     // 250 ms (see bms_service.hpp::seed_for_hil_stub), so this block
     // is HIL-agnostic -- the predicate doesn't know or care whether
     // the data came from a real LTC chain or from the stub seeder.
-    if (in.bms.module_online_mask != config::kAllModulesMask) return true;
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
-        if (in.now_tick - in.bms.last_rx_tick[m] > config::kBmsStaleMs) return true;
+    if (in.bms.module_online_mask != config::AllModulesMask) return true;
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        if (in.now_tick - in.bms.last_rx_tick[m] > config::BmsStaleMs) return true;
     }
 
     // Cell V / T ranges.
-    if (in.bms.min_cell_mV < config::kCellUnderVoltageMv)      return true;
-    if (in.bms.max_cell_mV > config::kCellOverVoltageMv)      return true;
-    if (in.bms.min_tempC   < config::kCellUnderTempC)       return true;
-    if (in.bms.max_tempC   > config::kCellOverTempC)       return true;
+    if (in.bms.min_cell_mV < config::CellUnderVoltageMv)      return true;
+    if (in.bms.max_cell_mV > config::CellOverVoltageMv)      return true;
+    if (in.bms.min_tempC   < config::CellUnderTempC)       return true;
+    if (in.bms.max_tempC   > config::CellOverTempC)       return true;
 
     // Current sensor: not faulted, fresh, within absolute limit.
     if (in.current.sensor_fault)                                       return true;
@@ -76,12 +76,12 @@ struct Inputs {
     // stub build -- sensor_fault + Imax still apply, so a fixture
     // that DOES inject current frames will still see meaningful
     // safety behaviour.
-    if (in.now_tick - in.current.last_update_tick > config::kIStaleMs) return true;
+    if (in.now_tick - in.current.last_update_tick > config::IStaleMs) return true;
 #endif
-    if (std::abs(in.current.filtered_mA) > config::kCurrentMaxMa)            return true;
+    if (std::abs(in.current.filtered_mA) > config::CurrentMaxMa)            return true;
 
     // VCU DC bus heartbeat.
-    if (in.now_tick - in.vehicle.last_dc_bus_tick > config::kVcuStaleMs) return true;
+    if (in.now_tick - in.vehicle.last_dc_bus_tick > config::VcuStaleMs) return true;
 
     return false;
 }

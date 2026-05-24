@@ -89,32 +89,32 @@ inline void send_or_fail(std::uint32_t id,
 }
 
 void tx_ok_precharge() noexcept {
-    send_or_fail(ams::config::kAcuTxOkPrechargeId,
+    send_or_fail(ams::config::AcuTxOkPrechargeId,
                  ams::acu_tx::encode_ok_precharge(g_state_telemetry));
 }
 void tx_min_voltage(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxMinVoltId,        ams::acu_tx::encode_min_voltage(b));
+    send_or_fail(ams::config::AcuTxMinVoltId,        ams::acu_tx::encode_min_voltage(b));
 }
 void tx_vmin_module_a(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxVminModuleAId,    ams::acu_tx::encode_vmin_module_a(b));
+    send_or_fail(ams::config::AcuTxVminModuleAId,    ams::acu_tx::encode_vmin_module_a(b));
 }
 void tx_vmin_module_b(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxVminModuleBId,    ams::acu_tx::encode_vmin_module_b(b));
+    send_or_fail(ams::config::AcuTxVminModuleBId,    ams::acu_tx::encode_vmin_module_b(b));
 }
 void tx_vmax_module_a(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxVmaxModuleAId,    ams::acu_tx::encode_vmax_module_a(b));
+    send_or_fail(ams::config::AcuTxVmaxModuleAId,    ams::acu_tx::encode_vmax_module_a(b));
 }
 void tx_vmax_module_b(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxVmaxModuleBId,    ams::acu_tx::encode_vmax_module_b(b));
+    send_or_fail(ams::config::AcuTxVmaxModuleBId,    ams::acu_tx::encode_vmax_module_b(b));
 }
 void tx_currents(const ams::CurrentState& c) noexcept {
-    send_or_fail(ams::config::kAcuTxCurrentsId,       ams::acu_tx::encode_currents(c));
+    send_or_fail(ams::config::AcuTxCurrentsId,       ams::acu_tx::encode_currents(c));
 }
 void tx_temp_module_a(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxTempMaxModuleAId, ams::acu_tx::encode_tmax_module_a(b));
+    send_or_fail(ams::config::AcuTxTempMaxModuleAId, ams::acu_tx::encode_tmax_module_a(b));
 }
 void tx_temp_module_b(const ams::BmsState& b) noexcept {
-    send_or_fail(ams::config::kAcuTxTempMaxModuleBId, ams::acu_tx::encode_tmax_module_b(b));
+    send_or_fail(ams::config::AcuTxTempMaxModuleBId, ams::acu_tx::encode_tmax_module_b(b));
 }
 
 }  // namespace
@@ -130,9 +130,9 @@ extern "C" void ams_acu_can_task_run(void *argument) {
 
     for (;;) {
         const auto now           = osKernelGetTickCount();
-        const auto next_fast     = last_fast_tx + ams::config::kEcuFastTxMs;
-        const auto next_mid      = last_mid_tx  + ams::config::kEcuMidTxMs;
-        const auto next_slow     = last_slow_tx + ams::config::kEcuSlowTxMs;
+        const auto next_fast     = last_fast_tx + ams::config::EcuFastTxMs;
+        const auto next_mid      = last_mid_tx  + ams::config::EcuMidTxMs;
+        const auto next_slow     = last_slow_tx + ams::config::EcuSlowTxMs;
         const auto deadline      = std::min({ next_fast, next_mid, next_slow });
         const auto timeout       = (deadline > now) ? deadline - now : 0u;
 
@@ -145,7 +145,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             // BL_BOOT_REQ_MAGIC into BKP0R, and resets.
             if (ams::Bootloader::matches_trigger(frame)) {
                 ams::Bootloader::request_reboot(
-                    ams::config::JumpReason::kCanTrigger);
+                    ams::config::JumpReason::CanTrigger);
             }
             if (!ams::VehicleService::instance().update_from_frame(frame)) {
                 ++g_acu_rx_dropped_unknown;
@@ -158,11 +158,11 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         const auto now2 = osKernelGetTickCount();
 
         // ---- TX scheduler ----
-        if (now2 - last_fast_tx >= ams::config::kEcuFastTxMs) {
+        if (now2 - last_fast_tx >= ams::config::EcuFastTxMs) {
             tx_currents(cur);
             last_fast_tx = now2;
         }
-        if (now2 - last_mid_tx >= ams::config::kEcuMidTxMs) {
+        if (now2 - last_mid_tx >= ams::config::EcuMidTxMs) {
             tx_ok_precharge();
             tx_min_voltage(bms);
             tx_vmin_module_a(bms);
@@ -171,7 +171,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             tx_vmax_module_b(bms);
             last_mid_tx = now2;
         }
-        if (now2 - last_slow_tx >= ams::config::kEcuSlowTxMs) {
+        if (now2 - last_slow_tx >= ams::config::EcuSlowTxMs) {
             tx_temp_module_a(bms);
             tx_temp_module_b(bms);
             last_slow_tx = now2;

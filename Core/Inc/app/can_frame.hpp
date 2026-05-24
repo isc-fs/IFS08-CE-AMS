@@ -27,7 +27,7 @@ enum class CanBus : std::uint8_t {
     Bms = 1,  // FDCAN2 -- BMS slave modules
 };
 
-inline constexpr std::uint8_t kCanFrameMaxData = AMS_CAN_FRAME_MAX_DATA;
+inline constexpr std::uint8_t CanFrameMaxData = AMS_CAN_FRAME_MAX_DATA;
 
 // Same memory layout as the C struct -- this is just a namespaced alias.
 using CanFrame = ::CanFrame;

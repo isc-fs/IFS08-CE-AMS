@@ -24,7 +24,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
     std::memset(&bms, 0, sizeof(bms));
     std::memset(&cur, 0, sizeof(cur));
     std::memset(&veh, 0, sizeof(veh));
-    bms.module_online_mask = ams::config::kAllModulesMask;
+    bms.module_online_mask = ams::config::AllModulesMask;
     for (auto& t : bms.last_rx_tick) t = 9900;
     bms.min_cell_mV     = 3700;
     bms.max_cell_mV     = 3800;
@@ -75,8 +75,8 @@ extern "C" void test_fsm_start_to_precharge_on_both_inputs(void) {
     in.dash_chg = true;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kCloseAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kClosePrecharge);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 }
 
 // ---------------------------------------------------------------------------
@@ -89,8 +89,8 @@ extern "C" void test_fsm_precharge_reaches_target(void) {
     veh.dc_bus_V = 340;  // > 0.95 * 356
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kCloseAirP);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenPrecharge);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
 }
 
 extern "C" void test_fsm_precharge_stays_below_target(void) {
@@ -106,10 +106,10 @@ extern "C" void test_fsm_precharge_timeout_forces_error(void) {
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
     veh.dc_bus_V = 50;  // never reaches target
-    in.state_entry_tick = in.now_tick - (ams::config::kPrechargeMaxMs + 1);
+    in.state_entry_tick = in.now_tick - (ams::config::PrechargeMaxMs + 1);
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +148,7 @@ extern "C" void test_fsm_transition_undecided_mode_forces_error(void) {
     in.state_entry_tick = 9800;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
 }
 
 extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
@@ -158,8 +158,8 @@ extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
     veh.dc_bus_V = 100;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
 }
 
 // ---------------------------------------------------------------------------
@@ -180,9 +180,9 @@ extern "C" void test_fsm_run_to_error_on_tsms_drop(void) {
     in.mode_locked = ams::fsm::Mode::Car;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
 }
 
 extern "C" void test_fsm_run_to_error_on_dash_chg_drop(void) {
@@ -213,9 +213,9 @@ extern "C" void test_fsm_any_state_to_error_on_fault(void) {
     in.force_error_set = true;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
 }
 
 extern "C" void test_fsm_error_is_sticky(void) {

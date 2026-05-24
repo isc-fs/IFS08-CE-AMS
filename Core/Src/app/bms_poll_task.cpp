@@ -6,8 +6,8 @@
 // layer lives in ltc6811.hpp / ltc6820.hpp.
 //
 // Cadence (unchanged from the legacy task):
-//   * kPollVDue every kBmsPollVoltMs (250 ms) -> ADCV + RDCVA/B/C/D
-//   * kPollTDue every kBmsPollTempMs (500 ms) -> 20-channel mux sweep
+//   * PollVDue every BmsPollVoltMs (250 ms) -> ADCV + RDCVA/B/C/D
+//   * PollTDue every BmsPollTempMs (500 ms) -> 20-channel mux sweep
 //                                                (stub here, lands in #71)
 //
 // Mechanism: two osTimers raise event-flag bits, this task wakes on
@@ -63,11 +63,11 @@ volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
 
 void volt_timer_cb(void * /*arg*/) {
-    osEventFlagsSet(bms_eventsHandle, ams::events::bms::kPollVDue);
+    osEventFlagsSet(bms_eventsHandle, ams::events::bms::PollVDue);
 }
 
 void temp_timer_cb(void * /*arg*/) {
-    osEventFlagsSet(bms_eventsHandle, ams::events::bms::kPollTDue);
+    osEventFlagsSet(bms_eventsHandle, ams::events::bms::PollTDue);
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ void run_voltage_poll() {
     //    acquisition (#74 will flip it for balancing windows). All
     //    cells channel-select = CellSel::All.
     const auto adcv = ltc6811::pack_command(
-        ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::kAdcMode),
+        ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                           /*discharge_permit=*/false,
                           ltc6811::CellSel::All));
     if (!bus.send_command(adcv.data())) {
@@ -94,28 +94,28 @@ void run_voltage_poll() {
     }
 
     // 2. ADC settling. Norm-7kHz mode converts all 12 channels in
-    //    ~2.3 ms; we round to 3 ms (config::kAdcvSettleMs). osDelay
-    //    rounds up to the next FreeRTOS tick (1 kHz) so worst-case
+    //    ~2.3 ms; we round to 3 ms (config::AdcvSettleMs). osDelay
+    //    rounds up to the next FreeRTOS tick (1 Hz) so worst-case
     //    wait is 3-4 ms -- well below the 50 ms budget.
-    osDelay(config::kAdcvSettleMs);
+    osDelay(config::AdcvSettleMs);
 
     // 3. Read the four cell-voltage register groups into one
     //    contiguous buffer that BmsService::update_from_ltc_response
     //    can walk. Group layout:
     //      [A: 10 segments][B: 10 segments][C: 10 segments][D: 10 segments]
-    constexpr std::size_t kSegBytes   = 8;
-    constexpr std::size_t kGroupBytes = config::kLtcChainLength * kSegBytes;
-    std::uint8_t          reply[4 * kGroupBytes] = {};
+    constexpr std::size_t SegBytes   = 8;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * SegBytes;
+    std::uint8_t          reply[4 * GroupBytes] = {};
 
-    static constexpr std::uint16_t kRdcvCmds[4] = {
-        ltc6811::kCmdRDCVA, ltc6811::kCmdRDCVB,
-        ltc6811::kCmdRDCVC, ltc6811::kCmdRDCVD,
+    static constexpr std::uint16_t RdcvCmds[4] = {
+        ltc6811::CmdRDCVA, ltc6811::CmdRDCVB,
+        ltc6811::CmdRDCVC, ltc6811::CmdRDCVD,
     };
     for (std::uint8_t g = 0; g < 4; ++g) {
-        const auto cmd = ltc6811::pack_command(kRdcvCmds[g]);
+        const auto cmd = ltc6811::pack_command(RdcvCmds[g]);
         if (!bus.read_register_group(cmd.data(),
-                                     reply + g * kGroupBytes,
-                                     kGroupBytes)) {
+                                     reply + g * GroupBytes,
+                                     GroupBytes)) {
             ++g_ltc_spi_err_count;
             return;  // partial reply -> don't poison BmsService state
         }
@@ -129,7 +129,7 @@ void run_voltage_poll() {
 }
 
 // ---------------------------------------------------------------------------
-// Cell balancing (#74). Once every kBalanceUpdatePolls voltage cycles
+// Cell balancing (#74). Once every BalanceUpdatePolls voltage cycles
 // we snapshot BmsState, ask BalanceController what to discharge, pack
 // DCC bits into 10 WRCFGA payloads, and broadcast them. Outside of
 // fsm::State::Charge the controller returns an all-zero mask so the
@@ -138,7 +138,7 @@ void run_voltage_poll() {
 void maybe_run_balance_update() {
     using namespace ams;
 
-    if (++s_volt_poll_count < config::kBalanceUpdatePolls) return;
+    if (++s_volt_poll_count < config::BalanceUpdatePolls) return;
     s_volt_poll_count = 0;
 
     const auto       state    = BmsService::instance().snapshot();
@@ -146,21 +146,21 @@ void maybe_run_balance_update() {
         static_cast<fsm::State>(g_state_telemetry);
     const auto       mask     = balance::compute_mask(state, fsm_curr);
 
-    std::uint8_t per_ic[config::kLtcChainLength][6];
+    std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
 
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         // LTC_1 (upper, chain index 2m) owns module cells 0..9.
         std::uint16_t dcc_upper = 0;
-        for (std::uint8_t c = 0; c < config::kCellsPerLtcUpper; ++c) {
+        for (std::uint8_t c = 0; c < config::CellsPerLtcUpper; ++c) {
             if (mask.cell[m][c]) {
                 dcc_upper = static_cast<std::uint16_t>(dcc_upper | (1u << c));
             }
         }
         // LTC_2 (lower, chain index 2m+1) owns module cells 10..18.
         std::uint16_t dcc_lower = 0;
-        for (std::uint8_t c = 0; c < config::kCellsPerLtcLower; ++c) {
-            if (mask.cell[m][config::kCellsPerLtcUpper + c]) {
+        for (std::uint8_t c = 0; c < config::CellsPerLtcLower; ++c) {
+            if (mask.cell[m][config::CellsPerLtcUpper + c]) {
                 dcc_lower = static_cast<std::uint16_t>(dcc_lower | (1u << c));
             }
         }
@@ -176,7 +176,7 @@ void maybe_run_balance_update() {
     }
 
     if (!ltc6820::Bus::default_instance().write_chain_command(
-            ltc6811::kCmdWRCFGA, per_ic)) {
+            ltc6811::CmdWRCFGA, per_ic)) {
         ++g_ltc_spi_err_count;
         return;
     }
@@ -214,20 +214,20 @@ void run_temperature_poll() {
 
     // Same mux-select payload broadcast to every LTC each step. The
     // ADG731 ignores the bits it can't address (only ch < 32 used).
-    std::uint8_t per_ic_payload[config::kLtcChainLength][6];
+    std::uint8_t per_ic_payload[config::LtcChainLength][6];
 
-    for (std::uint8_t ch_idx = 0; ch_idx < config::kTempsPerLtc; ++ch_idx) {
-        const std::uint8_t mux_ch = config::kAdg731ChannelMap[ch_idx];
+    for (std::uint8_t ch_idx = 0; ch_idx < config::TempsPerLtc; ++ch_idx) {
+        const std::uint8_t mux_ch = config::Adg731ChannelMap[ch_idx];
         const auto sel = ltc6811::pack_adg731_select(mux_ch);
 
-        for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
+        for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
             for (std::size_t k = 0; k < 6; ++k) {
                 per_ic_payload[ic][k] = sel[k];
             }
         }
 
         // 1. WRCOMM: load the select word into every IC's COMM reg.
-        if (!bus.write_chain_command(ltc6811::kCmdWRCOMM, per_ic_payload)) {
+        if (!bus.write_chain_command(ltc6811::CmdWRCOMM, per_ic_payload)) {
             ++g_ltc_spi_err_count;
             continue;
         }
@@ -237,24 +237,24 @@ void run_temperature_poll() {
             continue;
         }
         // 3. Settling for the mux + NTC voltage-divider. The
-        //    osDelay tick (1 kHz) is plenty; ADG731 t_TRANSITION is
+        //    osDelay tick (1 Hz) is plenty; ADG731 t_TRANSITION is
         //    ~80 ns and the 10 k / 10 k divider settles in << 1 ms.
         osDelay(1);
 
         // 4. ADAX(Gpio1) broadcast -> AUX-ADC conversion on every IC.
         const auto adax_cmd = ltc6811::pack_command(
-            ltc6811::adax_cmd(static_cast<ltc6811::AdcMode>(config::kAdcMode),
+            ltc6811::adax_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                               ltc6811::AuxSel::Gpio1));
         if (!bus.send_command(adax_cmd.data())) {
             ++g_ltc_spi_err_count;
             continue;
         }
-        osDelay(config::kAdaxSettleMs);
+        osDelay(config::AdaxSettleMs);
 
         // 5. RDAUXA: read AUX1..AUX3 + PEC per IC.
-        constexpr std::size_t kReply = config::kLtcChainLength * 8u;
-        std::uint8_t reply[kReply] = {};
-        const auto rdauxa = ltc6811::pack_command(ltc6811::kCmdRDAUXA);
+        constexpr std::size_t Reply = config::LtcChainLength * 8u;
+        std::uint8_t reply[Reply] = {};
+        const auto rdauxa = ltc6811::pack_command(ltc6811::CmdRDAUXA);
         if (!bus.read_register_group(rdauxa.data(), reply, sizeof(reply))) {
             ++g_ltc_spi_err_count;
             continue;
@@ -271,7 +271,7 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
 
 #if defined(AMS_BMS_HIL_STUB)
     // HIL stub: no LTC chain on the bench, so don't touch SPI at all.
-    // Seed a nominal-healthy snapshot every kBmsPollVoltMs (250 ms),
+    // Seed a nominal-healthy snapshot every BmsPollVoltMs (250 ms),
     // which keeps last_rx_tick fresh and module_online_mask = 0x1F so
     // the (unmodified) predicate sees healthy BMS data. The whole
     // chain-discovery / WRCFGA / ADCV / RDCV* path is compiled out
@@ -279,25 +279,25 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
     // the binary. Predicate file stays HIL-agnostic.
     for (;;) {
         ams::BmsService::instance().seed_for_hil_stub(osKernelGetTickCount());
-        osDelay(ams::config::kBmsPollVoltMs);
+        osDelay(ams::config::BmsPollVoltMs);
     }
 #else
     s_volt_timer = osTimerNew(&volt_timer_cb, osTimerPeriodic, nullptr, nullptr);
     s_temp_timer = osTimerNew(&temp_timer_cb, osTimerPeriodic, nullptr, nullptr);
 
     if (s_volt_timer != nullptr) {
-        osTimerStart(s_volt_timer, ams::config::kBmsPollVoltMs);
+        osTimerStart(s_volt_timer, ams::config::BmsPollVoltMs);
     }
     if (s_temp_timer != nullptr) {
-        osTimerStart(s_temp_timer, ams::config::kBmsPollTempMs);
+        osTimerStart(s_temp_timer, ams::config::BmsPollTempMs);
     }
 
-    constexpr std::uint32_t kAll =
-        ams::events::bms::kPollVDue | ams::events::bms::kPollTDue;
+    constexpr std::uint32_t All =
+        ams::events::bms::PollVDue | ams::events::bms::PollTDue;
 
     for (;;) {
         const std::uint32_t evt = osEventFlagsWait(
-            bms_eventsHandle, kAll, osFlagsWaitAny, osWaitForever);
+            bms_eventsHandle, All, osFlagsWaitAny, osWaitForever);
 
         if ((evt & osFlagsError) != 0u) {
             // Event group went away; back off and keep waiting. The
@@ -307,7 +307,7 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
             continue;
         }
 
-        if (evt & ams::events::bms::kPollVDue) {
+        if (evt & ams::events::bms::PollVDue) {
             const std::uint32_t t0 = osKernelGetTickCount();
             run_voltage_poll();
             // Balancing piggybacks on the V-poll cadence; the
@@ -318,7 +318,7 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
             g_bms_volt_poll_ms = dt;
             if (dt > g_bms_volt_poll_max) g_bms_volt_poll_max = dt;
         }
-        if (evt & ams::events::bms::kPollTDue) {
+        if (evt & ams::events::bms::PollTDue) {
             run_temperature_poll();
         }
     }

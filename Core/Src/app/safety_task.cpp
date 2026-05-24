@@ -4,9 +4,9 @@
 // from refactor/19 phase 3. Single 10 ms cadence loop that owns:
 //
 //   * Service snapshots (BMS / current / vehicle) once per iteration
-//   * Safety predicate evaluation every 10 ms (kSafetyPeriodMs)
-//   * FSM step every 20 ms (kStatePeriodMs)
-//   * Telemetry emit every 500 ms (kTelemetryPeriodMs)
+//   * Safety predicate evaluation every 10 ms (SafetyPeriodMs)
+//   * FSM step every 20 ms (StatePeriodMs)
+//   * Telemetry emit every 500 ms (TelemetryPeriodMs)
 //   * IWDG refresh on every iteration (gated by the fault path)
 //   * Fan PWM duty update on state transitions
 //   * AMS_OK GPIO drive (in latched state we leave it where the FSM put
@@ -64,8 +64,8 @@ extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 namespace ams {
 
 SafetyTask& SafetyTask::instance() noexcept {
-    static SafetyTask kInstance;
-    return kInstance;
+    static SafetyTask Instance;
+    return Instance;
 }
 
 void SafetyTask::latch_error_() noexcept {
@@ -97,12 +97,12 @@ bool send_telem(std::uint32_t id, const telemetry::Frame& payload) noexcept {
 // ping-pong that used to hand the bits off to SafetyTask. Now both
 // producer and consumer live in the same timeline so we just act.
 void apply_relay_actions(std::uint32_t flags) noexcept {
-    if (flags & events::safety::kCloseAirN)      Relays::close_air_negative();
-    if (flags & events::safety::kCloseAirP)      Relays::close_air_positive();
-    if (flags & events::safety::kClosePrecharge) Relays::close_precharge();
-    if (flags & events::safety::kOpenAirN)       Relays::open_air_negative();
-    if (flags & events::safety::kOpenAirP)       Relays::open_air_positive();
-    if (flags & events::safety::kOpenPrecharge)  Relays::open_precharge();
+    if (flags & events::safety::CloseAirN)      Relays::close_air_negative();
+    if (flags & events::safety::CloseAirP)      Relays::close_air_positive();
+    if (flags & events::safety::ClosePrecharge) Relays::close_precharge();
+    if (flags & events::safety::OpenAirN)       Relays::open_air_negative();
+    if (flags & events::safety::OpenAirP)       Relays::open_air_positive();
+    if (flags & events::safety::OpenPrecharge)  Relays::open_precharge();
 }
 
 }  // namespace
@@ -135,7 +135,7 @@ void SafetyTask::run() noexcept {
 
     for (;;) {
         // ---------------- Wake at fixed 10 ms cadence ----------------
-        last_wake += config::kSafetyPeriodMs;
+        last_wake += config::SafetyPeriodMs;
         osDelayUntil(last_wake);
 
         const std::uint32_t now = osKernelGetTickCount();
@@ -176,7 +176,7 @@ void SafetyTask::run() noexcept {
             Watchdog::refresh();
         } else {
             // ---------------- FSM step (every 20 ms) ----------------
-            if (now - last_state_tick >= config::kStatePeriodMs) {
+            if (now - last_state_tick >= config::StatePeriodMs) {
                 last_state_tick = now;
 
                 // Lock the Car-vs-Charger mode at the EXACT iteration
@@ -190,7 +190,7 @@ void SafetyTask::run() noexcept {
                     const bool vcu_fresh =
                         veh_snap.last_dc_bus_tick != 0u &&
                         (now - veh_snap.last_dc_bus_tick) <=
-                            config::kVcuFreshMs;
+                            config::VcuFreshMs;
                     mode_locked = vcu_fresh ? fsm::Mode::Car
                                             : fsm::Mode::Charger;
                 }
@@ -224,7 +224,7 @@ void SafetyTask::run() noexcept {
         }
 
         // ---------------- Telemetry (every 500 ms, regardless of state) ----------------
-        if (now - last_telemetry_tick >= config::kTelemetryPeriodMs) {
+        if (now - last_telemetry_tick >= config::TelemetryPeriodMs) {
             last_telemetry_tick = now;
 
             const std::uint8_t ams_ok =
@@ -283,9 +283,9 @@ void SafetyTask::run() noexcept {
                 bms_snap, veh_snap, heartbeat, tx_fail_lo);
 #endif
 
-            if (!send_telem(config::kAmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
-            if (!send_telem(config::kAmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
-            if (!send_telem(config::kAmsTelemTempsId,  frame_temps))  ++g_telemetry_tx_fail;
+            if (!send_telem(config::AmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
+            if (!send_telem(config::AmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;
+            if (!send_telem(config::AmsTelemTempsId,  frame_temps))  ++g_telemetry_tx_fail;
 
             ++heartbeat;  // 8-bit wraparound is intentional
         }

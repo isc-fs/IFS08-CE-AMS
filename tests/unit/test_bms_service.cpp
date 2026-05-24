@@ -26,9 +26,9 @@ namespace {
 
 using namespace ams;
 
-constexpr std::size_t kSeg        = 8;
-constexpr std::size_t kGroupBytes = config::kLtcChainLength * kSeg;  // 80
-constexpr std::size_t kRespBytes  = 4u * kGroupBytes;                // 320
+constexpr std::size_t Seg        = 8;
+constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;  // 80
+constexpr std::size_t RespBytes  = 4u * GroupBytes;                // 320
 
 // Encode three cell mV values into a single 8-byte segment (6 data
 // little-endian uint16 in 100uV units + 2 PEC bytes). Matches the
@@ -63,15 +63,15 @@ void encode_segment(std::uint8_t* out,
 //   module 0 cell 10 -> 3010 mV (bottom of LTC_2)
 //   module 4 cell 18 -> 3418 mV
 void build_clean_chain(std::uint8_t* out) {
-    std::memset(out, 0, kRespBytes);
+    std::memset(out, 0, RespBytes);
     auto mV = [](std::uint8_t m, std::uint8_t s) -> std::uint16_t {
         return static_cast<std::uint16_t>(3000u + 100u * m + s);
     };
     auto seg_at = [&](std::uint8_t group, std::uint8_t ic) -> std::uint8_t* {
-        return out + group * kGroupBytes + ic * kSeg;
+        return out + group * GroupBytes + ic * Seg;
     };
 
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         const std::uint8_t ic_upper = static_cast<std::uint8_t>(2u * m);
         const std::uint8_t ic_lower = static_cast<std::uint8_t>(2u * m + 1u);
 
@@ -106,7 +106,7 @@ extern "C" void tearDown(void) {}
 // 0x1F (5 modules), is_healthy goes true.
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
-    std::uint8_t resp[kRespBytes];
+    std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
 
     fake_set_tick(1000);
@@ -124,7 +124,7 @@ extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     TEST_ASSERT_EQUAL_UINT16(3418, s.cell_mV[4][18]); // module 4 last cell
 
     TEST_ASSERT_EQUAL_UINT16(0x3FFu, s.ltc_online_mask);
-    TEST_ASSERT_EQUAL_UINT8(config::kAllModulesMask, s.module_online_mask);
+    TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
     TEST_ASSERT_TRUE(BmsService::instance().is_healthy(1000));
 }
 
@@ -135,14 +135,14 @@ extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
 // module (we don't clear the sticky bit, but last_rx_tick won't move).
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_pec_fail_on_one_ic_marks_module_stale(void) {
-    std::uint8_t resp[kRespBytes];
+    std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
 
     // Corrupt the PEC of group A for chain index 4 (= upper LTC of
     // module 2). Flip the low byte of the PEC -- decode_cell_voltage_-
     // group will fail and the IC's slots get left at whatever the
     // previous test wrote.
-    resp[0 * kGroupBytes + 4 * kSeg + 7] ^= 0x01u;
+    resp[0 * GroupBytes + 4 * Seg + 7] ^= 0x01u;
 
     fake_set_tick(2000);
     BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 2000);
@@ -162,9 +162,9 @@ extern "C" void test_bms_ltc_pec_fail_on_one_ic_marks_module_stale(void) {
 // PEC failure increments the per-IC error counter.
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_pec_fail_increments_error_counter(void) {
-    std::uint8_t resp[kRespBytes];
+    std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
-    resp[1 * kGroupBytes + 7 * kSeg + 7] ^= 0x80u;  // ic 7, group B
+    resp[1 * GroupBytes + 7 * Seg + 7] ^= 0x80u;  // ic 7, group B
 
     const std::uint32_t before = ams::g_ltc_pec_err_count[7];
     BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 3000);
@@ -175,7 +175,7 @@ extern "C" void test_bms_ltc_pec_fail_increments_error_counter(void) {
 // Short buffer is rejected (no writes, no error counts).
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_short_buffer_rejected(void) {
-    std::uint8_t resp[kRespBytes - 1] = {};
+    std::uint8_t resp[RespBytes - 1] = {};
     TEST_ASSERT_FALSE(BmsService::instance().update_from_ltc_response(
         resp, sizeof(resp), 4000));
 }
@@ -185,12 +185,12 @@ extern "C" void test_bms_ltc_short_buffer_rejected(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_null_buffer_rejected(void) {
     TEST_ASSERT_FALSE(BmsService::instance().update_from_ltc_response(
-        nullptr, kRespBytes, 5000));
+        nullptr, RespBytes, 5000));
 }
 
 // ---------------------------------------------------------------------------
 // is_healthy goes false after the freshness window expires.
-// kBmsStaleMs is 1500; after the corrupted-IC test above last_rx_tick
+// BmsStaleMs is 1500; after the corrupted-IC test above last_rx_tick
 // for module 2 stayed at 1000, so any tick > 2500 must report stale.
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_is_healthy_false_after_staleness(void) {
@@ -203,7 +203,7 @@ extern "C" void test_bms_ltc_is_healthy_false_after_staleness(void) {
 
 namespace {
 
-constexpr std::size_t kAuxReplyBytes = config::kLtcChainLength * kSeg;  // 80
+constexpr std::size_t AuxReplyBytes = config::LtcChainLength * Seg;  // 80
 
 // Build one PEC-clean 8-byte AUX register segment with AUX1 set to
 // the given mV value (AUX2 / AUX3 don't matter -- BMS_LITE only
@@ -225,7 +225,7 @@ void encode_aux_segment(std::uint8_t* out, std::uint16_t aux1_mV) {
 // B = 3380 K: room temperature (25 degC) gives R = 10 k, voltage
 // divider midpoint -> V_aux = 1.5 V = 1500 mV. Use that as the
 // reference test input where we want exactly 25 degC out.
-constexpr std::uint16_t kAux25C_mV = 1500;
+constexpr std::uint16_t Aux25C_mV = 1500;
 
 }  // namespace
 
@@ -233,9 +233,9 @@ extern "C" void test_bms_temp_sweep_room_temp_on_one_channel(void) {
     // Build a 10-IC reply where every IC reports the 1.5 V (25 degC)
     // sample. Channel index 7 lands in cell_tempC[m][7] for upper
     // LTCs and cell_tempC[m][27] for lower LTCs.
-    std::uint8_t reply[kAuxReplyBytes];
-    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
-        encode_aux_segment(reply + ic * kSeg, kAux25C_mV);
+    std::uint8_t reply[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(reply + ic * Seg, Aux25C_mV);
     }
     TEST_ASSERT_TRUE(BmsService::instance().update_temperature(
         7, reply, sizeof(reply)));
@@ -244,9 +244,9 @@ extern "C" void test_bms_temp_sweep_room_temp_on_one_channel(void) {
     // Steinhart-Hart rounded result for the placeholder Beta = 3380 is
     // 25 degC for the nominal divider midpoint. Tolerance +/- 1 to
     // absorb the rounding-mode boundary.
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         TEST_ASSERT_INT16_WITHIN(1, 25, s.cell_tempC[m][7]);
-        TEST_ASSERT_INT16_WITHIN(1, 25, s.cell_tempC[m][config::kTempsPerLtc + 7]);
+        TEST_ASSERT_INT16_WITHIN(1, 25, s.cell_tempC[m][config::TempsPerLtc + 7]);
     }
 }
 
@@ -254,16 +254,16 @@ extern "C" void test_bms_temp_hotter_voltage_gives_hotter_reading(void) {
     // NTC resistance falls as it heats. A hotter NTC -> lower R_ntc
     // -> lower V_aux. Feed a voltage below the 25 degC midpoint and
     // check we read a temperature strictly greater than 25 degC.
-    std::uint8_t reply[kAuxReplyBytes];
-    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
-        encode_aux_segment(reply + ic * kSeg, /* mV */ 900u);
+    std::uint8_t reply[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(reply + ic * Seg, /* mV */ 900u);
     }
     BmsService::instance().update_temperature(3, reply, sizeof(reply));
 
     const auto s = BmsService::instance().snapshot();
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         TEST_ASSERT_GREATER_THAN_INT16(25, s.cell_tempC[m][3]);
-        TEST_ASSERT_LESS_OR_EQUAL_INT16(config::kNtcMaxValidC, s.cell_tempC[m][3]);
+        TEST_ASSERT_LESS_OR_EQUAL_INT16(config::NtcMaxValidC, s.cell_tempC[m][3]);
     }
 }
 
@@ -273,17 +273,17 @@ extern "C" void test_bms_temp_rail_reading_skips_slot(void) {
     // to a known sentinel via a clean prior sweep, then run a
     // rail-zero sweep on the same channel and confirm the slot is
     // unchanged.
-    std::uint8_t reply[kAuxReplyBytes];
-    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
-        encode_aux_segment(reply + ic * kSeg, kAux25C_mV);
+    std::uint8_t reply[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(reply + ic * Seg, Aux25C_mV);
     }
     BmsService::instance().update_temperature(5, reply, sizeof(reply));
     const auto seeded = BmsService::instance().snapshot();
     const std::int16_t before = seeded.cell_tempC[2][5];
 
     // Now feed 0 mV (open). Slot must NOT update.
-    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
-        encode_aux_segment(reply + ic * kSeg, /* mV */ 0u);
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(reply + ic * Seg, /* mV */ 0u);
     }
     BmsService::instance().update_temperature(5, reply, sizeof(reply));
 
@@ -292,12 +292,12 @@ extern "C" void test_bms_temp_rail_reading_skips_slot(void) {
 }
 
 extern "C" void test_bms_temp_pec_fail_skips_slot(void) {
-    std::uint8_t reply[kAuxReplyBytes];
-    for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
-        encode_aux_segment(reply + ic * kSeg, kAux25C_mV);
+    std::uint8_t reply[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(reply + ic * Seg, Aux25C_mV);
     }
     // Wreck PEC on IC 4 (upper LTC of module 2).
-    reply[4 * kSeg + 7] ^= 0x01u;
+    reply[4 * Seg + 7] ^= 0x01u;
 
     const std::uint32_t before = ams::g_ltc_pec_err_count[4];
     BmsService::instance().update_temperature(2, reply, sizeof(reply));
@@ -306,19 +306,19 @@ extern "C" void test_bms_temp_pec_fail_skips_slot(void) {
     const auto s = BmsService::instance().snapshot();
     // Other 9 ICs still updated module 2's lower-LTC slot 22 and
     // every other module's slot 2 + 22.
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
-        TEST_ASSERT_INT16_WITHIN(1, 25, s.cell_tempC[m][config::kTempsPerLtc + 2]);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        TEST_ASSERT_INT16_WITHIN(1, 25, s.cell_tempC[m][config::TempsPerLtc + 2]);
     }
 }
 
 extern "C" void test_bms_temp_bad_channel_idx_rejected(void) {
-    std::uint8_t reply[kAuxReplyBytes] = {};
+    std::uint8_t reply[AuxReplyBytes] = {};
     TEST_ASSERT_FALSE(BmsService::instance().update_temperature(
-        config::kTempsPerLtc, reply, sizeof(reply)));   // out of range
+        config::TempsPerLtc, reply, sizeof(reply)));   // out of range
 }
 
 extern "C" void test_bms_temp_short_buffer_rejected(void) {
-    std::uint8_t reply[kAuxReplyBytes - 1] = {};
+    std::uint8_t reply[AuxReplyBytes - 1] = {};
     TEST_ASSERT_FALSE(BmsService::instance().update_temperature(
         0, reply, sizeof(reply)));
 }
@@ -333,13 +333,13 @@ extern "C" void test_bms_temp_short_buffer_rejected(void) {
 // stays at INT16_MIN (sentinel).
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_per_module_v_aggregates_after_clean_response(void) {
-    std::uint8_t resp[kRespBytes];
+    std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
     fake_set_tick(5000);
     BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 5000);
 
     const auto s = BmsService::instance().snapshot();
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         const std::uint16_t expect_min = static_cast<std::uint16_t>(3000 + m * 100 + 0);
         const std::uint16_t expect_max = static_cast<std::uint16_t>(3000 + m * 100 + 18);
         TEST_ASSERT_EQUAL_UINT16(expect_min, s.vmin_module[m]);
@@ -353,23 +353,23 @@ extern "C" void test_bms_per_module_v_aggregates_after_clean_response(void) {
 // be near 25 for every module that was updated.
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
-    std::uint8_t resp[kRespBytes];
+    std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
     fake_set_tick(6000);
     BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 6000);
 
     // Drive a uniform-room-temp sweep across the populated channels so
     // every module's tmax_module gets a real value.
-    for (std::uint8_t ch = 0; ch < config::kTempsPerLtc; ++ch) {
-        std::uint8_t reply[kAuxReplyBytes];
-        for (std::uint8_t ic = 0; ic < config::kLtcChainLength; ++ic) {
-            encode_aux_segment(reply + ic * kSeg, kAux25C_mV);
+    for (std::uint8_t ch = 0; ch < config::TempsPerLtc; ++ch) {
+        std::uint8_t reply[AuxReplyBytes];
+        for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+            encode_aux_segment(reply + ic * Seg, Aux25C_mV);
         }
         BmsService::instance().update_temperature(ch, reply, sizeof(reply));
     }
 
     const auto s = BmsService::instance().snapshot();
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         TEST_ASSERT_INT16_WITHIN(2, 25, s.tmax_module[m]);
     }
 }

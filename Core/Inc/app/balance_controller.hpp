@@ -9,11 +9,11 @@
 // ltc6811::pack_cfga_payload and the chain TX happens in
 // BmsPollTask -- this header owns only the policy.
 //
-// Rules (config::kBalance*):
+// Rules (config::Balance*):
 //   1. fsm_state != Charge                  -> mask all zero
-//   2. max_tempC > kBalanceTempMax          -> mask all zero
+//   2. max_tempC > BalanceTempMax          -> mask all zero
 //   3. cell voltage > min_cell_mV + delta   -> candidate
-//   4. per module, keep at most kBalanceMaxActive candidates with
+//   4. per module, keep at most BalanceMaxActive candidates with
 //      the largest excess over the pack minimum (round-robin across
 //      windows is overkill at 1 Hz cadence -- top-k is good enough)
 
@@ -29,7 +29,7 @@
 namespace ams::balance {
 
 struct Mask {
-    bool cell[config::kBmsModuleCount][config::kCellsPerModule];
+    bool cell[config::BmsModuleCount][config::CellsPerModule];
 };
 
 [[nodiscard]] inline Mask compute_mask(const BmsState&  s,
@@ -37,31 +37,31 @@ struct Mask {
     Mask out = {};
 
     if (fsm_state != fsm::State::Charge)       return out;
-    if (s.max_tempC > config::kBalanceTempMax) return out;
+    if (s.max_tempC > config::BalanceTempMax) return out;
 
     // Bottom of the pack we're trying to match. Use the snapshot's
     // min_cell_mV; it's already the result of an iteration over the
     // full cell grid in BmsService::recompute_summaries_().
     const std::uint16_t floor_mV = s.min_cell_mV;
 
-    for (std::uint8_t m = 0; m < config::kBmsModuleCount; ++m) {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         // Walk the module's 19 cells, keep the top-K by excess over
-        // the floor. K = kBalanceMaxActive. Insertion sort into a
+        // the floor. K = BalanceMaxActive. Insertion sort into a
         // small array -- 19 cells * 4 slots = ~76 compares worst
         // case, well below noise at 1 Hz cadence.
         struct Cand {
             std::uint8_t  cell;
             std::uint16_t excess;
         };
-        Cand top[config::kBalanceMaxActive] = {};
+        Cand top[config::BalanceMaxActive] = {};
         std::uint8_t n_top = 0;
 
-        for (std::uint8_t c = 0; c < config::kCellsPerModule; ++c) {
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
             const std::uint16_t v = s.cell_mV[m][c];
-            if (v <= floor_mV + config::kBalanceDeltaMv) continue;
+            if (v <= floor_mV + config::BalanceDeltaMv) continue;
             const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
 
-            if (n_top < config::kBalanceMaxActive) {
+            if (n_top < config::BalanceMaxActive) {
                 top[n_top++] = { c, excess };
             } else {
                 // Replace the smallest entry if this one is bigger.

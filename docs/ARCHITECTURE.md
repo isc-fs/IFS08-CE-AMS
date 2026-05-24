@@ -46,7 +46,7 @@ Everything else exists to enforce these:
    one-cycle staleness. No mutex required; the old per-service
    mutex was retired in refactor/19 phase 1 (PR #119).
 7. **Boot-grace window suppresses data-presence predicates for
-   `kSafetyBootGraceMs` (2 s) after `osKernelStart`.** At t = 0
+   `SafetyBootGraceMs` (2 s) after `osKernelStart`.** At t = 0
    every service's `last_*_tick` is 0; without a grace the first
    MainTask iteration would fault on freshness and withhold the
    watchdog refresh, triggering an IWDG reset within ~100 ms. The
@@ -57,7 +57,7 @@ Everything else exists to enforce these:
    `force_error_set` still trips instantly. Only data-dependent
    predicates wait. See
    [`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)
-   and the inline comment on `kSafetyBootGraceMs` in
+   and the inline comment on `SafetyBootGraceMs` in
    [`ams_config.hpp`](../Core/Inc/app/ams_config.hpp).
 8. **The AMS does not sense the SDC line.** It IS part of the SDC
    via the ``AMS_OK`` output (PB4) — opening that output opens the
@@ -161,7 +161,7 @@ deferred) but no one reads or writes it.
 
 Owns the LTC6811 isoSPI conversation end-to-end and the balance
 DCC writes (`maybe_run_balance_update` runs every
-`kBalanceUpdatePolls` voltage cycles, inline after RDCV[A-D],
+`BalanceUpdatePolls` voltage cycles, inline after RDCV[A-D],
 sharing the same `LTC6820::Bus`). Single owner of the chain — no
 bus mutex, no producer/consumer queue. Under `-DAMS_BMS_HIL_STUB`
 the body collapses to a 250 ms loop that seeds a nominal-healthy
@@ -381,10 +381,10 @@ consumed inline by MainTask):
 
 | Transition | bits set in `Output::safety_flags` |
 |---|---|
-| Start → Precharge | `kCloseAirN`, `kClosePrecharge` |
-| Start → Charge | `kCloseAirN`, `kCloseAirP` |
-| Precharge → Transition | `kCloseAirP`, `kOpenPrecharge` |
-| any → Error | `kForceError`, `kOpenAirN`, `kOpenAirP`, `kOpenPrecharge` |
+| Start → Precharge | `CloseAirN`, `ClosePrecharge` |
+| Start → Charge | `CloseAirN`, `CloseAirP` |
+| Precharge → Transition | `CloseAirP`, `OpenPrecharge` |
+| any → Error | `ForceError`, `OpenAirN`, `OpenAirP`, `OpenPrecharge` |
 
 **Key properties:**
 
@@ -432,14 +432,14 @@ sequenceDiagram
     Note over init: Under -DAMS_BMS_HIL_STUB:<br/>clear ErrorLatch +<br/>skip LTC chain discovery
     init->>HW: FDCAN1 filter + ActivateNotification + Start
     init->>HW: LTC6820 configure + wakeup + chain discovery
-    alt chain discovered != kLtcChainLength
+    alt chain discovered != LtcChainLength
       init->>HW: ErrorLatch::set + Relays::open_all
     end
     init->>init: osThreadExit
   and
     Main->>Main: ErrorLatch::init + Fan::init
     Main->>Main: boot in Error if ErrorLatch::is_set
-    Note over Main: For t < kSafetyBootGraceMs (2 s)<br/>data-presence predicates are suppressed.<br/>force_error_set still trips instantly.
+    Note over Main: For t < SafetyBootGraceMs (2 s)<br/>data-presence predicates are suppressed.<br/>force_error_set still trips instantly.
     loop every 10 ms (osDelayUntil)
       Main->>Main: snapshot bms/current/vehicle
       alt fault detected
@@ -491,7 +491,7 @@ cleanup deferred to a future `.ioc` pass.
 | `cell_tempC` | `int16_t [5][40]` | 200 NTC slots; populated by `update_temperature`. Ctor-initialised to 25 °C so unpopulated channels don't dominate `max_tempC`. |
 | `pack_voltage_mV`, `min/max_cell_mV`, `min/max/avg_tempC` | summaries | recomputed inside `recompute_summaries_` after every write. |
 | `last_rx_tick[5]` | `uint32_t` | advances only on a poll where BOTH LTCs of the module passed PEC. |
-| `module_online_mask` | `uint8_t` | sticky (once-online); compared against `kAllModulesMask`. |
+| `module_online_mask` | `uint8_t` | sticky (once-online); compared against `AllModulesMask`. |
 | `ltc_online_mask` | `uint16_t` | non-sticky per-cycle per-IC PEC-OK mask (10 bits). |
 
 ---
@@ -518,8 +518,8 @@ CubeMX 6.16 doesn't emit them from .ioc):
 
 | Group | Bit | Set by | Cleared by |
 |---|---|---|---|
-| `bms_events` | `kPollVDue` | osTimer 250 ms | BmsPollTask (ADCV + RDCV[A-D] over isoSPI) |
-|  | `kPollTDue` | osTimer 500 ms | BmsPollTask (20-channel ADG731 mux sweep) |
+| `bms_events` | `PollVDue` | osTimer 250 ms | BmsPollTask (ADCV + RDCV[A-D] over isoSPI) |
+|  | `PollTDue` | osTimer 500 ms | BmsPollTask (20-channel ADG731 mux sweep) |
 
 The `safety_events` event group was retired in refactor/19 phase 3
 (PR #120): the FSM's relay-action bitmask is now consumed inline by

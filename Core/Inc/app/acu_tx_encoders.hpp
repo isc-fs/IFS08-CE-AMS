@@ -121,7 +121,7 @@ encode_tmax_module_b(const BmsState& bms) noexcept {
     std::array<std::uint8_t, 6> out{};
     be_put_i16(out.data() + 0, bms.tmax_module[3]);
     be_put_i16(out.data() + 2, bms.tmax_module[4]);
-    be_put_i16(out.data() + 4, config::kDcdcTempStubValue);
+    be_put_i16(out.data() + 4, config::DcdcTempStubValue);
     return out;
 }
 

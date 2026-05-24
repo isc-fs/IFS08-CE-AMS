@@ -22,8 +22,8 @@ ams::safety::Inputs make_nominal(ams::BmsState& bms,
     std::memset(&cur, 0, sizeof(cur));
     std::memset(&veh, 0, sizeof(veh));
 
-    bms.module_online_mask = ams::config::kAllModulesMask;
-    for (std::uint8_t m = 0; m < ams::config::kBmsModuleCount; ++m) {
+    bms.module_online_mask = ams::config::AllModulesMask;
+    for (std::uint8_t m = 0; m < ams::config::BmsModuleCount; ++m) {
         bms.last_rx_tick[m] = now - 100;
     }
     bms.min_cell_mV = 3700;
@@ -67,7 +67,7 @@ extern "C" void test_predicates_cell_undervoltage(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.min_cell_mV = ams::config::kCellUnderVoltageMv - 1;
+    bms.min_cell_mV = ams::config::CellUnderVoltageMv - 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -76,7 +76,7 @@ extern "C" void test_predicates_cell_overvoltage(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.max_cell_mV = ams::config::kCellOverVoltageMv + 1;
+    bms.max_cell_mV = ams::config::CellOverVoltageMv + 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -85,7 +85,7 @@ extern "C" void test_predicates_cell_overtemp(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.max_tempC = ams::config::kCellOverTempC + 1;
+    bms.max_tempC = ams::config::CellOverTempC + 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -94,7 +94,7 @@ extern "C" void test_predicates_bms_stale(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.last_rx_tick[2] = 10000 - ams::config::kBmsStaleMs - 10;
+    bms.last_rx_tick[2] = 10000 - ams::config::BmsStaleMs - 10;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -103,7 +103,7 @@ extern "C" void test_predicates_current_overlimit(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    cur.filtered_mA = ams::config::kCurrentMaxMa + 1;
+    cur.filtered_mA = ams::config::CurrentMaxMa + 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -112,7 +112,7 @@ extern "C" void test_predicates_current_stale(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    cur.last_update_tick = 10000 - ams::config::kIStaleMs - 10;
+    cur.last_update_tick = 10000 - ams::config::IStaleMs - 10;
 #if defined(AMS_BMS_HIL_STUB)
     // Bench has no current sensor; freshness check is gated out
     // under HIL_STUB so this stops faulting. See safety_predicates.hpp.
@@ -127,7 +127,7 @@ extern "C" void test_predicates_vcu_stale(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    veh.last_dc_bus_tick = 10000 - ams::config::kVcuStaleMs - 10;
+    veh.last_dc_bus_tick = 10000 - ams::config::VcuStaleMs - 10;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -167,7 +167,7 @@ extern "C" void test_predicates_boot_grace_does_not_suppress_force_error(void) {
 
 // One tick past the grace window with no service activity -> fault.
 // The unsigned `now - 0 = now` age naturally exceeds every staleness
-// window for now_tick > grace > max(kBmsStaleMs, kIStaleMs, kVcuStaleMs).
+// window for now_tick > grace > max(BmsStaleMs, IStaleMs, VcuStaleMs).
 extern "C" void test_predicates_after_grace_zero_ticks_faults(void) {
     ams::BmsState     bms{};
     ams::CurrentState cur{};
@@ -175,7 +175,7 @@ extern "C" void test_predicates_after_grace_zero_ticks_faults(void) {
     const ams::safety::Inputs in = {
         bms, cur, veh,
         /*force_error_set=*/false,
-        /*now_tick=*/ams::config::kSafetyBootGraceMs + 1u,
+        /*now_tick=*/ams::config::SafetyBootGraceMs + 1u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }

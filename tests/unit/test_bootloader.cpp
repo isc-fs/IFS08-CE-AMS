@@ -17,11 +17,11 @@ namespace {
 
 ams::CanFrame make_trigger_frame() {
     ams::CanFrame f = {};
-    f.id  = ams::config::kBlBootReqCanId;
-    f.dlc = ams::config::kBlBootReqDlc;
+    f.id  = ams::config::BlBootReqCanId;
+    f.dlc = ams::config::BlBootReqDlc;
     f.bus = static_cast<std::uint8_t>(ams::CanBus::Acu);
-    std::memcpy(f.data, ams::config::kBlBootReqPayload,
-                ams::config::kBlBootReqDlc);
+    std::memcpy(f.data, ams::config::BlBootReqPayload,
+                ams::config::BlBootReqDlc);
     return f;
 }
 
@@ -40,7 +40,7 @@ extern "C" void test_bootloader_trigger_wrong_bus(void) {
 
 extern "C" void test_bootloader_trigger_wrong_id(void) {
     auto f = make_trigger_frame();
-    f.id  = ams::config::kBlBootReqCanId + 1;
+    f.id  = ams::config::BlBootReqCanId + 1;
     TEST_ASSERT_FALSE(ams::Bootloader::matches_trigger(f));
 
     f.id  = 0;
@@ -67,7 +67,7 @@ extern "C" void test_bootloader_trigger_each_magic_byte_flipped(void) {
     // Each byte of the 4-byte magic, flipped one at a time, must
     // make the frame not match. Catches single-bit corruption + any
     // future change to the magic value that forgets a byte.
-    for (std::uint8_t i = 0; i < ams::config::kBlBootReqDlc; ++i) {
+    for (std::uint8_t i = 0; i < ams::config::BlBootReqDlc; ++i) {
         auto f = make_trigger_frame();
         f.data[i] ^= 0xFF;
         TEST_ASSERT_FALSE(ams::Bootloader::matches_trigger(f));

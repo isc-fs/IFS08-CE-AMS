@@ -145,7 +145,7 @@ comes up in `Start`.
 |---|---|
 | Preconditions | HIL-003 passed (app flashed). |
 | Steps | 1. `screen /dev/cu.usbmodemX 115200` attached.<br>2. Hard-reset the target.<br>3. Wait 2 s. |
-| Pass | UART emits `AMS s=S …` line (state=Start = 'S') within 1 s of reset. PB5/6/7 read LOW (relays open per HIL-001 + initial fan duty 0 % per state_task `kFanDuty[Start]`). |
+| Pass | UART emits `AMS s=S …` line (state=Start = 'S') within 1 s of reset. PB5/6/7 read LOW (relays open per HIL-001 + initial fan duty 0 % per state_task `FanDuty[Start]`). |
 | Fail mode | UART silent → app crashed or VTOR misaligned. Pull SWD, read stack, check `SCB->VTOR`. |
 | Capture | UART log file, GPIO read-back. |
 | Duration | 2 min |
@@ -171,7 +171,7 @@ so direct-flash workflows (no BL) also work.
 | | |
 |---|---|
 | Preconditions | BL + app installed; AMS comes up in `Start` per HIL-004. |
-| Steps | 1. Attach GDB while running in Start. Write `RTC->BKP1R = 0xA115EE51` (kBkpErrorMagic).<br>2. `NVIC_SystemReset()` from GDB.<br>3. Read UART. |
+| Steps | 1. Attach GDB while running in Start. Write `RTC->BKP1R = 0xA115EE51` (BkpErrorMagic).<br>2. `NVIC_SystemReset()` from GDB.<br>3. Read UART. |
 | Pass | UART says `s=E` on the post-reset boot. |
 | Steps cont. | 4. From a healthy `Error`, power-cycle (full VDD removal, VBAT only if VBAT is wired — otherwise full power-down).<br>5. Read UART. |
 | Pass | UART says `s=S` (latch cleared because backup domain lost power). |
@@ -206,7 +206,7 @@ spec, not just the .elf on the host.
 ### HIL-009 — LTC6820 wakeup pulse + chain-length discovery on boot
 
 **Goal**: prove `App_InitTask` wakes the LTC6811 daisy-chain and
-discovers exactly `kLtcChainLength = 10` ICs before the safety
+discovers exactly `LtcChainLength = 10` ICs before the safety
 supervisor's first tick. Replaces the legacy FDCAN2 filter test
 (v1.2.0+ the BMS no longer rides on CAN, so the only filter that
 matters is FDCAN1's, exercised passively by every other test in this
@@ -217,7 +217,7 @@ block).
 | Preconditions | Real BMS_LITE stack of 5 modules wired into the AMS isoSPI port, OR a 10-IC LTC6811 emulator. PA4 CS available on a logic analyser. |
 | Steps | 1. Attach LA to PA4 (CS) and SPI1 SCK; arm on falling-edge of CS, 5 ms timebase.<br>2. Power-cycle the AMS. Wait 2 s.<br>3. Read GDB-visible `g_state_telemetry` (should be `'S'` = Start) and `BmsService::instance().snapshot().ltc_online_mask`. |
 | Pass | LA shows ten CS-low pulses ≥ 10 µs each on power-up (the chain wakeup train). After the train, one RDCFGA round-trip clocks ~84 bytes. `ltc_online_mask` reads `0x3FF` (all 10 ICs PEC-clean). `g_state_telemetry == 'S'`. |
-| Fail mode | Fewer than 10 wakeup pulses → `kLtcChainLength` mismatch in code. RDCFGA absent → `App_InitTask` hit the early-exit. Mask not `0x3FF` → ERROR latched; HIL-056 covers that failure mode in its own test. |
+| Fail mode | Fewer than 10 wakeup pulses → `LtcChainLength` mismatch in code. RDCFGA absent → `App_InitTask` hit the early-exit. Mask not `0x3FF` → ERROR latched; HIL-056 covers that failure mode in its own test. |
 | Capture | LA screenshot of CS + SCK; GDB transcript. |
 | Duration | 15 min |
 
@@ -268,19 +268,19 @@ within milliseconds.
 
 ### HIL-013 — FORCE_ERROR event flag opens AIRs
 
-**Goal**: any task can post `kForceError` on `safety_events` and the
+**Goal**: any task can post `ForceError` on `safety_events` and the
 supervisor responds within one period.
 
 | | |
 |---|---|
-| Steps | 1. Bring AMS up to Run.<br>2. Via GDB, call `osEventFlagsSet(safety_eventsHandle, 0x1)` (kForceError = bit 0).<br>3. Within 15 ms, read PB5/6/7. |
+| Steps | 1. Bring AMS up to Run.<br>2. Via GDB, call `osEventFlagsSet(safety_eventsHandle, 0x1)` (ForceError = bit 0).<br>3. Within 15 ms, read PB5/6/7. |
 | Pass | All three pins are LOW. UART next line says `s=E`. `RTC->BKP1R` reads `0xA115EE51`. |
 | Fail mode | Pins still HIGH after 50 ms → MainTask not consuming the flag, or relay write path broken. |
 | Duration | 5 min |
 
 ### HIL-014 — Cell undervoltage trips ERROR
 
-**Goal**: a single cell below `kCellUnderVoltageMv` (2800 mV) trips the predicate
+**Goal**: a single cell below `CellUnderVoltageMv` (2800 mV) trips the predicate
 set within one V-poll cycle + one MainTask period.
 
 | | |
@@ -293,17 +293,17 @@ set within one V-poll cycle + one MainTask period.
 
 ### HIL-015 — Cell overvoltage trips ERROR
 
-Same shape as HIL-014, value = 4250 mV (above `kCellOverVoltageMv` = 4200).
+Same shape as HIL-014, value = 4250 mV (above `CellOverVoltageMv` = 4200).
 
 ### HIL-016 — Cell overtemperature trips ERROR
 
-Same shape; temp frame with temp[10] = 65 °C (above `kCellOverTempC` = 60).
+Same shape; temp frame with temp[10] = 65 °C (above `CellOverTempC` = 60).
 
 ### HIL-017 — BMS module staleness trips ERROR
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Disconnect module 3's isoSPI input (cable pull) so chain slots 6 and 7 stop replying with PEC-clean data.<br>3. Wait for `kBmsStaleMs` (1500 ms) + one V-poll period (250 ms). |
+| Steps | 1. AMS in Run.<br>2. Disconnect module 3's isoSPI input (cable pull) so chain slots 6 and 7 stop replying with PEC-clean data.<br>3. Wait for `BmsStaleMs` (1500 ms) + one V-poll period (250 ms). |
 | Pass | Pins LOW within ~1.8 s of the cable pull. UART says `s=E`. `g_ltc_pec_err_count[6]` and `[7]` climb, but `last_rx_tick[3]` stops advancing — that's what trips the freshness predicate. |
 | Fail mode | Pins stay HIGH after 2.5 s → freshness check broken, or `update_from_ltc_response` is advancing `last_rx_tick` even on PEC-fail. |
 | Duration | 10 min |
@@ -312,7 +312,7 @@ Same shape; temp frame with temp[10] = 65 °C (above `kCellOverTempC` = 60).
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run.<br>2. Inject a constant voltage on PF7 ≈ 2.5 V (zero current) for the warm-up.<br>3. Halt CurrentSensorTask via GDB (it's the only writer to `last_update_tick`).<br>4. Wait `kIStaleMs` (200 ms) + 50 ms. |
+| Steps | 1. AMS in Run.<br>2. Inject a constant voltage on PF7 ≈ 2.5 V (zero current) for the warm-up.<br>3. Halt CurrentSensorTask via GDB (it's the only writer to `last_update_tick`).<br>4. Wait `IStaleMs` (200 ms) + 50 ms. |
 | Pass | Pins LOW within 300 ms. UART says `s=E`. |
 | Fail mode | Pins stay HIGH → freshness threshold mis-applied. |
 | Duration | 5 min |
@@ -368,7 +368,7 @@ frames continuously.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Precharge.<br>2. Continuously emit 0x100 with `dc_bus_V` = 50 (well below target).<br>3. Wait `kPrechargeMaxMs` (1500 ms) + 50 ms. |
+| Steps | 1. AMS in Precharge.<br>2. Continuously emit 0x100 with `dc_bus_V` = 50 (well below target).<br>3. Wait `PrechargeMaxMs` (1500 ms) + 50 ms. |
 | Pass | All pins LOW within 1.6 s. UART says `s=E`. `RTC->BKP1R` = `0xA115EE51`. |
 | Duration | 5 min |
 
@@ -376,7 +376,7 @@ frames continuously.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Transition (after HIL-022).<br>2. Keep 0x100 emitting `dc_bus_V` ≥ 350.<br>3. Wait `kTransitionHoldMs` (100 ms) + 30 ms.<br>4. Sample pins + UART. |
+| Steps | 1. AMS in Transition (after HIL-022).<br>2. Keep 0x100 emitting `dc_bus_V` ≥ 350.<br>3. Wait `TransitionHoldMs` (100 ms) + 30 ms.<br>4. Sample pins + UART. |
 | Pass | PB6 HIGH, PB5 HIGH, PB7 LOW. UART says `s=R`. Fan duty PB9 PWM = 40 % (measure with scope). |
 | Duration | 5 min |
 
@@ -450,7 +450,7 @@ that all 20 mux selections actually leave the LTC's GPIO port.
 | | |
 |---|---|
 | Steps | 1. AMS in Run.<br>2. LA on PA4 + SCK for 5 s.<br>3. For each 500 ms window, count complete `WRCOMM → STCOMM → ADAX(Gpio1) → RDAUXA` cycles. |
-| Pass | 20 cycles per window, ≥ 9 windows over 5 s (= 500 ms cadence ± 100 ms). Each cycle:<br>· WRCOMM transmits `cmd(2) + PEC(2) + 8 × kLtcChainLength = 84 B`<br>· STCOMM transmits `cmd(2) + PEC(2) + 30 dummy B = 34 B`<br>· ADAX is 4 B<br>· RDAUXA is `cmd(4) + 80 B` = 84 B. |
+| Pass | 20 cycles per window, ≥ 9 windows over 5 s (= 500 ms cadence ± 100 ms). Each cycle:<br>· WRCOMM transmits `cmd(2) + PEC(2) + 8 × LtcChainLength = 84 B`<br>· STCOMM transmits `cmd(2) + PEC(2) + 30 dummy B = 34 B`<br>· ADAX is 4 B<br>· RDAUXA is `cmd(4) + 80 B` = 84 B. |
 | Fail mode | Fewer than 20 cycles/window → one mux step is stalling or aborting. Investigate which channel via `g_ltc_spi_err_count`. |
 | Capture | LA + `g_ltc_spi_err_count` before / after. |
 | Duration | 15 min |
@@ -474,9 +474,9 @@ the °C value lands in `cell_tempC`.
 
 | | |
 |---|---|
-| Steps | 1. With a calibrated bench DAC (or pot) drive the LTC's GPIO1 input on module 2 LTC_1 directly with 1.5 V (= 25 °C nominal under the placeholder Beta-model constants).<br>2. AMS in Run; wait 1 s for a full temperature sweep.<br>3. GDB-read `cell_tempC[2][k]` for the temp-index `k` whose `kAdg731ChannelMap[k]` matches the mux address you selected. |
+| Steps | 1. With a calibrated bench DAC (or pot) drive the LTC's GPIO1 input on module 2 LTC_1 directly with 1.5 V (= 25 °C nominal under the placeholder Beta-model constants).<br>2. AMS in Run; wait 1 s for a full temperature sweep.<br>3. GDB-read `cell_tempC[2][k]` for the temp-index `k` whose `Adg731ChannelMap[k]` matches the mux address you selected. |
 | Pass | Reads 25 °C ± 2 °C. |
-| Fail mode | Wrong slot → channel-index mapping (`kAdg731ChannelMap`) wrong or LTC_1 vs LTC_2 swap. Wrong value → β / R₂₅ / V_ref off; tune per `COMMISSIONING.md §3b`. |
+| Fail mode | Wrong slot → channel-index mapping (`Adg731ChannelMap`) wrong or LTC_1 vs LTC_2 swap. Wrong value → β / R₂₅ / V_ref off; tune per `COMMISSIONING.md §3b`. |
 | Duration | 20 min |
 
 ### HIL-034 — PEC-error counter rises on injected corruption
@@ -704,7 +704,7 @@ gate, which is one-shot).
 
 | | |
 |---|---|
-| Steps | 1. AMS in Run, all 5 modules online.<br>2. Pull the master-end isoSPI cable.<br>3. Within `kBmsStaleMs + 250 ms` = 1750 ms, sample PB5/6/7 + UART. |
+| Steps | 1. AMS in Run, all 5 modules online.<br>2. Pull the master-end isoSPI cable.<br>3. Within `BmsStaleMs + 250 ms` = 1750 ms, sample PB5/6/7 + UART. |
 | Pass | Pins LOW within 1.8 s; UART says `s=E`. `g_ltc_pec_err_count[*]` and `g_ltc_spi_err_count` both rise during the window. |
 | Fail mode | Pins stay HIGH past 2.5 s → freshness predicate broken or `last_rx_tick` is being touched by something other than a clean poll. |
 | Duration | 10 min |
@@ -717,7 +717,7 @@ trip FORCE_ERROR" invariant against a flood of bad PECs.
 | | |
 |---|---|
 | Steps | 1. AMS in Run. Healthy chain.<br>2. With an LTC6811 emulator (or signal-injection rig that XORs one byte on every reply), corrupt **every** RDCV*/RDAUXA reply for 5 s.<br>3. Throughout: GDB-snapshot `g_state_telemetry` every 100 ms; record `g_ltc_pec_err_count` totals. |
-| Pass | `g_state_telemetry` stays `'R'` for the first ~1.5 s (= `kBmsStaleMs`), then transitions to `'E'` via the freshness predicate (no module's `last_rx_tick` could advance). `g_ltc_pec_err_count[*]` total climbs by ~80 (= 4 groups × 10 ICs × ~2 polls). No hardfault, no IWDG reset. |
+| Pass | `g_state_telemetry` stays `'R'` for the first ~1.5 s (= `BmsStaleMs`), then transitions to `'E'` via the freshness predicate (no module's `last_rx_tick` could advance). `g_ltc_pec_err_count[*]` total climbs by ~80 (= 4 groups × 10 ICs × ~2 polls). No hardfault, no IWDG reset. |
 | Fail mode | Transition to `'E'` happens earlier than 1.5 s → some path other than freshness is tripping. Hardfault → driver doesn't tolerate corrupt input. |
 | Duration | 15 min |
 
@@ -728,7 +728,7 @@ datasheet's 8-bit serial format (EN bit, A4..A0, don't-cares).
 
 | | |
 |---|---|
-| Steps | 1. Connect a calibrated bench resistor (e.g. 10 kΩ, gives V_aux ≈ 1.5 V) to the LTC_1 mux input wired to ADG731 channel 5 (= S6 on the schematic, → temp-index 5 in `kAdg731ChannelMap`).<br>2. AMS in Run. Wait 1 s for a full mux sweep.<br>3. GDB-read `cell_tempC[m][5]` for the module whose LTC_1 carries the rigged channel. |
+| Steps | 1. Connect a calibrated bench resistor (e.g. 10 kΩ, gives V_aux ≈ 1.5 V) to the LTC_1 mux input wired to ADG731 channel 5 (= S6 on the schematic, → temp-index 5 in `Adg731ChannelMap`).<br>2. AMS in Run. Wait 1 s for a full mux sweep.<br>3. GDB-read `cell_tempC[m][5]` for the module whose LTC_1 carries the rigged channel. |
 | Pass | Reads ~25 °C (matches the 10 kΩ NTC-equivalent at room temperature). |
 | Fail mode | Reads 25 °C on the wrong slot index (e.g. slot 4 or 6) → mux-address packing has a bit-flip vs the ADG731 truth table. |
 | Capture | LA on the LTC GPIO/COMM pin during STCOMM; verify the 8-bit shift contains `1<<7 | (5<<1)` = `0x8A`. |
@@ -741,19 +741,19 @@ Charge gets its DCC bit set, observable on the next round-trip read.
 
 | | |
 |---|---|
-| Steps | 1. AMS in Charge (after HIL-021/HIL-037), all modules healthy.<br>2. With the emulator, set `cell_mV[2][7] = 4150` while every other cell sits at 4100 mV. Wait 2 s (one balance window + one V-poll).<br>3. Issue an RDCFGA over the chain (via GDB invoking `Bus::read_register_group(pack_command(kCmdRDCFGA), …)`).<br>4. Decode the reply: chain slot 4 (module 2 LTC_1) should have `DCC[8]` set in CFGR4. |
+| Steps | 1. AMS in Charge (after HIL-021/HIL-037), all modules healthy.<br>2. With the emulator, set `cell_mV[2][7] = 4150` while every other cell sits at 4100 mV. Wait 2 s (one balance window + one V-poll).<br>3. Issue an RDCFGA over the chain (via GDB invoking `Bus::read_register_group(pack_command(CmdRDCFGA), …)`).<br>4. Decode the reply: chain slot 4 (module 2 LTC_1) should have `DCC[8]` set in CFGR4. |
 | Pass | DCC bit for cell channel 8 of chain slot 4 reads `1`. Other DCC bits across the chain read `0`. `g_balance_cycles_active` is incrementing. |
-| Fail mode | DCC bit set on the wrong cell channel → cell-to-DCC mapping in `maybe_run_balance_update` is off (cross-check §8 of `BMS_LTC6811.md`). Bit unset → balance policy lockout (check `max_tempC`, `kBalanceDeltaMv`). |
+| Fail mode | DCC bit set on the wrong cell channel → cell-to-DCC mapping in `maybe_run_balance_update` is off (cross-check §8 of `BMS_LTC6811.md`). Bit unset → balance policy lockout (check `max_tempC`, `BalanceDeltaMv`). |
 | Duration | 25 min |
 
-### HIL-061 — Balancing inhibited above kBalanceTempMax
+### HIL-061 — Balancing inhibited above BalanceTempMax
 
 **Goal**: thermal-lockout rule — even with imbalance, no DCC bits
-should be set once `max_tempC > kBalanceTempMax`.
+should be set once `max_tempC > BalanceTempMax`.
 
 | | |
 |---|---|
-| Steps | 1. Start from HIL-060's state: one cell at 4150 mV, DCC bit set.<br>2. Heat one NTC on any module past `kBalanceTempMax` (default 50 °C) with a hot-air gun. Wait for the next temperature sweep + balance window (1 s).<br>3. RDCFGA round-trip; decode DCC bits across the chain. |
+| Steps | 1. Start from HIL-060's state: one cell at 4150 mV, DCC bit set.<br>2. Heat one NTC on any module past `BalanceTempMax` (default 50 °C) with a hot-air gun. Wait for the next temperature sweep + balance window (1 s).<br>3. RDCFGA round-trip; decode DCC bits across the chain. |
 | Pass | All DCC bits read `0`. UART continues `s=C`. `g_balance_cycles_total` keeps incrementing (we did send a WRCFGA), but `g_balance_cycles_active` does NOT increase during the heated window. |
 | Fail mode | DCC bit still set → `compute_mask`'s thermal lockout isn't firing, or `max_tempC` isn't being recomputed. |
 | Duration | 20 min |

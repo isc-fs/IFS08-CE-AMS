@@ -19,18 +19,18 @@ namespace ams::ltc6820 {
 namespace {
 
 // HAL_SPI_TransmitReceive timeout. The longest single transaction we
-// send is the read-register-group reply (4 cmd + 8 * kLtcChainLength
+// send is the read-register-group reply (4 cmd + 8 * LtcChainLength
 // data = 84 bytes at <=1 MHz SCK -> ~700 us on the wire). 10 ms is
 // two orders of magnitude of headroom and still leaves the calling
 // task responsive.
-constexpr std::uint32_t kSpiTimeoutMs = 10;
+constexpr std::uint32_t SpiTimeoutMs = 10;
 
 // LTC6811 wakeup pulse width. Datasheet § "Core LTC6811 State
 // Transitions" specifies t_WAKE >= 10 µs. We use a 20 µs pulse + 30
 // µs gap per IC so the chain is solidly out of IDLE; the whole
-// kLtcChainLength sweep is still under 1 ms.
-constexpr std::uint32_t kWakePulseUs = 20;
-constexpr std::uint32_t kWakeGapUs   = 30;
+// LtcChainLength sweep is still under 1 ms.
+constexpr std::uint32_t WakePulseUs = 20;
+constexpr std::uint32_t WakeGapUs   = 30;
 
 // Busy-wait microsecond delay. AMS firmware has no DWT cycle counter
 // enabled (yet) so we approximate with a calibrated NOP loop. Coarse
@@ -70,7 +70,7 @@ Bus& Bus::default_instance() noexcept {
 
 bool Bus::write_chain_command(std::uint16_t cmd,
                               const std::uint8_t per_ic_data[][6]) noexcept {
-    std::uint8_t frame[4 + 8 * config::kLtcChainLength];
+    std::uint8_t frame[4 + 8 * config::LtcChainLength];
     ltc6811::build_write_frame(cmd, per_ic_data, frame, sizeof(frame));
     return transfer(frame, nullptr, sizeof(frame));
 }
@@ -81,11 +81,11 @@ bool Bus::stcomm() noexcept {
     // shift the COMM register contents out of its GPIO-SPI port to
     // the attached slave; data on MOSI is ignored, but the bus must
     // keep ticking SCK or the mux receives nothing.
-    constexpr std::size_t kDummyBytes = 3u * config::kLtcChainLength;
-    std::uint8_t frame[4 + kDummyBytes];
-    const auto cmd = ltc6811::pack_command(ltc6811::kCmdSTCOMM);
+    constexpr std::size_t DummyBytes = 3u * config::LtcChainLength;
+    std::uint8_t frame[4 + DummyBytes];
+    const auto cmd = ltc6811::pack_command(ltc6811::CmdSTCOMM);
     std::memcpy(frame, cmd.data(), 4);
-    std::memset(frame + 4, 0xFFu, kDummyBytes);
+    std::memset(frame + 4, 0xFFu, DummyBytes);
     return transfer(frame, nullptr, sizeof(frame));
 }
 
@@ -102,11 +102,11 @@ void Bus::wakeup() noexcept {
     // along the isoSPI links: each IC consumes one pulse to wake up,
     // and only when it's awake does it forward the next pulse to the
     // next IC. See LTC6811 datasheet § "Waking Up the Daisy Chain".
-    for (std::size_t i = 0; i < config::kLtcChainLength; ++i) {
+    for (std::size_t i = 0; i < config::LtcChainLength; ++i) {
         cs_low();
-        delay_us(kWakePulseUs);
+        delay_us(WakePulseUs);
         cs_high();
-        delay_us(kWakeGapUs);
+        delay_us(WakeGapUs);
     }
 }
 
@@ -124,19 +124,19 @@ bool Bus::transfer(const std::uint8_t* tx,
                                      const_cast<std::uint8_t*>(tx),
                                      rx,
                                      static_cast<std::uint16_t>(len),
-                                     kSpiTimeoutMs);
+                                     SpiTimeoutMs);
     } else if (tx != nullptr) {
         st = HAL_SPI_Transmit(hspi_,
                               const_cast<std::uint8_t*>(tx),
                               static_cast<std::uint16_t>(len),
-                              kSpiTimeoutMs);
+                              SpiTimeoutMs);
     } else if (rx != nullptr) {
         // Receive-only: HAL_SPI_Receive drives MOSI with whatever the
         // SPI peripheral last latched. The LTC6820 ignores MOSI
         // during read replies, so we don't need to force 0xFF.
         st = HAL_SPI_Receive(hspi_, rx,
                              static_cast<std::uint16_t>(len),
-                             kSpiTimeoutMs);
+                             SpiTimeoutMs);
     }
     cs_high();
     return st == HAL_OK;
@@ -149,7 +149,7 @@ bool Bus::send_command(const std::uint8_t cmd_frame_4[4]) noexcept {
 bool Bus::read_register_group(const std::uint8_t cmd_frame_4[4],
                               std::uint8_t*      out,
                               std::size_t        out_capacity) noexcept {
-    const std::size_t reply_len = 8 * config::kLtcChainLength;
+    const std::size_t reply_len = 8 * config::LtcChainLength;
     if (out_capacity < reply_len) {
         return false;
     }
@@ -158,16 +158,16 @@ bool Bus::read_register_group(const std::uint8_t cmd_frame_4[4],
     // (8 * N). We use a small scratch dummy buffer for the TX side
     // during the reply phase since HAL_SPI_TransmitReceive needs a
     // valid pointer for both directions.
-    std::uint8_t scratch[8 * config::kLtcChainLength];
+    std::uint8_t scratch[8 * config::LtcChainLength];
     std::memset(scratch, 0xFF, reply_len);
 
     cs_low();
     HAL_StatusTypeDef st = HAL_SPI_Transmit(
-        hspi_, const_cast<std::uint8_t*>(cmd_frame_4), 4, kSpiTimeoutMs);
+        hspi_, const_cast<std::uint8_t*>(cmd_frame_4), 4, SpiTimeoutMs);
     if (st == HAL_OK) {
         st = HAL_SPI_TransmitReceive(
             hspi_, scratch, out,
-            static_cast<std::uint16_t>(reply_len), kSpiTimeoutMs);
+            static_cast<std::uint16_t>(reply_len), SpiTimeoutMs);
     }
     cs_high();
     return st == HAL_OK;

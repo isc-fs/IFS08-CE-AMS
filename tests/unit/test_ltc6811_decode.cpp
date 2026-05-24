@@ -70,7 +70,7 @@ extern "C" void test_ltc6811_pec_lsb_is_zero(void) {
 // ---------------------------------------------------------------------------
 
 extern "C" void test_ltc6811_pack_command_wrcfga(void) {
-    const auto frame = pack_command(kCmdWRCFGA);
+    const auto frame = pack_command(CmdWRCFGA);
     TEST_ASSERT_EQUAL_HEX8(0x00, frame[0]);
     TEST_ASSERT_EQUAL_HEX8(0x01, frame[1]);
     TEST_ASSERT_EQUAL_HEX8(0x3D, frame[2]);   // 0x3D6E high byte
@@ -78,7 +78,7 @@ extern "C" void test_ltc6811_pack_command_wrcfga(void) {
 }
 
 extern "C" void test_ltc6811_pack_command_rdcva(void) {
-    const auto frame = pack_command(kCmdRDCVA);  // 0x0004
+    const auto frame = pack_command(CmdRDCVA);  // 0x0004
     TEST_ASSERT_EQUAL_HEX8(0x00, frame[0]);
     TEST_ASSERT_EQUAL_HEX8(0x04, frame[1]);
     // PEC of [0x00, 0x04] should match our table-driven implementation.
@@ -193,7 +193,7 @@ extern "C" void test_ltc6811_build_write_frame_chain10(void) {
     }
 
     std::uint8_t out[4 + 8 * 10] = {};
-    build_write_frame(kCmdWRCFGA, per_ic, out, sizeof(out));
+    build_write_frame(CmdWRCFGA, per_ic, out, sizeof(out));
 
     // Command frame in the first 4 bytes.
     TEST_ASSERT_EQUAL_HEX8(0x00, out[0]);
@@ -220,7 +220,7 @@ extern "C" void test_ltc6811_build_write_frame_short_buffer_safe(void) {
     std::uint8_t small[16];
     std::memset(small, 0xAA, sizeof(small));
 
-    build_write_frame(kCmdWRCFGA, per_ic, small, sizeof(small));
+    build_write_frame(CmdWRCFGA, per_ic, small, sizeof(small));
 
     // No bytes should have been touched -- still all 0xAA.
     for (std::size_t i = 0; i < sizeof(small); ++i) {
@@ -313,7 +313,7 @@ extern "C" void test_ltc6811_chain_discovery_nine_then_bad(void) {
     TEST_ASSERT_EQUAL_UINT8(9u, count_pec_valid_segments(buf, sizeof(buf), 10));
 }
 
-// 10 valid + trailing garbage past kLtcChainLength. The walker caps
+// 10 valid + trailing garbage past LtcChainLength. The walker caps
 // at max_chain so the garbage is invisible -> count is 10.
 extern "C" void test_ltc6811_chain_discovery_ten_plus_trailing_garbage(void) {
     std::uint8_t buf[8 * 12] = {};

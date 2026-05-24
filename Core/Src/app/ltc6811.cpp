@@ -15,7 +15,7 @@ namespace ams::ltc6811 {
 // ---------------------------------------------------------------------------
 namespace {
 
-constexpr std::uint16_t kCrc15Poly = 0x4599u;
+constexpr std::uint16_t Crc15Poly = 0x4599u;
 
 constexpr std::array<std::uint16_t, 256> make_pec15_table() {
     std::array<std::uint16_t, 256> t = {};
@@ -23,7 +23,7 @@ constexpr std::array<std::uint16_t, 256> make_pec15_table() {
         std::uint16_t rem = static_cast<std::uint16_t>(i << 7);
         for (int bit = 0; bit < 8; ++bit) {
             if (rem & 0x4000u) {
-                rem = static_cast<std::uint16_t>((rem << 1) ^ kCrc15Poly);
+                rem = static_cast<std::uint16_t>((rem << 1) ^ Crc15Poly);
             } else {
                 rem = static_cast<std::uint16_t>(rem << 1);
             }
@@ -33,7 +33,7 @@ constexpr std::array<std::uint16_t, 256> make_pec15_table() {
     return t;
 }
 
-constexpr auto kPec15Table = make_pec15_table();
+constexpr auto Pec15Table = make_pec15_table();
 
 // Convert the high byte of one of the COMM-register packed slots from
 // (ICOM[3:0], data_hi[3:0]). Reverse helper for tests.
@@ -51,7 +51,7 @@ std::uint16_t pec15(const std::uint8_t* data, std::size_t len) noexcept {
     for (std::size_t i = 0; i < len; ++i) {
         const std::uint8_t addr =
             static_cast<std::uint8_t>(((rem >> 7) ^ data[i]) & 0xFFu);
-        rem = static_cast<std::uint16_t>((rem << 8) ^ kPec15Table[addr]);
+        rem = static_cast<std::uint16_t>((rem << 8) ^ Pec15Table[addr]);
     }
     // The LTC6811 transmits the 15-bit remainder shifted up by 1 so
     // the LSB on the wire is always 0.
@@ -72,7 +72,7 @@ void build_write_frame(std::uint16_t        cmd,
                        const std::uint8_t   per_ic_data[][6],
                        std::uint8_t*        out,
                        std::size_t          out_capacity) noexcept {
-    const std::size_t needed = 4 + 8 * config::kLtcChainLength;
+    const std::size_t needed = 4 + 8 * config::LtcChainLength;
     if (out_capacity < needed) {
         // Caller passed too small a buffer; refuse to write anything.
         // (Asserting would be nicer but this is a no-exception build.)
@@ -80,7 +80,7 @@ void build_write_frame(std::uint16_t        cmd,
     }
     const auto cmd_frame = pack_command(cmd);
     std::memcpy(out, cmd_frame.data(), 4);
-    for (std::size_t i = 0; i < config::kLtcChainLength; ++i) {
+    for (std::size_t i = 0; i < config::LtcChainLength; ++i) {
         std::uint8_t* segment = out + 4 + 8 * i;
         std::memcpy(segment, per_ic_data[i], 6);
         const std::uint16_t crc = pec15(segment, 6);

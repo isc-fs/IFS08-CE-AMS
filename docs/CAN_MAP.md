@@ -464,7 +464,7 @@ Source: `Temperatures_MOD::parse()` `class_temperatures.cpp:73–134`.
 The charger no longer communicates over CAN; the only thing on the
 charger-assembly bus is an HMI for displaying cell V/T. Car-vs-charger
 context is now distinguished by VCU `0x100` heartbeat freshness at the
-moment of Start→Precharge transition: heard within `kVcuFreshMs`
+moment of Start→Precharge transition: heard within `VcuFreshMs`
 (1000 ms) → Car (target = Run), silent → Charger (target = Charge).
 The captured mode locks for the rest of the boot cycle and never
 re-evaluates.
@@ -493,7 +493,7 @@ update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-boo
 | Effect | `AcuCanTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting flash commands on FDCAN2. |
 | Failure modes | Wrong bus, wrong ID, wrong DLC, or any byte of the payload differing → frame silently dropped, no reboot. |
 
-Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`kBlBootReqCanId`, `kBlBootReqPayload`, `kBlBootReqDlc`).
+Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`BlBootReqCanId`, `BlBootReqPayload`, `BlBootReqDlc`).
 
 ---
 

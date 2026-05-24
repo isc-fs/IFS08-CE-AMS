@@ -26,7 +26,7 @@ struct Harness {
     bool              tsms             = false;
     bool              dash_chg          = false;
     ams::fsm::Mode    mode_locked      = ams::fsm::Mode::Undecided;
-    // Start past kSafetyBootGraceMs (2000) so the safety predicates
+    // Start past SafetyBootGraceMs (2000) so the safety predicates
     // are active. Scenarios that need the grace itself live in
     // test_safety_predicates.cpp.
     std::uint32_t     now              = 3000;
@@ -34,7 +34,7 @@ struct Harness {
     ams::fsm::State   state            = ams::fsm::State::Start;
 
     Harness() {
-        bms.module_online_mask = ams::config::kAllModulesMask;
+        bms.module_online_mask = ams::config::AllModulesMask;
         for (auto& t : bms.last_rx_tick) t = now;
         bms.min_cell_mV     = 3700;
         bms.max_cell_mV     = 3800;
@@ -126,13 +126,13 @@ extern "C" void test_sil_precharge_timeout_to_error(void) {
 
     // Sit in Precharge with no DC bus rise for > 1500 ms.
     h.veh.dc_bus_V = 20;
-    h.advance(ams::config::kPrechargeMaxMs + 100);
+    h.advance(ams::config::PrechargeMaxMs + 100);
     const auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenPrecharge);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
 }
 
 // ---------------------------------------------------------------------------
@@ -145,8 +145,8 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
 
-    // Pretend module 2 stopped reporting > kBmsStaleMs ago.
-    h.bms.last_rx_tick[2] = h.now - ams::config::kBmsStaleMs - 100;
+    // Pretend module 2 stopped reporting > BmsStaleMs ago.
+    h.bms.last_rx_tick[2] = h.now - ams::config::BmsStaleMs - 100;
 
     const auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
@@ -164,8 +164,8 @@ extern "C" void test_sil_charger_path(void) {
     // Start -> Precharge
     auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kCloseAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kClosePrecharge);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
     // Precharge -> Transition once bus catches up
     h.advance(20);
@@ -194,7 +194,7 @@ extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
     h.tsms = false;
     const auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kForceError);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::kOpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
 }

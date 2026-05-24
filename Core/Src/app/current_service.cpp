@@ -10,8 +10,8 @@
 namespace ams {
 
 CurrentService& CurrentService::instance() noexcept {
-    static CurrentService kInstance;
-    return kInstance;
+    static CurrentService Instance;
+    return Instance;
 }
 
 std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
@@ -25,7 +25,7 @@ std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
     //   delta_uV = v_uV - zero_mV * 1000        (+ above zero, - below)
     //   sensitivity = 20 mV/A * 10 = 200 (10*mV / A)
     //   mA       = delta_uV / sensitivity_uV_per_mA
-    //            = delta_uV * 10 / kCurrentMvPerAmpe1
+    //            = delta_uV * 10 / CurrentMvPerAmpe1
     //
     // The "+ = discharge, - = charge" convention is preserved: with
     // zero at 1.65 V and v_uV > zero on discharge, delta_uV is
@@ -35,12 +35,12 @@ std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
     // the multiplication must be done in int64.
     const std::int64_t v_uV =
         (static_cast<std::int64_t>(raw) *
-         static_cast<std::int64_t>(config::kAdcVrefMv) * 1000) /
-        config::kAdcMaxCount;
+         static_cast<std::int64_t>(config::AdcVrefMv) * 1000) /
+        config::AdcMaxCount;
     const std::int64_t delta_uV =
-        v_uV - static_cast<std::int64_t>(config::kCurrentZeroMv) * 1000;
+        v_uV - static_cast<std::int64_t>(config::CurrentZeroMv) * 1000;
     return static_cast<std::int32_t>(
-        (delta_uV * 10) / config::kCurrentMvPerAmpe1);
+        (delta_uV * 10) / config::CurrentMvPerAmpe1);
 }
 
 void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept {
@@ -56,8 +56,8 @@ void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) 
     if (state_.filtered_mA == 0 && mA != 0) {
         state_.filtered_mA = mA;
     } else {
-        state_.filtered_mA -= (state_.filtered_mA >> config::kCurrentFilterShift);
-        state_.filtered_mA += (mA >> config::kCurrentFilterShift);
+        state_.filtered_mA -= (state_.filtered_mA >> config::CurrentFilterShift);
+        state_.filtered_mA += (mA >> config::CurrentFilterShift);
     }
 }
 
@@ -76,8 +76,8 @@ void CurrentService::update_dcdc_from_adc(std::uint16_t raw,
     if (state_.dcdc_filtered_mA == 0 && mA != 0) {
         state_.dcdc_filtered_mA = mA;
     } else {
-        state_.dcdc_filtered_mA -= (state_.dcdc_filtered_mA >> config::kCurrentFilterShift);
-        state_.dcdc_filtered_mA += (mA >> config::kCurrentFilterShift);
+        state_.dcdc_filtered_mA -= (state_.dcdc_filtered_mA >> config::CurrentFilterShift);
+        state_.dcdc_filtered_mA += (mA >> config::CurrentFilterShift);
     }
 }
 
@@ -88,8 +88,8 @@ CurrentState CurrentService::snapshot() const noexcept {
 bool CurrentService::is_healthy(std::uint32_t now_tick) const noexcept {
     if (state_.sensor_fault)                                            return false;
     if (state_.last_update_tick == 0)                                   return false;
-    if (now_tick - state_.last_update_tick > config::kIStaleMs)         return false;
-    if (std::abs(state_.filtered_mA) > config::kCurrentMaxMa)                 return false;
+    if (now_tick - state_.last_update_tick > config::IStaleMs)         return false;
+    if (std::abs(state_.filtered_mA) > config::CurrentMaxMa)                 return false;
     return true;
 }
 

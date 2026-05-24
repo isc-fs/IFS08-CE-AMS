@@ -23,9 +23,9 @@
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_zero_point_reads_near_zero(void) {
     const std::uint16_t raw = static_cast<std::uint16_t>(
-        (ams::config::kCurrentZeroMv *
-         static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
-        ams::config::kAdcVrefMv);
+        (ams::config::CurrentZeroMv *
+         static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
+        ams::config::AdcVrefMv);
 
     const std::int32_t mA = ams::CurrentService::adc_to_mA(raw);
     TEST_ASSERT_LESS_OR_EQUAL_INT32(200, std::abs(mA));  // within 200 mA of zero
@@ -36,10 +36,10 @@ extern "C" void test_current_adc_zero_point_reads_near_zero(void) {
 // Pick raw = 1.75 V -> +100 mV delta. At 20 mV/A sensitivity -> +5 A.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_discharge_positive(void) {
-    const std::int32_t target_mv = ams::config::kCurrentZeroMv + 100;
+    const std::int32_t target_mv = ams::config::CurrentZeroMv + 100;
     const std::uint16_t raw = static_cast<std::uint16_t>(
-        (target_mv * static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
-        ams::config::kAdcVrefMv);
+        (target_mv * static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
+        ams::config::AdcVrefMv);
 
     const std::int32_t mA = ams::CurrentService::adc_to_mA(raw);
     // 100 mV / 20 mV/A = 5 A = 5000 mA. Allow +-200 mA rounding.
@@ -51,10 +51,10 @@ extern "C" void test_current_adc_discharge_positive(void) {
 // Pick raw = 1.55 V -> -100 mV delta -> -5 A.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_charge_negative(void) {
-    const std::int32_t target_mv = ams::config::kCurrentZeroMv - 100;
+    const std::int32_t target_mv = ams::config::CurrentZeroMv - 100;
     const std::uint16_t raw = static_cast<std::uint16_t>(
-        (target_mv * static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
-        ams::config::kAdcVrefMv);
+        (target_mv * static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
+        ams::config::AdcVrefMv);
 
     const std::int32_t mA = ams::CurrentService::adc_to_mA(raw);
     TEST_ASSERT_INT32_WITHIN(200, -5000, mA);
@@ -65,9 +65,9 @@ extern "C" void test_current_adc_charge_negative(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_symmetric_around_zero(void) {
     const std::int32_t zero_count =
-        (ams::config::kCurrentZeroMv *
-         static_cast<std::int32_t>(ams::config::kAdcMaxCount)) /
-        ams::config::kAdcVrefMv;
+        (ams::config::CurrentZeroMv *
+         static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
+        ams::config::AdcVrefMv;
 
     const auto plus_50  = ams::CurrentService::adc_to_mA(
         static_cast<std::uint16_t>(zero_count + 50));
@@ -82,11 +82,11 @@ extern "C" void test_current_adc_symmetric_around_zero(void) {
 
 // ---------------------------------------------------------------------------
 // adc_to_mA: full-scale discharge (S_CURRENT at the upper rail) maps
-// near the HW clipping limit of +82.5 A (kCurrentZeroMv + 1650 mV =
+// near the HW clipping limit of +82.5 A (CurrentZeroMv + 1650 mV =
 // Vref). Anything beyond clips at the rail and is not observable.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_upper_rail_near_82500_mA(void) {
-    const std::uint16_t raw = ams::config::kAdcMaxCount;  // 4095 -> Vref
+    const std::uint16_t raw = ams::config::AdcMaxCount;  // 4095 -> Vref
     const std::int32_t mA   = ams::CurrentService::adc_to_mA(raw);
     // 1650 mV / 20 mV/A = 82500 mA. Allow ±500 mA for integer rounding.
     TEST_ASSERT_INT32_WITHIN(500, 82500, mA);
