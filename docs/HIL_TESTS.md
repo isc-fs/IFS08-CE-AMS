@@ -280,7 +280,7 @@ supervisor responds within one period.
 
 ### HIL-014 — Cell undervoltage trips ERROR
 
-**Goal**: a single cell below `kCellUVmV` (2800 mV) trips the predicate
+**Goal**: a single cell below `kCellUnderVoltageMv` (2800 mV) trips the predicate
 set within one V-poll cycle + one MainTask period.
 
 | | |
@@ -293,11 +293,11 @@ set within one V-poll cycle + one MainTask period.
 
 ### HIL-015 — Cell overvoltage trips ERROR
 
-Same shape as HIL-014, value = 4250 mV (above `kCellOVmV` = 4200).
+Same shape as HIL-014, value = 4250 mV (above `kCellOverVoltageMv` = 4200).
 
 ### HIL-016 — Cell overtemperature trips ERROR
 
-Same shape; temp frame with temp[10] = 65 °C (above `kCellOTC` = 60).
+Same shape; temp frame with temp[10] = 65 °C (above `kCellOverTempC` = 60).
 
 ### HIL-017 — BMS module staleness trips ERROR
 

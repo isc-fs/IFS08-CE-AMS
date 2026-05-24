@@ -62,10 +62,10 @@ struct Inputs {
     }
 
     // Cell V / T ranges.
-    if (in.bms.min_cell_mV < config::kCellUVmV)      return true;
-    if (in.bms.max_cell_mV > config::kCellOVmV)      return true;
-    if (in.bms.min_tempC   < config::kCellUTC)       return true;
-    if (in.bms.max_tempC   > config::kCellOTC)       return true;
+    if (in.bms.min_cell_mV < config::kCellUnderVoltageMv)      return true;
+    if (in.bms.max_cell_mV > config::kCellOverVoltageMv)      return true;
+    if (in.bms.min_tempC   < config::kCellUnderTempC)       return true;
+    if (in.bms.max_tempC   > config::kCellOverTempC)       return true;
 
     // Current sensor: not faulted, fresh, within absolute limit.
     if (in.current.sensor_fault)                                       return true;
@@ -78,7 +78,7 @@ struct Inputs {
     // safety behaviour.
     if (in.now_tick - in.current.last_update_tick > config::kIStaleMs) return true;
 #endif
-    if (std::abs(in.current.filtered_mA) > config::kImaxMa)            return true;
+    if (std::abs(in.current.filtered_mA) > config::kCurrentMaxMa)            return true;
 
     // VCU DC bus heartbeat.
     if (in.now_tick - in.vehicle.last_dc_bus_tick > config::kVcuStaleMs) return true;

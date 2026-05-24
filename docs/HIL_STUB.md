@@ -110,7 +110,7 @@ flight and stub builds alike. The stub flag changes what the data
 This means: the cell V/T threshold logic in
 `safety_predicates.hpp` is exercised on the bench every time you
 boot a stub build — the seeded `cell_mV = 3750` is well within the
-`[kCellUVmV, kCellOVmV]` window, so the predicate sees "healthy"
+`[kCellUnderVoltageMv, kCellOverVoltageMv]` window, so the predicate sees "healthy"
 and lets the FSM out of Start. If you want to exercise the
 predicate's *fault* paths under stub, set
 `force_error_set = true` via whatever hook your bench uses (today

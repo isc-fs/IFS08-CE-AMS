@@ -19,11 +19,11 @@ namespace ams::config {
 // datasheet + FS rules before v1.0.0.
 // ---------------------------------------------------------------------------
 
-inline constexpr std::uint16_t kCellUVmV =  2800;  // under-voltage   -- COMMISSION
-inline constexpr std::uint16_t kCellOVmV =  4200;  // over-voltage    -- COMMISSION
-inline constexpr std::int16_t  kCellUTC  =   -10;  // under-temp °C   -- COMMISSION
-inline constexpr std::int16_t  kCellOTC  =    60;  // over-temp °C    -- COMMISSION
-inline constexpr std::int32_t  kImaxMa   = 200000; // |I| max mA      -- COMMISSION
+inline constexpr std::uint16_t kCellUnderVoltageMv =  2800;  // under-voltage   -- COMMISSION
+inline constexpr std::uint16_t kCellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
+inline constexpr std::int16_t  kCellUnderTempC  =   -10;  // under-temp °C   -- COMMISSION
+inline constexpr std::int16_t  kCellOverTempC  =    60;  // over-temp °C    -- COMMISSION
+inline constexpr std::int32_t  kCurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
 
 inline constexpr std::uint32_t kIStaleMs       =  200;  // current sensor stale
 inline constexpr std::uint32_t kBmsStaleMs     = 1500;  // any BMS module silent
@@ -118,9 +118,9 @@ inline constexpr std::uint32_t kAcuTxTempMaxModuleBId = 0x137;  // BE i16 degC x
 // Legacy 0x450 current frame retired in fix/53 -- superseded by 0x135
 // (signed deciamps + DCDC in the same frame). kAcuTxCurrWarn/Over/
 // NormId reserved for future use.
-inline constexpr std::uint32_t kAcuTxCurrWarnId       = 0x500;
-inline constexpr std::uint32_t kAcuTxCurrOverId       = 0x501;
-inline constexpr std::uint32_t kAcuTxCurrNormId       = 0x502;
+inline constexpr std::uint32_t kAcuTxCurrentWarnId       = 0x500;
+inline constexpr std::uint32_t kAcuTxCurrentOverLimitId       = 0x501;
+inline constexpr std::uint32_t kAcuTxCurrentNormalId       = 0x502;
 
 inline constexpr std::uint32_t kEcuFastTxMs           = 50;
 inline constexpr std::uint32_t kEcuMidTxMs            = 100;
@@ -128,7 +128,7 @@ inline constexpr std::uint32_t kEcuSlowTxMs           = 250;
 
 // Stub sentinel for the temp_dcdc byte (0x137 data[4..5]) while the
 // DCDC temperature sensor is not wired. INT16_MIN = "not available".
-inline constexpr std::int16_t  kTempDcdcStubValue     = -32768;
+inline constexpr std::int16_t  kDcdcTempStubValue     = -32768;
 
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         kPrechargeRatio   = 0.95f;
@@ -151,7 +151,7 @@ inline constexpr float         kPrechargeRatio   = 0.95f;
 // Bipolar range constrained by the 0..3.3 V ADC rail: +/- 1.65 V swing
 // around mid-rail = +/- 82.5 A measurable before clipping. Real
 // currents above that are not observable by firmware (the diff amp
-// saturates at the rail). The kImaxMa safety threshold is therefore
+// saturates at the rail). The kCurrentMaxMa safety threshold is therefore
 // a defensive-only check in this HW revision -- it can never trip
 // from a clipping anomaly because the firmware's reading caps at
 // 82.5 A. Re-evaluate if the diff-amp gain ever drops.

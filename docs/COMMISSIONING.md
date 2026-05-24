@@ -18,10 +18,10 @@ this season. Replace in `ams_config.hpp`:
 
 | Constant | Default | Action |
 |---|---|---|
-| `kCellUVmV` | 2800 | set to **datasheet minimum + 100 mV margin** |
-| `kCellOVmV` | 4200 | set to **datasheet maximum − 100 mV margin** |
-| `kCellUTC`  | −10  | set to **datasheet minimum operating °C** |
-| `kCellOTC`  | 60   | set to **the lower of: datasheet max OR FS rule** |
+| `kCellUnderVoltageMv` | 2800 | set to **datasheet minimum + 100 mV margin** |
+| `kCellOverVoltageMv` | 4200 | set to **datasheet maximum − 100 mV margin** |
+| `kCellUnderTempC`  | −10  | set to **datasheet minimum operating °C** |
+| `kCellOverTempC`  | 60   | set to **the lower of: datasheet max OR FS rule** |
 
 Sign off the values in the project log together with the rules version
 they're derived from.
@@ -47,7 +47,7 @@ Nominal calibration:
   rises above 1.65 V → positive mA. Charge does the opposite.
 - **Observable range**: bipolar `±82.5 A` (constrained by the 0–3.3 V
   ADC rail). Currents beyond that clip at the rail and become
-  indistinguishable; `kImaxMa = 200 A` is therefore a defensive-only
+  indistinguishable; `kCurrentMaxMa = 200 A` is therefore a defensive-only
   predicate on this HW revision — see §2.4.
 
 Tolerance of the Vref/2 divider and R10..R13 mismatch can shift the
@@ -77,10 +77,10 @@ zero point by tens of mV; calibrate before v1.0.0.
 
 ### 2.3 Absolute limit
 
-`kImaxMa` defaults to 200 000 mA (200 A). On the current HW revision
-the ADC clips at ±82.5 A, so the predicate `|filtered_mA| > kImaxMa`
+`kCurrentMaxMa` defaults to 200 000 mA (200 A). On the current HW revision
+the ADC clips at ±82.5 A, so the predicate `|filtered_mA| > kCurrentMaxMa`
 never trips in practice — it's a defensive-only check. If you want a
-real over-limit safety, lower `kImaxMa` to e.g. 75 000 mA (75 A, with
+real over-limit safety, lower `kCurrentMaxMa` to e.g. 75 000 mA (75 A, with
 10 % margin from the clipping rail). Otherwise leave at the FS-rules
 value and treat clipping at the rail as the de-facto trip.
 
@@ -282,7 +282,7 @@ touching the IWDG constants.
 | Run    | 40 | thermal soak test at peak discharge |
 | Charge | 75 | thermal soak test at max charge rate |
 
-Increase the Run duty if the pack hits `kCellOTC − 5°C` during a 22-
+Increase the Run duty if the pack hits `kCellOverTempC − 5°C` during a 22-
 minute autocross run. The 75 % charge default is conservative; you
 can drop to 60 % if the charger is itself temperature-limited.
 

@@ -67,7 +67,7 @@ extern "C" void test_predicates_cell_undervoltage(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.min_cell_mV = ams::config::kCellUVmV - 1;
+    bms.min_cell_mV = ams::config::kCellUnderVoltageMv - 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -76,7 +76,7 @@ extern "C" void test_predicates_cell_overvoltage(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.max_cell_mV = ams::config::kCellOVmV + 1;
+    bms.max_cell_mV = ams::config::kCellOverVoltageMv + 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -85,7 +85,7 @@ extern "C" void test_predicates_cell_overtemp(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    bms.max_tempC = ams::config::kCellOTC + 1;
+    bms.max_tempC = ams::config::kCellOverTempC + 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 
@@ -103,7 +103,7 @@ extern "C" void test_predicates_current_overlimit(void) {
     ams::CurrentState cur;
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
-    cur.filtered_mA = ams::config::kImaxMa + 1;
+    cur.filtered_mA = ams::config::kCurrentMaxMa + 1;
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
 }
 

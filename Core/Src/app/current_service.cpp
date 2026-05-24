@@ -89,7 +89,7 @@ bool CurrentService::is_healthy(std::uint32_t now_tick) const noexcept {
     if (state_.sensor_fault)                                            return false;
     if (state_.last_update_tick == 0)                                   return false;
     if (now_tick - state_.last_update_tick > config::kIStaleMs)         return false;
-    if (std::abs(state_.filtered_mA) > config::kImaxMa)                 return false;
+    if (std::abs(state_.filtered_mA) > config::kCurrentMaxMa)                 return false;
     return true;
 }
 
