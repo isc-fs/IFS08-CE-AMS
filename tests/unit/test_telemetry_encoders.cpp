@@ -208,32 +208,3 @@ extern "C" void test_telem_field_independence(void) {
     TEST_ASSERT_EQUAL_UINT8(base_status[7], perturbed[7]);
 }
 
-// 0x4A3 diag frame (#123). Bench-only; remove when seeder issue closes.
-extern "C" void test_telem_diag_layout(void) {
-    const auto f = ams::telemetry::encode_diag(
-        /*bms_poll_task_state=*/0xA3u,        // Blocked, healthy
-        /*bms_seed_count_lo=*/  0x42u,
-        /*free_heap_bytes=*/    0x1234u);
-    TEST_ASSERT_EQUAL_UINT8(0xA3u, f[0]);
-    TEST_ASSERT_EQUAL_UINT8(0x42u, f[1]);
-    TEST_ASSERT_EQUAL_UINT8(0x12u, f[2]);   // BE high byte
-    TEST_ASSERT_EQUAL_UINT8(0x34u, f[3]);   // BE low byte
-    TEST_ASSERT_EQUAL_UINT8(0x00u, f[4]);
-    TEST_ASSERT_EQUAL_UINT8(0x00u, f[5]);
-    TEST_ASSERT_EQUAL_UINT8(0x00u, f[6]);
-    TEST_ASSERT_EQUAL_UINT8(0x00u, f[7]);
-}
-
-extern "C" void test_telem_diag_free_heap_saturates_at_64k(void) {
-    const auto f1 = ams::telemetry::encode_diag(0, 0, 0xFFFFu);
-    TEST_ASSERT_EQUAL_UINT8(0xFFu, f1[2]);
-    TEST_ASSERT_EQUAL_UINT8(0xFFu, f1[3]);
-
-    const auto f2 = ams::telemetry::encode_diag(0, 0, 0xFFFFFFFFu);
-    TEST_ASSERT_EQUAL_UINT8(0xFFu, f2[2]);   // saturated, not truncated
-    TEST_ASSERT_EQUAL_UINT8(0xFFu, f2[3]);
-
-    const auto f3 = ams::telemetry::encode_diag(0, 0, 0u);
-    TEST_ASSERT_EQUAL_UINT8(0x00u, f3[2]);
-    TEST_ASSERT_EQUAL_UINT8(0x00u, f3[3]);
-}
