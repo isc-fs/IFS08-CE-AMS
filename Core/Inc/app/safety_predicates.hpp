@@ -54,9 +54,7 @@ struct Inputs {
     // BMS module-online mask + freshness. Real LTC chain (flight) or
     // the Pi Pico LTC6820+LTC6811 emulator (HIL bench) feeds these
     // fields on the same 250 ms cadence; either way the predicate
-    // treats them identically. The legacy seed_for_hil_stub data
-    // source was retired in #205 (the umbrella AMS_BMS_HIL_STUB flag
-    // still gates diagnostics / telemetry layout / safety relax).
+    // treats them identically.
     if (in.bms.module_online_mask != config::AllModulesMask) return true;
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         if (in.now_tick - in.bms.last_rx_tick[m] > config::BmsStaleMs) return true;

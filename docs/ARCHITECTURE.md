@@ -66,10 +66,12 @@ Everything else exists to enforce these:
    ``sdc_closed`` predicate is gone.
 
 > The HIL bench rig uses the `AMS_BMS_HIL_STUB` build flag to
-> deliberately violate invariants 5 and parts of 1 / 7 (the BMS-
-> side predicates). It is **never compiled into a flight build**.
-> Full semantics in [`HIL_STUB.md`](HIL_STUB.md); a flight-release
-> SHA check that proves the flag is absent is documented there too.
+> relax a few bench-only invariants (current-sensor freshness, latch
+> stickiness, telemetry layout). The legacy BMS-data-source seeder
+> was retired in #207; HIL builds now drive a real LTC6820/LTC6811
+> via the Pi Pico emulator (IFS08_HIL `feat/pico-ltc-emulator`).
+> The flag is **never compiled into a flight build**. Full semantics
+> in [`HIL_STUB.md`](HIL_STUB.md).
 
 ---
 
@@ -163,11 +165,11 @@ Owns the LTC6811 isoSPI conversation end-to-end and the balance
 DCC writes (`maybe_run_balance_update` runs every
 `BalanceUpdatePolls` voltage cycles, inline after RDCV[A-D],
 sharing the same `LTC6820::Bus`). Single owner of the chain — no
-bus mutex, no producer/consumer queue. Under `-DAMS_BMS_HIL_STUB`
-the body collapses to a 250 ms loop that seeds a nominal-healthy
-`BmsState` via `BmsService::seed_for_hil_stub` and never touches
-SPI — the real LTC/SPI path is compiled out, not guarded at
-runtime. See [`HIL_STUB.md`](HIL_STUB.md) for details.
+bus mutex, no producer/consumer queue. Runs on every build flavour
+post-#207 — HIL_STUB no longer compiles out the real LTC path; the
+bench drives a Pi Pico LTC6820/LTC6811 emulator on MLC2 J8. See
+[`HIL_STUB.md`](HIL_STUB.md) for the remaining bench-only concerns
+(diag counters, 0x4A2 layout, current-sensor freshness relax).
 
 The legacy `BmsRxTask` was retired in v1.2.0 (#73) once the BMS
 data path moved off FDCAN2; the bootloader-trigger frame it used
@@ -429,7 +431,7 @@ sequenceDiagram
 
   par scheduler running
     init->>init: ErrorLatch::init (DBP unlock)
-    Note over init: Under -DAMS_BMS_HIL_STUB:<br/>clear ErrorLatch +<br/>skip LTC chain discovery
+    Note over init: Under -DAMS_BMS_HIL_STUB:<br/>clear ErrorLatch (defence-in-depth)
     init->>HW: FDCAN1 filter + ActivateNotification + Start
     init->>HW: LTC6820 configure + wakeup + chain discovery
     alt chain discovered != LtcChainLength
@@ -470,7 +472,7 @@ struct. **Single-writer / many-reader**, lock-free.
 
 | Service | Writer | Readers |
 |---|---|---|
-| [`BmsService`](../Core/Inc/app/bms_service.hpp) | `BmsPollTask` (LTC6811 isoSPI sweeps; `update_from_ltc_response` + `update_temperature` + `seed_for_hil_stub` under HIL flag) | MainTask, AcuCanTask, BalanceController |
+| [`BmsService`](../Core/Inc/app/bms_service.hpp) | `BmsPollTask` (LTC6811 isoSPI sweeps; `update_from_ltc_response` + `update_temperature`) | MainTask, AcuCanTask, BalanceController |
 | [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (ADC), `AcuCanTask` (charger flag) | MainTask, BmsPollTask |
 | [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `AcuCanTask` | MainTask |
 
