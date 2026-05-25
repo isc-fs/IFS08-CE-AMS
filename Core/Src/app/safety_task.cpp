@@ -45,7 +45,6 @@ extern FDCAN_HandleTypeDef hfdcan1;
 extern osThreadId_t BmsPollTaskHandle;
 
 // #123 diagnostics maintained by other TUs.
-extern volatile std::uint32_t g_bms_seed_count;     // bms_service.cpp
 #if defined(AMS_BMS_HIL_STUB)
 extern volatile std::uint8_t  g_app_init_progress;  // app_init_task.cpp (#123 iter 12)
 // ACU RX dispatch liveness counter. Surfaced in 0x4A2[4] -- ticks on

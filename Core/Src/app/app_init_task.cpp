@@ -166,7 +166,12 @@ void ams_app_init_task_run(void *argument)
     //    ERROR and refuse to leave it until the operator power-
     //    cycles with the chain healthy.
     // ----------------------------------------------------------------
-#if !defined(AMS_BMS_HIL_STUB)
+    // LTC chain discovery runs on every boot regardless of build flavour.
+    // On the HIL bench this requires the Pi Pico LTC6820+LTC6811 emulator
+    // (IFS08_HIL feat/pico-ltc-emulator) to be wired and running on
+    // MLC2 J8; without it discovery fails, the latch sticks, and the
+    // bench comes up in Error -- which is the correct behaviour now that
+    // the BMS-data stub is gone (see #205).
     auto& ltc_bus = ams::ltc6820::Bus::default_instance();
     ltc_bus.configure(&hspi1,
                       ams::ltc6820::CsPin{ LTC6820_CS_GPIO_Port, LTC6820_CS_Pin });
@@ -193,12 +198,6 @@ void ams_app_init_task_run(void *argument)
         ams::ErrorLatch::set();
         ams::Relays::open_all();
     }
-#else
-    // HIL stub: no LTC chain on the bench. Skipping discovery avoids
-    // the guaranteed-fail path that would re-latch + post ForceError
-    // right after we just cleared the latch above.
-    (void)hspi1;
-#endif
 
 #if defined(AMS_BMS_HIL_STUB)
     g_app_init_progress = 7u;   // reached self-exit

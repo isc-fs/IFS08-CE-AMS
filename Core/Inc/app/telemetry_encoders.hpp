@@ -108,8 +108,8 @@ using Frame = std::array<std::uint8_t, 8>;
 // bench injects it from the host so observability is unaffected:
 //   byte 3   bms_poll_task_state  0xA0 | (osThreadGetState low nibble),
 //                                 or 0xFF when BmsPollTaskHandle == NULL
-//   byte 4   bms_seed_count_lo  low byte of g_bms_seed_count
-//   byte 5   free_heap_kb       free heap >> 8 (256 B units), 0xFF saturates
+//   byte 4   acu_rx_total_lo    low byte of g_acu_rx_total (ACU RX liveness)
+//   byte 5   tsms_dash_chg_byte 0x80 sentinel | mode_locked<<2 | TSMS<<1 | DASH_CHG
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::int8_t clip_int8(std::int16_t v) noexcept {
     if (v >  127) return  127;
@@ -123,8 +123,8 @@ using Frame = std::array<std::uint8_t, 8>;
                                         std::uint8_t        heartbeat,
                                         std::uint8_t        tx_fail_count_lo,
                                         std::uint8_t        bms_task_state_byte,
-                                        std::uint8_t        bms_seed_count_lo,
-                                        std::uint8_t        free_heap_kb) noexcept {
+                                        std::uint8_t        acu_rx_total_lo,
+                                        std::uint8_t        tsms_dash_chg_byte) noexcept {
     Frame f = {};
     f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
     f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
@@ -132,8 +132,8 @@ using Frame = std::array<std::uint8_t, 8>;
     // Bench: bytes 3..5 carry diagnostic probes for #123.
     (void)veh;
     f[3] = bms_task_state_byte;
-    f[4] = bms_seed_count_lo;
-    f[5] = free_heap_kb;
+    f[4] = acu_rx_total_lo;
+    f[5] = tsms_dash_chg_byte;
     f[6] = tx_fail_count_lo;
     f[7] = heartbeat;
     return f;

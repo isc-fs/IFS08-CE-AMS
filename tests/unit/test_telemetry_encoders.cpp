@@ -126,8 +126,8 @@ extern "C" void test_telem_temps_layout(void) {
 #if defined(AMS_BMS_HIL_STUB)
         ,
         /*bms_task_state_byte=*/0xA3u,
-        /*bms_seed_count_lo=*/0x55u,
-        /*free_heap_kb=*/0x21u
+        /*acu_rx_total_lo=*/0x55u,
+        /*tsms_dash_chg_byte=*/0x21u
 #endif
     );
 
@@ -137,8 +137,8 @@ extern "C" void test_telem_temps_layout(void) {
 #if defined(AMS_BMS_HIL_STUB)
     // Bench layout: bytes 3..5 carry #123 diag probes; dc_bus_V dropped.
     TEST_ASSERT_EQUAL_UINT8(0xA3, f[3]);   // bms_task_state_byte
-    TEST_ASSERT_EQUAL_UINT8(0x55, f[4]);   // bms_seed_count_lo
-    TEST_ASSERT_EQUAL_UINT8(0x21, f[5]);   // free_heap_kb
+    TEST_ASSERT_EQUAL_UINT8(0x55, f[4]);   // acu_rx_total_lo
+    TEST_ASSERT_EQUAL_UINT8(0x21, f[5]);   // tsms_dash_chg_byte
 #else
     // Flight layout: dc_bus_V LE in 3..4, byte 5 reserved.
     TEST_ASSERT_EQUAL_UINT8(0x5E, f[3]);   // 350 = 0x015E, LE

@@ -51,11 +51,12 @@ struct Inputs {
     // hasn't yet reported -- equivalent fault, fewer special cases.
     if (in.now_tick < config::SafetyBootGraceMs) return false;
 
-    // BMS module-online mask + freshness. Under -DAMS_BMS_HIL_STUB the
-    // BmsPollTask seeds these fields with nominal-healthy values every
-    // 250 ms (see bms_service.hpp::seed_for_hil_stub), so this block
-    // is HIL-agnostic -- the predicate doesn't know or care whether
-    // the data came from a real LTC chain or from the stub seeder.
+    // BMS module-online mask + freshness. Real LTC chain (flight) or
+    // the Pi Pico LTC6820+LTC6811 emulator (HIL bench) feeds these
+    // fields on the same 250 ms cadence; either way the predicate
+    // treats them identically. The legacy seed_for_hil_stub data
+    // source was retired in #205 (the umbrella AMS_BMS_HIL_STUB flag
+    // still gates diagnostics / telemetry layout / safety relax).
     if (in.bms.module_online_mask != config::AllModulesMask) return true;
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         if (in.now_tick - in.bms.last_rx_tick[m] > config::BmsStaleMs) return true;

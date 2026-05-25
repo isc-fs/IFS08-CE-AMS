@@ -204,13 +204,14 @@ int main(void)
    * cadence (10 ms period; ~100 ms reload at nominal LSI). */
 
   /* refactor/19 phase 2: the pre-scheduler ErrorLatch clear from
-   * PR #114 was retired here. BmsPollTask now seeds a nominal-
-   * healthy BmsState under -DAMS_BMS_HIL_STUB (see bms_service.hpp
-   * ::seed_for_hil_stub), so the predicate no longer trips on the
-   * bench's missing LTC chain -- there's no fault to latch in the
-   * first place. App_InitTask still calls ErrorLatch::clear() under
-   * the same flag as defence-in-depth against a backup register
-   * surviving a previous (pre-phase-2) session. */
+   * PR #114 was retired here. App_InitTask still calls
+   * ErrorLatch::clear() under -DAMS_BMS_HIL_STUB as defence-in-depth
+   * against a backup register surviving a previous (pre-phase-2)
+   * session on the bench. The legacy seed_for_hil_stub data source
+   * was removed in #205; HIL builds now rely on the Pi Pico LTC
+   * emulator (IFS08_HIL feat/pico-ltc-emulator) to feed real
+   * LTC6820/LTC6811 traffic, so the safety predicate sees identical
+   * inputs in flight and on the bench. */
   /* USER CODE END 2 */
 
   /* Init scheduler */
