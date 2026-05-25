@@ -98,18 +98,25 @@ void ams_app_init_task_run(void *argument)
     send_boot_trace(0xB1u, g_fdcan1_start_result);  // will silently fail (FDCAN not started)
 #endif
 
-#if defined(AMS_BMS_HIL_STUB)
+#if defined(AMS_BMS_HIL_STUB) || defined(AMS_HIL_CLEAR_ERROR_LATCH)
     // HIL-only: VBAT-backed RTC_BKP_DR1 outlives long power-offs on
     // the bench (carrier has a coin cell + bulk caps), and the bench
-    // has no SWD to clear it externally. The whole point of the stub
-    // build is "real BMS safety doesn't apply here" -- a stale latch
-    // from a previous session has the same semantic, so wipe it on
-    // every boot. NEVER compiled into flight HW: this defeats the
-    // sticky-error contract that protects against intermittent
+    // has no SWD to clear it externally. A stale latch from a previous
+    // session would trap the bench in Error for the entire iteration.
+    // Two independent gates so the bench can mix-and-match:
+    //   AMS_BMS_HIL_STUB                -> stub-data builds (legacy)
+    //   AMS_HIL_CLEAR_ERROR_LATCH        -> real-LTC builds against the
+    //                                       Pico emulator (#224); recover
+    //                                       from transient discovery
+    //                                       glitches without a debugger
+    // NEVER compiled into flight HW under either gate: this defeats
+    // the sticky-error contract that protects against intermittent
     // pre-charge / SDC events surviving a brown-out.
     ams::ErrorLatch::clear();
+#  if defined(AMS_BMS_HIL_STUB)
     g_app_init_progress = 2u;   // post-ErrorLatch::clear
     send_boot_trace(0xB2u, g_fdcan1_start_result);  // also silent (pre-Start)
+#  endif
 #endif
 
     // FDCAN1 (accumulator + boot-trigger bus). FDCAN2 is left
