@@ -53,7 +53,11 @@
 #include <math.h>
 
 #if !defined  (HSE_VALUE)
-#define HSE_VALUE    ((uint32_t)25000000) /*!< Value of the External oscillator in Hz */
+/* Bench MLC2 + flight carrier both use a 24 MHz HSE crystal (matches
+ * AMS.ioc RCC.HSE_VALUE + stm32h7xx_hal_conf.h). The CMSIS default is
+ * 25 MHz; leaving it caused SystemCoreClockUpdate to write a value
+ * ~4 % off, which broke FDCAN ACK timing on the bench -- #231. */
+#define HSE_VALUE    ((uint32_t)24000000) /*!< Value of the External oscillator in Hz */
 #endif /* HSE_VALUE */
 
 #if !defined  (CSI_VALUE)
