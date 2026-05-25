@@ -125,12 +125,16 @@ void ams_app_init_task_run(void *argument)
     // (BmsRxTask was retired in #73; the boot-trigger frame moved to
     // FDCAN1, handled inside AcuCanTask).
     //
-    // GlobalFilter: accept every unmatched standard / extended frame
-    // into FIFO0 (covers VCU 0x100 ext, 0x600 std, charger 0x18FF50E7
-    // ext, boot-trigger 0x002 std). Remote frames rejected on both.
+    // GlobalFilter: accept every unmatched standard frame into FIFO0;
+    // REJECT extended frames at the hardware filter. The AMS is
+    // standard-only on FDCAN1 -- nothing the firmware listens for is
+    // 29-bit (VCU 0x100, boot-trigger 0x002 both fit in 11 bits; the
+    // legacy 0x18FF50E7 charger-detect was retired in fix/48). Rejecting
+    // extended at the HW gate keeps the RX ISR off junk frames and
+    // makes the contract crisp. Remote frames rejected on both kinds.
     HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,
         FDCAN_ACCEPT_IN_RX_FIFO0,
-        FDCAN_ACCEPT_IN_RX_FIFO0,
+        FDCAN_REJECT,
         FDCAN_REJECT_REMOTE,
         FDCAN_REJECT_REMOTE);
 #if defined(AMS_BMS_HIL_STUB)
