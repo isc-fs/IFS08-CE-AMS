@@ -149,28 +149,35 @@ bool Bus::send_command(const std::uint8_t cmd_frame_4[4]) noexcept {
 bool Bus::read_register_group(const std::uint8_t cmd_frame_4[4],
                               std::uint8_t*      out,
                               std::size_t        out_capacity) noexcept {
-    const std::size_t reply_len = 8 * config::LtcChainLength;
+    constexpr std::size_t reply_len = 8 * config::LtcChainLength;
+    constexpr std::size_t full_len  = 4 + reply_len;
     if (out_capacity < reply_len) {
         return false;
     }
 
-    // Single CS-low transaction: command (4) followed by chain reply
-    // (8 * N). We use a small scratch dummy buffer for the TX side
-    // during the reply phase since HAL_SPI_TransmitReceive needs a
-    // valid pointer for both directions.
-    std::uint8_t scratch[8 * config::LtcChainLength];
-    std::memset(scratch, 0xFF, reply_len);
+    // Single CS-low, single HAL call (#213). The previous version
+    // issued HAL_SPI_Transmit(4) followed by HAL_SPI_TransmitReceive(80)
+    // inside one CS pulse; the few-us gap between the two HAL calls
+    // (peripheral mode change TX-only -> full-duplex) breaks bit-sync
+    // on slaves that re-sync on every CS edge -- notably the Pi Pico
+    // LTC6820/LTC6811 emulator (IFS08_HIL feat/pico-ltc-emulator) which
+    // sampled the cmd phase with garbled PECs. A single 84-byte
+    // TransmitReceive holds the clock continuous across both phases.
+    // MISO from the cmd phase is discarded (LTC ignores it).
+    std::uint8_t tx[full_len];
+    std::uint8_t rx[full_len];
+    std::memcpy(tx, cmd_frame_4, 4);
+    std::memset(tx + 4, 0xFFu, reply_len);
 
     cs_low();
-    HAL_StatusTypeDef st = HAL_SPI_Transmit(
-        hspi_, const_cast<std::uint8_t*>(cmd_frame_4), 4, SpiTimeoutMs);
-    if (st == HAL_OK) {
-        st = HAL_SPI_TransmitReceive(
-            hspi_, scratch, out,
-            static_cast<std::uint16_t>(reply_len), SpiTimeoutMs);
-    }
+    const HAL_StatusTypeDef st = HAL_SPI_TransmitReceive(
+        hspi_, tx, rx, static_cast<std::uint16_t>(full_len), SpiTimeoutMs);
     cs_high();
-    return st == HAL_OK;
+    if (st != HAL_OK) {
+        return false;
+    }
+    std::memcpy(out, rx + 4, reply_len);
+    return true;
 }
 
 }  // namespace ams::ltc6820

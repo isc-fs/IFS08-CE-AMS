@@ -99,7 +99,29 @@ void run_voltage_poll() {
     //    wait is 3-4 ms -- well below the 50 ms budget.
     osDelay(config::AdcvSettleMs);
 
-    // 3. Read the four cell-voltage register groups into one
+    // 3. Warm-up cmd before RDCVA (#214). After the multi-ms idle
+    //    between ADCV+settle and the first RDCV, MOSI drifts toward
+    //    its idle-high level long enough that slaves which re-sync
+    //    on CS edges (e.g. the Pi Pico LTC6820 emulator on the HIL
+    //    bench) sample a stray HIGH as bit 7 of byte 0 of RDCVA --
+    //    PEC then mismatches for every IC in the chain. Issuing a
+    //    no-op RDCFGA first burns the stale-MOSI sample into a cmd
+    //    whose reply we discard; the subsequent RDCV* commands come
+    //    back-to-back with MOSI continuously driven, so bit-sync
+    //    holds. ~700 us at 1 MHz SCK, well under the 50 ms budget.
+    //
+    //    TODO: replace settle delay + warm-up with PLADC polling
+    //    (LTC6811 cmd 0x0714) so we hold CS low across the
+    //    conversion and there's no idle gap to bridge.
+    const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
+    std::uint8_t warmup_reply[8 * config::LtcChainLength];
+    if (!bus.read_register_group(rdcfga.data(),
+                                 warmup_reply, sizeof(warmup_reply))) {
+        ++g_ltc_spi_err_count;
+        return;
+    }
+
+    // 4. Read the four cell-voltage register groups into one
     //    contiguous buffer that BmsService::update_from_ltc_response
     //    can walk. Group layout:
     //      [A: 10 segments][B: 10 segments][C: 10 segments][D: 10 segments]
