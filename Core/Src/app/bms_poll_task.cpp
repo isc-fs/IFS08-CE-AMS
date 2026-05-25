@@ -207,6 +207,14 @@ void maybe_run_balance_update() {
 // budget and the 100 ms acceptance criterion stays achievable with
 // HAL/jitter overhead.
 // ---------------------------------------------------------------------------
+// Per-channel sweep-failure tracking. `last_mask` reflects ONLY the most
+// recent sweep (cleared at the start). `sticky_mask` is OR-accumulated
+// across all sweeps since boot; useful for catching intermittent NTC /
+// mux failures that don't show up every cycle. Reset via SWD/GDB by
+// writing 0 to sticky_mask.
+extern "C" volatile std::uint32_t g_temp_sweep_last_mask   = 0;
+extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
+
 void run_temperature_poll() {
     using namespace ams;
 
@@ -215,6 +223,13 @@ void run_temperature_poll() {
     // Same mux-select payload broadcast to every LTC each step. The
     // ADG731 ignores the bits it can't address (only ch < 32 used).
     std::uint8_t per_ic_payload[config::LtcChainLength][6];
+
+    // Per-sweep failure tracking. Each bit corresponds to one
+    // temperature-table channel (ch_idx 0..19) that failed at any of
+    // the WRCOMM / STCOMM / ADAX / RDAUXA steps. Captured at end of
+    // sweep into the globals so the bench can localise which NTC /
+    // mux is misbehaving.
+    std::uint32_t this_sweep_fail = 0;
 
     for (std::uint8_t ch_idx = 0; ch_idx < config::TempsPerLtc; ++ch_idx) {
         const std::uint8_t mux_ch = config::Adg731ChannelMap[ch_idx];
@@ -229,11 +244,13 @@ void run_temperature_poll() {
         // 1. WRCOMM: load the select word into every IC's COMM reg.
         if (!bus.write_chain_command(ltc6811::CmdWRCOMM, per_ic_payload)) {
             ++g_ltc_spi_err_count;
+            this_sweep_fail |= (1u << ch_idx);
             continue;
         }
         // 2. STCOMM: shift COMM register out -> mux receives.
         if (!bus.stcomm()) {
             ++g_ltc_spi_err_count;
+            this_sweep_fail |= (1u << ch_idx);
             continue;
         }
         // 3. Settling for the mux + NTC voltage-divider. The
@@ -247,6 +264,7 @@ void run_temperature_poll() {
                               ltc6811::AuxSel::Gpio1));
         if (!bus.send_command(adax_cmd.data())) {
             ++g_ltc_spi_err_count;
+            this_sweep_fail |= (1u << ch_idx);
             continue;
         }
         osDelay(config::AdaxSettleMs);
@@ -257,11 +275,15 @@ void run_temperature_poll() {
         const auto rdauxa = ltc6811::pack_command(ltc6811::CmdRDAUXA);
         if (!bus.read_register_group(rdauxa.data(), reply, sizeof(reply))) {
             ++g_ltc_spi_err_count;
+            this_sweep_fail |= (1u << ch_idx);
             continue;
         }
 
         (void)BmsService::instance().update_temperature(ch_idx, reply, sizeof(reply));
     }
+
+    g_temp_sweep_last_mask    = this_sweep_fail;
+    g_temp_sweep_sticky_mask |= this_sweep_fail;
 }
 
 }  // namespace

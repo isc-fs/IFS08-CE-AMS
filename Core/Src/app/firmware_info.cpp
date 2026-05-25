@@ -35,7 +35,15 @@ typedef struct {
 
 const bl_fwinfo_t __firmware_info
     __attribute__((section(".firmware_info"), used)) = {
-    .magic            = 0xF14F1B00U,        // BL_FWINFO_MAGIC
+    // BL_FWINFO_MAGIC -- contract source of truth is
+     //   isc-fs/stm32-can-bootloader/Core/Inc/bl_fwinfo.h
+     // If the BL bumps this constant we MUST follow in lockstep, otherwise
+     // the loader rejects JUMP with NO_VALID_APP and the unit silently
+     // refuses to boot after a successful flash. Keep the literal hex in
+     // sync verbatim; we can't #include the BL header from here because
+     // the BL repo is not a submodule of this firmware tree (see #118 for
+     // the long-term fix that pulls the struct + magic from CMake).
+     .magic            = 0xF14F1B00U,
     .record_version   = 0x00010000U,        // record schema 1.0
     .fw_version_major = 0,
     .fw_version_minor = 1,
