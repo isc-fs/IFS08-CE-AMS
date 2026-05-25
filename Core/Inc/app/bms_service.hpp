@@ -130,21 +130,6 @@ public:
     // module_online_mask covers them. Used by SafetyTask.
     [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
 
-#if defined(AMS_BMS_HIL_STUB)
-    // HIL-only: stamp a nominal-healthy snapshot into the state so the
-    // safety predicate sees fresh, in-range BMS data without an actual
-    // LTC chain on the bench. Refreshes last_rx_tick for every module
-    // to now_tick and forces module_online_mask = AllModulesMask.
-    // Cell V/T arrays are filled with plausible nominal values. Called
-    // by BmsPollTask under the same flag on its 250 ms cadence.
-    //
-    // NEVER compiled into flight HW (the function literally doesn't
-    // exist in the binary when the flag isn't defined). The whole
-    // point is that no flight path can accidentally fake-heal a real
-    // BMS fault.
-    void seed_for_hil_stub(std::uint32_t now_tick) noexcept;
-#endif
-
 private:
     BmsService();
 

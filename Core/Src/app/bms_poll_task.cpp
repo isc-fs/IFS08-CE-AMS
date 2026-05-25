@@ -269,19 +269,6 @@ void run_temperature_poll() {
 extern "C" void ams_bms_poll_task_run(void *argument) {
     (void)argument;
 
-#if defined(AMS_BMS_HIL_STUB)
-    // HIL stub: no LTC chain on the bench, so don't touch SPI at all.
-    // Seed a nominal-healthy snapshot every BmsPollVoltMs (250 ms),
-    // which keeps last_rx_tick fresh and module_online_mask = 0x1F so
-    // the (unmodified) predicate sees healthy BMS data. The whole
-    // chain-discovery / WRCFGA / ADCV / RDCV* path is compiled out
-    // of this branch -- not "guarded at runtime", literally not in
-    // the binary. Predicate file stays HIL-agnostic.
-    for (;;) {
-        ams::BmsService::instance().seed_for_hil_stub(osKernelGetTickCount());
-        osDelay(ams::config::BmsPollVoltMs);
-    }
-#else
     s_volt_timer = osTimerNew(&volt_timer_cb, osTimerPeriodic, nullptr, nullptr);
     s_temp_timer = osTimerNew(&temp_timer_cb, osTimerPeriodic, nullptr, nullptr);
 
@@ -322,5 +309,4 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
             run_temperature_poll();
         }
     }
-#endif  // AMS_BMS_HIL_STUB
 }
