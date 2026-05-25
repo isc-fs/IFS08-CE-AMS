@@ -87,12 +87,15 @@ inline constexpr std::uint8_t  TempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 // Accumulator bus (FDCAN1).
 //
 // Retired in fix/48 (TSMS+DASH_CHG FSM): AcuRxStartBtnId (0x600) and
-// AcuRxChargerId (0x18FF50E7) were the legacy Start->{Precharge,Charge}
-// triggers. Both replaced by physical GPIOs (TSMS_Pin / DASH_CHG_Pin).
+// AcuRxChargerId (0x18FF50E7, ext) were the legacy Start->{Precharge,
+// Charge} triggers. Both replaced by physical GPIOs (TSMS_Pin /
+// DASH_CHG_Pin). With those gone, the firmware is standard-frame-only
+// on FDCAN1 -- the HW global filter rejects extended at the gate (#231
+// follow-up); see app_init_task.cpp::HAL_FDCAN_ConfigGlobalFilter.
 //
 // ACU RX (FDCAN1): VCU 0x100 DC-bus heartbeat (LE uint16 V). The
 // car/charger mode lock at Start->Precharge consumes its freshness.
-inline constexpr std::uint32_t AcuRxDcBusId     = 0x100;   // extended; VCU DC bus heartbeat
+inline constexpr std::uint32_t AcuRxDcBusId     = 0x100;   // standard; VCU DC bus heartbeat
 
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time

@@ -2,12 +2,14 @@
 //
 // State the AMS receives from the wider vehicle on FDCAN1 (the
 // "accumulator bus"). Currently a single signal: VCU DC-bus voltage
-// heartbeat (0x100, ext). The 0x600 start-button and 0x18FF50E7
+// heartbeat (0x100, standard). The 0x600 start-button and 0x18FF50E7
 // charger-detect frames were retired in fix/48 -- their roles are now
 // owned by the TSMS_Pin / DASH_CHG_Pin GPIOs read directly by
-// SafetyTask. last_dc_bus_tick is load-bearing: SafetyTask uses its
-// freshness against VcuFreshMs to decide Car-vs-Charger mode at the
-// moment of Start->Precharge.
+// SafetyTask. AMS firmware is standard-frame-only on FDCAN1 post-#231
+// follow-up; the HW filter drops extended frames at the gate.
+// last_dc_bus_tick is load-bearing: SafetyTask uses its freshness
+// against VcuFreshMs to decide Car-vs-Charger mode at the moment of
+// Start->Precharge.
 //
 // Single-writer: AcuCanTask. Many readers: MainTask.
 // Synchronisation: docs/ARCHITECTURE.md §7.
