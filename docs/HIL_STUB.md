@@ -29,7 +29,7 @@ Three orthogonal concerns, all guarded by `#if defined(AMS_BMS_HIL_STUB)`:
 `Core/Src/app/app_init_task.cpp`:
 
 ```cpp
-#if defined(AMS_BMS_HIL_STUB)
+#if defined(AMS_BMS_HIL_STUB) || defined(AMS_HIL_CLEAR_ERROR_LATCH)
     ams::ErrorLatch::clear();   // wipe any latch from a previous session
 #endif
 ```
@@ -40,6 +40,16 @@ boots into `Error` whenever a previous session ended with the latch
 set, and there's no SWD attached on the bench to clear it
 externally. On flight the latch is intentionally sticky; clearing it
 every boot would defeat the contract.
+
+The clear is gated on **two** independent flags so the bench can
+mix-and-match (#224):
+
+| Flag | Use case |
+|---|---|
+| `AMS_BMS_HIL_STUB` | Implies the clear; legacy stub-data builds. |
+| `AMS_HIL_CLEAR_ERROR_LATCH` | Standalone: real-LTC builds against the Pico emulator that still want auto-recovery from transient discovery glitches, without pulling in the rest of the stub umbrella. |
+
+Both flags are flight-build-excluded.
 
 ### 2. Bench-only diagnostic counters + `0x7FF` boot trace
 
