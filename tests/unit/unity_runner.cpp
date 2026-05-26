@@ -13,6 +13,8 @@ void test_bms_ltc_pec_fail_increments_error_counter(void);
 void test_bms_ltc_short_buffer_rejected(void);
 void test_bms_ltc_null_buffer_rejected(void);
 void test_bms_ltc_is_healthy_false_after_staleness(void);
+void test_bms_mask_collapses_when_chain_stops_responding(void);
+void test_bms_mask_clears_only_stale_modules(void);
 void test_bms_temp_sweep_room_temp_on_one_channel(void);
 void test_bms_temp_hotter_voltage_gives_hotter_reading(void);
 void test_bms_temp_rail_reading_skips_slot(void);
@@ -185,6 +187,8 @@ int main(void) {
     RUN_TEST(test_bms_ltc_short_buffer_rejected);
     RUN_TEST(test_bms_ltc_null_buffer_rejected);
     RUN_TEST(test_bms_ltc_is_healthy_false_after_staleness);
+    RUN_TEST(test_bms_mask_collapses_when_chain_stops_responding);
+    RUN_TEST(test_bms_mask_clears_only_stale_modules);
     RUN_TEST(test_bms_temp_sweep_room_temp_on_one_channel);
     RUN_TEST(test_bms_temp_hotter_voltage_gives_hotter_reading);
     RUN_TEST(test_bms_temp_rail_reading_skips_slot);

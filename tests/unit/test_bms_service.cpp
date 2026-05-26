@@ -198,6 +198,93 @@ extern "C" void test_bms_ltc_is_healthy_false_after_staleness(void) {
 }
 
 // ---------------------------------------------------------------------------
+// #249: module_online_mask collapses to 0x00 when every chain position
+// fails PEC for longer than BmsStaleMs. Previously the mask was sticky-
+// set ("ever-online") and the only "chain stale" signal was via
+// last_rx_tick freshness inside the predicate; the on-wire telemetry
+// byte stayed at 0x1F even after the bench cut the LTC link. New
+// semantic: mask reflects "currently fresh" -- bit N set iff
+// now_tick - last_rx_tick[N] <= BmsStaleMs.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_mask_collapses_when_chain_stops_responding(void) {
+    // Seed a clean state at t = 0.
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    fake_set_tick(0);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 0);
+    {
+        const auto s = BmsService::instance().snapshot();
+        TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
+    }
+
+    // Poll the chain repeatedly with every IC's PEC corrupted -- i.e.
+    // STOP_REPLY semantic from the Pico LTC emulator. last_rx_tick
+    // stays frozen at 0; the mask should hold until > BmsStaleMs
+    // elapses, then drop.
+    std::uint8_t bad[RespBytes];
+    build_clean_chain(bad);
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        // Flip group A PEC for every IC -> all 10 fail.
+        bad[0 * GroupBytes + ic * Seg + 7] ^= 0x01u;
+    }
+
+    // Mid-window: at t = 1500 (== BmsStaleMs), delta from t=0 is 1500
+    // which is <= BmsStaleMs (the boundary case is "still fresh").
+    fake_set_tick(1500);
+    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), 1500);
+    {
+        const auto s = BmsService::instance().snapshot();
+        TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
+    }
+
+    // Beyond the window: at t = 1501, delta is 1501 > 1500 -> drop.
+    fake_set_tick(1501);
+    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), 1501);
+    {
+        const auto s = BmsService::instance().snapshot();
+        TEST_ASSERT_EQUAL_UINT8(0u, s.module_online_mask);
+    }
+}
+
+extern "C" void test_bms_mask_clears_only_stale_modules(void) {
+    // Seed at t = 5000 so this test is independent of the global-fixture
+    // last_rx_tick state left by earlier tests.
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    fake_set_tick(5000);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 5000);
+
+    // Re-poll at t = 5050 with only module 2's two ICs corrupted.
+    std::uint8_t partial[RespBytes];
+    build_clean_chain(partial);
+    partial[0 * GroupBytes + 4 * Seg + 7] ^= 0x01u;  // ic 4 = module 2 upper
+    partial[0 * GroupBytes + 5 * Seg + 7] ^= 0x01u;  // ic 5 = module 2 lower
+
+    fake_set_tick(5050);
+    BmsService::instance().update_from_ltc_response(partial, sizeof(partial), 5050);
+
+    // Modules 0/1/3/4 just got refreshed -> their bits stay set.
+    // Module 2's last_rx_tick is still 5000, delta 50 -> still fresh.
+    {
+        const auto s = BmsService::instance().snapshot();
+        TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
+    }
+
+    // Keep failing module 2 past the BmsStaleMs window.
+    fake_set_tick(5000 + config::BmsStaleMs + 1);
+    BmsService::instance().update_from_ltc_response(
+        partial, sizeof(partial), 5000 + config::BmsStaleMs + 1);
+    {
+        const auto s = BmsService::instance().snapshot();
+        // Modules 0/1/3/4 just refreshed at this tick -> their bits set.
+        // Module 2 has been stale for 1501 ms -> bit 2 cleared.
+        const std::uint8_t expected =
+            static_cast<std::uint8_t>(config::AllModulesMask & ~(1u << 2));
+        TEST_ASSERT_EQUAL_UINT8(expected, s.module_online_mask);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Temperature path helpers + tests
 // ---------------------------------------------------------------------------
 
