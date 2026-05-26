@@ -542,9 +542,48 @@ def build_all() -> List[Message]:
     return msgs
 
 
+CHECK_TARGET = "docs/dbc/ams.dbc"
+
 def main():
-    print(emit_dbc(build_all()), end="")
+    import argparse, pathlib, sys
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--check", action="store_true",
+        help=("Compare the generator output to the committed "
+              f"{CHECK_TARGET} instead of printing to stdout. Exits "
+              "non-zero if they drift -- meant for CI to enforce "
+              "'whoever edited the generator also regenerated the dbc'."))
+    args = ap.parse_args()
+
+    fresh = emit_dbc(build_all())
+
+    if not args.check:
+        sys.stdout.write(fresh)
+        return 0
+
+    target = pathlib.Path(CHECK_TARGET)
+    if not target.exists():
+        sys.stderr.write(f"error: {target} does not exist\n")
+        return 2
+    committed = target.read_text()
+    if committed == fresh:
+        print(f"OK -- {target} matches generator output "
+              f"({len(fresh.splitlines())} lines).")
+        return 0
+    # Compute a small diff so the PR author can see what they missed.
+    import difflib
+    diff = "".join(difflib.unified_diff(
+        committed.splitlines(keepends=True),
+        fresh.splitlines(keepends=True),
+        fromfile=f"{target} (committed)",
+        tofile=f"{target} (generator output)",
+        n=3))
+    sys.stderr.write(
+        f"error: {target} is out of sync with the generator.\n"
+        f"       Regenerate with:  python3 tools/gen_dbc.py > {target}\n\n")
+    sys.stderr.write(diff)
+    return 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
