@@ -442,7 +442,7 @@ Flight layout:
 | 1 | `max_tempC` | Signed int8, °C |
 | 2 | `avg_tempC` | Signed int8, °C |
 | 3-4 | `dc_bus_V` | Little-endian uint16, V (from `VehicleState.dc_bus_V`) |
-| 5 | reserved | 0 |
+| 5 | `tsms_dash_chg_byte` | Cockpit-input snapshot (#246, always-on post-#251): bit 7 = sentinel `1`, bits 3:2 = `mode_locked` (00=Undecided / 01=Car / 10=Charger), bit 1 = TSMS, bit 0 = DASH_CHG. Was reserved=0 in pre-v1.5.0 builds. |
 | 6 | `tx_fail_lo` | Low byte of `g_telemetry_tx_fail` |
 | 7 | `heartbeat` | Wraparound 8-bit counter, increments per MainTask telemetry cycle (500 ms). Useful for detecting dropped frames on the receiver. |
 

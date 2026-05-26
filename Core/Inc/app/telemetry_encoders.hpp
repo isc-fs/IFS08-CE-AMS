@@ -96,20 +96,24 @@ using Frame = std::array<std::uint8_t, 8>;
 //   byte 1   max_tempC  signed int8
 //   byte 2   avg_tempC  signed int8
 //   bytes 3..4  dc_bus_V  little-endian uint16 (volts)
-//   byte 5   reserved (0)
-//   byte 6   tx_fail_count_lo  low byte of g_telemetry_tx_fail (#123 diag)
+//   byte 5   tsms_dash_chg_byte (#246: was reserved=0 pre-#251; now
+//                                always-on cockpit-input snapshot)
+//   byte 6   tx_fail_count_lo  low byte of g_telemetry_tx_fail
 //   byte 7   heartbeat counter (caller supplies; wraps at 255)
 //
-// HIL_STUB layout (AMS_BMS_HIL_STUB defined): same first 3 + last 2 bytes,
-// but bytes 3..5 are repurposed as #123 diagnostic probes since
-// a separate 0x4A3 frame doesn't reach the wire (suspected H7 TX
-// scheduler dedicated/FIFO addressing quirk -- chased in 5 PRs
-// then deferred). dc_bus_V is dropped from this build only -- the
-// bench injects it from the host so observability is unaffected:
+// HIL_STUB layout (AMS_BMS_HIL_STUB defined): same byte 5 + last 2
+// bytes; bytes 3..4 are repurposed as #123 diagnostic probes (dc_bus_V
+// dropped on this build only -- the bench injects it from the host):
 //   byte 3   bms_poll_task_state  0xA0 | (osThreadGetState low nibble),
 //                                 or 0xFF when BmsPollTaskHandle == NULL
 //   byte 4   acu_rx_total_lo    low byte of g_acu_rx_total (ACU RX liveness)
-//   byte 5   tsms_dash_chg_byte 0x80 sentinel | mode_locked<<2 | TSMS<<1 | DASH_CHG
+//
+// Cockpit byte encoding (same in both builds, #246 hoisted it out):
+//   bit 7    1 (sentinel; lets the dashboard distinguish "live byte"
+//             from "byte got eaten by older firmware or compiler")
+//   bits 3:2 mode_locked (00=Undecided, 01=Car, 10=Charger)
+//   bit 1    TSMS readback (PF9)
+//   bit 0    DASH_CHG readback (PF10)
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::int8_t clip_int8(std::int16_t v) noexcept {
     if (v >  127) return  127;
@@ -142,15 +146,16 @@ using Frame = std::array<std::uint8_t, 8>;
 [[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
                                         const VehicleState& veh,
                                         std::uint8_t        heartbeat,
-                                        std::uint8_t        tx_fail_count_lo) noexcept {
+                                        std::uint8_t        tx_fail_count_lo,
+                                        std::uint8_t        tsms_dash_chg_byte) noexcept {
     Frame f = {};
     f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
     f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
     f[2] = static_cast<std::uint8_t>(clip_int8(bms.avg_tempC));
-    // Flight: bytes 3..4 carry dc_bus_V LE, byte 5 reserved.
+    // Flight: bytes 3..4 carry dc_bus_V LE, byte 5 = cockpit byte (#246).
     f[3] = static_cast<std::uint8_t>(veh.dc_bus_V & 0xFFu);
     f[4] = static_cast<std::uint8_t>((veh.dc_bus_V >> 8) & 0xFFu);
-    f[5] = 0;
+    f[5] = tsms_dash_chg_byte;
     f[6] = tx_fail_count_lo;
     f[7] = heartbeat;
     return f;
