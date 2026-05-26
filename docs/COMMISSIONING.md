@@ -148,7 +148,8 @@ LTC6811 VREF2 ≈ 3.0 V). Verify on the bench before relying on
    on the same board if you have one — or 25 °C in still air after a
    30-minute warm-up).
 2. Read `BmsState.cell_tempC[m][t]` for every (m, t) via the
-   telemetry frame on FDCAN1 or directly via SWD.
+   telemetry frame on FDCAN1 (the per-NTC grid is on pit-diag
+   `0x6A0..0x6B8`).
 3. The median across all 200 NTCs should sit within ±2 °C of the
    reference. If it doesn't, tune `NtcBeta` first (typical
    correction is +/-5%), then `NtcR25` (typical +/-2%).

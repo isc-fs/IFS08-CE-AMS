@@ -130,7 +130,7 @@ using Frame = std::array<std::uint8_t, 8>;
 
 // ---------------------------------------------------------------------------
 // Poll-timing frame (0x6C1). The pit tool can graph these to spot SPI
-// jitter / mux degradation without SWD.
+// jitter / mux degradation purely from the CAN stream.
 //
 //   bytes 0..1  bms_volt_poll_ms       BE u16 (last cycle ms; clip at 0xFFFF)
 //   bytes 2..3  bms_volt_poll_max_ms   BE u16 (worst-case since boot; clip)
@@ -237,7 +237,7 @@ using Frame = std::array<std::uint8_t, 8>;
 // ---------------------------------------------------------------------------
 // Boot diag -- "why did we boot, how did init go". Lets the pit tool
 // distinguish a clean cold boot from a watchdog reset or a CAN-trigger
-// BL jump without SWD.
+// BL jump from CAN alone.
 //
 //   bytes 0..3  jump_reason  LE u32 (RTC->BKP2R contents at boot;
 //                            matches config::JumpReason enum -- see
@@ -266,7 +266,7 @@ using Frame = std::array<std::uint8_t, 8>;
 // Crash post-mortem -- surfaces the in-RAM trail left by the FreeRTOS
 // stack-overflow + malloc-failed hooks (see freertos.c). If a previous
 // session crashed, the engineer reads this frame and learns what
-// happened without SWD; on a clean session every byte stays at 0.
+// happened from CAN alone; on a clean session every byte stays at 0.
 //
 //   byte 0      stack_overflow_seen  (0 if g_stack_overflow_task_addr
 //                                     is still 0, else 1)
@@ -300,7 +300,7 @@ using Frame = std::array<std::uint8_t, 8>;
 
 // ---------------------------------------------------------------------------
 // Firmware identification frame. Lets the pit tool answer "what's
-// flashed?" without an SWD read of __firmware_info.
+// flashed?" purely over CAN (no separate readout path needed).
 //
 //   byte 0      fw_version_major
 //   byte 1      fw_version_minor

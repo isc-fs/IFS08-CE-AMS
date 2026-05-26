@@ -65,7 +65,8 @@ static void send_boot_trace(std::uint8_t marker, std::uint32_t start_rc) noexcep
 // Diagnostic for #123 (HIL_STUB only): monotonic milestone counter
 // incremented at each App_InitTask init step. Surfaced in 0x4A0[3]
 // via encode_status so the bench can see how far this task got
-// without SWD, even if FDCAN1 never starts and other telemetry
+// purely from the boot-trace frame on can0, even if FDCAN1 never
+// starts cleanly and other telemetry
 // silences. If 0x4A0 transmits at all, byte 3 == this counter at
 // the moment MainTask snapshotted it.
 //   0 -> App_InitTask never started OR hung before any milestone
@@ -78,11 +79,11 @@ static void send_boot_trace(std::uint8_t marker, std::uint32_t start_rc) noexcep
 //   7 -> task self-exit reached (App_InitTask completed cleanly)
 //
 // HAL_FDCAN_Start's return code is also captured into a sibling
-// global so the operator can read it later via SWD or a follow-up
-// probe if needed. The byte itself only surfaces the milestone.
+// global so the operator can read it later via a follow-up pit-diag
+// probe frame. The byte itself only surfaces the milestone.
 // Ungated since #247 -- the pit-diag stream surfaces these in flight
 // too, so the engineer plugged into can0 can see app-init progress
-// + FDCAN1 start outcome without SWD. The bench-only 0x7FF boot-trace
+// + FDCAN1 start outcome from CAN alone. The bench-only 0x7FF boot-trace
 // frames (HIL_STUB-only) are unaffected; this gates only the globals.
 extern "C" volatile std::uint8_t  g_app_init_progress   = 0;
 extern "C" volatile std::uint32_t g_fdcan1_start_result = 0xFFFFFFFFu;
@@ -103,7 +104,7 @@ void ams_app_init_task_run(void *argument)
 #if defined(AMS_BMS_HIL_STUB) || defined(AMS_HIL_CLEAR_ERROR_LATCH)
     // HIL-only: VBAT-backed RTC_BKP_DR1 outlives long power-offs on
     // the bench (carrier has a coin cell + bulk caps), and the bench
-    // has no SWD to clear it externally. A stale latch from a previous
+    // has no external way to clear it. A stale latch from a previous
     // session would trap the bench in Error for the entire iteration.
     // Two independent gates so the bench can mix-and-match:
     //   AMS_BMS_HIL_STUB                -> stub-data builds (legacy)
