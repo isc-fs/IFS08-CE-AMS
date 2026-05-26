@@ -314,3 +314,82 @@ extern "C" void test_pit_diag_fw_id_layout(void) {
     TEST_ASSERT_EQUAL_UINT8(0xEFu, f[6]);
     TEST_ASSERT_EQUAL_UINT8(0x01u, f[7]);
 }
+
+// ---------------------------------------------------------------------------
+// Per-IC PEC error counts (#258). Two frames, saturating u8 per IC.
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_pec_err_count_a_all_zero(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] = {};
+    const auto f = ams::pit_diag::encode_pec_err_count_a(counts);
+    for (std::uint8_t i = 0; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0u, f[i]);
+    }
+}
+
+extern "C" void test_pit_diag_pec_err_count_a_each_byte_routes_to_its_ic(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] = {
+        1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u,
+    };
+    const auto f = ams::pit_diag::encode_pec_err_count_a(counts);
+    TEST_ASSERT_EQUAL_UINT8(1u, f[0]);
+    TEST_ASSERT_EQUAL_UINT8(2u, f[1]);
+    TEST_ASSERT_EQUAL_UINT8(3u, f[2]);
+    TEST_ASSERT_EQUAL_UINT8(4u, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(5u, f[4]);
+    TEST_ASSERT_EQUAL_UINT8(6u, f[5]);
+    TEST_ASSERT_EQUAL_UINT8(7u, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(8u, f[7]);
+}
+
+extern "C" void test_pit_diag_pec_err_count_a_saturates_at_255(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] = {
+        0u, 255u, 256u, 257u, 1000u, 0xFFFFu, 0xFFFFFFFFu, 254u, 0u, 0u,
+    };
+    const auto f = ams::pit_diag::encode_pec_err_count_a(counts);
+    TEST_ASSERT_EQUAL_UINT8(0u,    f[0]);
+    TEST_ASSERT_EQUAL_UINT8(255u,  f[1]);   // boundary: 255 not saturated
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[2]);   // 256 -> saturated
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[4]);
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[5]);
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[6]);   // 0xFFFFFFFF -> saturated
+    TEST_ASSERT_EQUAL_UINT8(254u,  f[7]);
+}
+
+extern "C" void test_pit_diag_pec_err_count_b_packs_ics_8_and_9(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] = {
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,  // ICs 0..7 ignored by frame B
+        42u, 99u,                          // ICs 8..9 -> bytes 0..1
+    };
+    const auto f = ams::pit_diag::encode_pec_err_count_b(counts);
+    TEST_ASSERT_EQUAL_UINT8(42u, f[0]);
+    TEST_ASSERT_EQUAL_UINT8(99u, f[1]);
+    // Reserved bytes stay zero.
+    for (std::uint8_t i = 2; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0u, f[i]);
+    }
+}
+
+extern "C" void test_pit_diag_pec_err_count_b_saturates_at_255(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] = {
+        0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u,
+        0xFFFFFFFFu, 0u,
+    };
+    const auto f = ams::pit_diag::encode_pec_err_count_b(counts);
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[0]);
+    TEST_ASSERT_EQUAL_UINT8(0u,    f[1]);
+}
+
+extern "C" void test_pit_diag_pec_err_count_ids_distinct_and_match_config(void) {
+    // Catch a future copy-paste mistake where someone reuses 0x6C6 or
+    // 0x6C7 for a different frame.
+    TEST_ASSERT_EQUAL_UINT32(0x6C7u, ams::config::PitDiagPecErrCountAId);
+    TEST_ASSERT_EQUAL_UINT32(0x6C8u, ams::config::PitDiagPecErrCountBId);
+    TEST_ASSERT_NOT_EQUAL(ams::config::PitDiagPecErrCountAId,
+                          ams::config::PitDiagPecErrCountBId);
+    // ...and they must not collide with the existing pit-diag IDs.
+    TEST_ASSERT_NOT_EQUAL(ams::config::PitDiagPecErrCountAId,
+                          ams::config::PitDiagFwIdId);
+    TEST_ASSERT_NOT_EQUAL(ams::config::PitDiagPecErrCountBId,
+                          ams::config::PitDiagPostMortemId);
+}

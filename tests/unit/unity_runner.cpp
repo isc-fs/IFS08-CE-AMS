@@ -164,6 +164,12 @@ void test_pit_diag_post_mortem_clean_session_all_zero(void);
 void test_pit_diag_post_mortem_after_stack_overflow(void);
 void test_pit_diag_post_mortem_saturates_watermark_and_malloc(void);
 void test_pit_diag_fw_id_layout(void);
+void test_pit_diag_pec_err_count_a_all_zero(void);
+void test_pit_diag_pec_err_count_a_each_byte_routes_to_its_ic(void);
+void test_pit_diag_pec_err_count_a_saturates_at_255(void);
+void test_pit_diag_pec_err_count_b_packs_ics_8_and_9(void);
+void test_pit_diag_pec_err_count_b_saturates_at_255(void);
+void test_pit_diag_pec_err_count_ids_distinct_and_match_config(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
@@ -330,6 +336,12 @@ int main(void) {
     RUN_TEST(test_pit_diag_post_mortem_after_stack_overflow);
     RUN_TEST(test_pit_diag_post_mortem_saturates_watermark_and_malloc);
     RUN_TEST(test_pit_diag_fw_id_layout);
+    RUN_TEST(test_pit_diag_pec_err_count_a_all_zero);
+    RUN_TEST(test_pit_diag_pec_err_count_a_each_byte_routes_to_its_ic);
+    RUN_TEST(test_pit_diag_pec_err_count_a_saturates_at_255);
+    RUN_TEST(test_pit_diag_pec_err_count_b_packs_ics_8_and_9);
+    RUN_TEST(test_pit_diag_pec_err_count_b_saturates_at_255);
+    RUN_TEST(test_pit_diag_pec_err_count_ids_distinct_and_match_config);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);

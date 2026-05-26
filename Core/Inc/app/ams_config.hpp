@@ -157,6 +157,11 @@ inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 //                  200 NTCs row-major over cell_tempC[5][40].
 //   0x6C0          FSM extended status (see pit_diag_emitter.hpp layout).
 //   0x6C1          Poll timing (last/max V-poll ms, last temp-sweep mask).
+//   0x6C2/0x6C3    Balance masks A/B (DCC bits per cell + cycle counts).
+//   0x6C4          Boot diag (jump reason + app init progress + fdcan1 start).
+//   0x6C5          Crash post-mortem (stack overflow + malloc failed).
+//   0x6C6          Firmware ID (semver + git hash[0..3] + BL node id).
+//   0x6C7/0x6C8    Per-IC PEC error counts (#258): u8 saturating per IC.
 inline constexpr std::uint32_t PitDiagCmdRxId            = 0x7F0u;
 inline constexpr std::uint32_t PitDiagAckTxId            = 0x7F1u;
 inline constexpr std::uint32_t PitDiagCellBaseId         = 0x680u;
@@ -168,6 +173,16 @@ inline constexpr std::uint32_t PitDiagBalanceMaskBId     = 0x6C3u;  // DCC bits 
 inline constexpr std::uint32_t PitDiagBootDiagId         = 0x6C4u;  // reset reason + app_init_progress
 inline constexpr std::uint32_t PitDiagPostMortemId       = 0x6C5u;  // stack overflow + malloc fail
 inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + git hash[0..3] + BL node id
+// Per-IC PEC error counts (#258). Two frames cover all 10 chain ICs as
+// saturating u8 (0..255), so 0xFF on the wire means "≥ 255 failures
+// since boot" -- enough fidelity to spot a chip-specific failure
+// pattern (e.g. always chip 0 -> pre-load corruption) without burning
+// flash on full u32 counters.
+//   0x6C7  bytes 0..7  saturating u8 per IC for chain index 0..7
+//   0x6C8  bytes 0..1  saturating u8 per IC for chain index 8..9
+//          bytes 2..7  reserved (0)
+inline constexpr std::uint32_t PitDiagPecErrCountAId     = 0x6C7u;  // PEC err counts ICs 0..7
+inline constexpr std::uint32_t PitDiagPecErrCountBId     = 0x6C8u;  // PEC err counts ICs 8..9 (+ reserved)
 inline constexpr std::uint8_t  PitDiagCmdDlc             = 4u;
 inline constexpr std::uint8_t  PitDiagEnableMagic[4]     = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
 inline constexpr std::uint8_t  PitDiagDisableMagic[4]    = { 0x00u, 0x00u, 0x00u, 0x00u };

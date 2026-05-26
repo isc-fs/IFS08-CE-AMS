@@ -271,6 +271,13 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               ams_fw_version_patch(),
                               ams_git_hash(),
                               ams_bl_node_id()));
+
+    // Per-IC PEC counts (#258). Saturating u8 split across two frames
+    // so the bench can localise a chain fault to a specific IC.
+    send_or_fail_blocking(ams::config::PitDiagPecErrCountAId,
+                          ams::pit_diag::encode_pec_err_count_a(g_ltc_pec_err_count));
+    send_or_fail_blocking(ams::config::PitDiagPecErrCountBId,
+                          ams::pit_diag::encode_pec_err_count_b(g_ltc_pec_err_count));
 }
 
 }  // namespace

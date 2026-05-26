@@ -325,4 +325,55 @@ using Frame = std::array<std::uint8_t, 8>;
     return f;
 }
 
+// ---------------------------------------------------------------------------
+// Per-IC PEC error counts (#258). Two frames cover all 10 ICs in the
+// chain as saturating u8 values. Sum across both frames mirrors what
+// 0x6C0[4..5] (pec_err_total) already reports; the per-IC breakout
+// localises a chain fault to a specific module / chip without SWD.
+//
+// Saturating u8 (0..255) means 0xFF on the wire = "≥ 255 PEC failures
+// since boot for this IC". Bench experience: a healthy chain reads 0
+// across the board; a failing chip pegs to 0xFF within a few seconds at
+// the BmsPollTask cadence; an intermittent connection drifts up
+// linearly with bus errors. Wider counters (u16/u32) cost flash for
+// information nobody acts on differently -- saturation captures the
+// signal cleanly.
+//
+//   0x6C7  bytes 0..7  saturating u8 for chain index 0..7
+//   0x6C8  bytes 0..1  saturating u8 for chain index 8..9
+//          bytes 2..7  reserved (0) -- padded to classic-CAN 8-byte
+//                      frame so the encoder + decoder are both
+//                      fixed-size; ignore on the host side.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::uint8_t saturate_u32_to_u8(std::uint32_t v) noexcept {
+    return (v > 0xFFu) ? std::uint8_t{0xFFu} : static_cast<std::uint8_t>(v);
+}
+
+[[nodiscard]] inline Frame encode_pec_err_count_a(
+    const volatile std::uint32_t (&counts)[config::LtcChainLength]) noexcept {
+    Frame f = {};
+    // ICs 0..7 -> bytes 0..7. The static_assert below catches a future
+    // chain-length change that would underflow this packing.
+    static_assert(config::LtcChainLength >= 8u,
+                  "encode_pec_err_count_a packs ICs 0..7; chain must have >= 8 ICs");
+    for (std::uint8_t i = 0; i < 8u; ++i) {
+        f[i] = saturate_u32_to_u8(counts[i]);
+    }
+    return f;
+}
+
+[[nodiscard]] inline Frame encode_pec_err_count_b(
+    const volatile std::uint32_t (&counts)[config::LtcChainLength]) noexcept {
+    Frame f = {};
+    // ICs 8..(chain-1) -> bytes 0..(chain-9). Bytes (chain-8)..7
+    // stay 0-init reserved. For the current 10-IC chain that's
+    // counts[8] -> f[0], counts[9] -> f[1], f[2..7] reserved.
+    static_assert(config::LtcChainLength <= 16u,
+                  "encode_pec_err_count_b packs ICs 8..15; chain must fit in 8 bytes");
+    for (std::uint8_t i = 8u; i < config::LtcChainLength; ++i) {
+        f[i - 8u] = saturate_u32_to_u8(counts[i]);
+    }
+    return f;
+}
+
 }  // namespace ams::pit_diag
