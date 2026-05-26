@@ -100,20 +100,37 @@ behaviour.
 
 ## How to enable
 
-The flag is **not defined anywhere in the committed build system** —
-it's passed on the command line so the bench operator opts in
-explicitly:
+Both HIL flags are CMake `option()`s (defaulting to OFF — flight is
+the safe-by-default build, post-#205):
 
 ```bash
+# Flight (default) -- both flags OFF
+cmake -B build \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
+cmake --build build
+
+# HIL umbrella (stub diag + telemetry-layout + safety-relax)
 cmake -B build-hil \
       -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
-      -DCMAKE_CXX_FLAGS="-DAMS_BMS_HIL_STUB=1"
+      -DAMS_BMS_HIL_STUB=ON
 cmake --build build-hil
+
+# Real-LTC HIL build with just the latch-clear escape hatch
+cmake -B build-hil-real \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+      -DAMS_HIL_CLEAR_ERROR_LATCH=ON
+cmake --build build-hil-real
 ```
 
-Use a distinct build directory (`build-hil`) so the flight build
-(`build/`) is never confused with a stub image. #205 tracks
-elevating this to a CMake `option()`.
+The configure step echoes the resolved values:
+
+```
+-- AMS_BMS_HIL_STUB          = OFF
+-- AMS_HIL_CLEAR_ERROR_LATCH = OFF
+```
+
+Use a distinct build directory per flavour (`build/` for flight,
+`build-hil/` for stub, etc.) so binaries don't get confused.
 
 ---
 
