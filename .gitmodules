@@ -1,0 +1,3 @@
+[submodule "can-spec"]
+	path = can-spec
+	url = https://github.com/isc-fs/IFS08-DBCinator.git

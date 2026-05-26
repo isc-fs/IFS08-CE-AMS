@@ -1,8 +1,8 @@
 # AMS CAN map
 
-Source-of-truth for the wire format that the firmware emits + consumes
-on the **accumulator bus (FDCAN1)**. The "BMS slave bus" sections
-further down are historical archaeology — see the note below.
+Human-readable reference for the wire format that the firmware emits + consumes on the **accumulator bus (FDCAN1)**. The "BMS slave bus" sections further down are historical archaeology — see the note below.
+
+> **Machine-readable source of truth:** the per-ECU CAN specs live in [`isc-fs/IFS08-DBCinator`](https://github.com/isc-fs/IFS08-DBCinator) (consumed here as the `can-spec/` submodule). The DBCinator's CMake-invoked generator runs at firmware build time and emits `build/can-spec-dist/{ams,vcu,udv,combined}.dbc + ifs08_can_ids.h`. External tools (pit-debug tool, data logger, dashboard) pull pinned artifacts from DBCinator release tags. When a wire-contract change ships, it lands in DBCinator first and this doc gets updated to match.
 
 ---
 

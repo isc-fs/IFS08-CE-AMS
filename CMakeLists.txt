@@ -123,6 +123,53 @@ option(AMS_HIL_CLEAR_ERROR_LATCH  "HIL standalone: wipe RTC->BKP_DR1 ErrorLatch 
 message(STATUS "AMS_BMS_HIL_STUB          = ${AMS_BMS_HIL_STUB}")
 message(STATUS "AMS_HIL_CLEAR_ERROR_LATCH = ${AMS_HIL_CLEAR_ERROR_LATCH}")
 
+# ---------------------------------------------------------------------------
+# CAN spec (#256). Regenerate ams.dbc + ifs08_can_ids.h from the
+# can-spec/ submodule into the build tree on every configure. The
+# spec repo (isc-fs/ifs08-can-spec) doesn't commit dist/ -- the
+# source of truth is spec/*.py over there, the artifacts are
+# generated here on demand so a submodule SHA bump = a wire-contract
+# refresh with no tag-and-release dance.
+#
+# Bumping the submodule SHA is the way to pull a new wire contract
+# in:
+#   cd can-spec && git checkout v1.5.1 && cd ..
+#   git add can-spec && git commit -m "..."
+# ---------------------------------------------------------------------------
+set(CAN_SPEC_DIST_DIR "${CMAKE_BINARY_DIR}/can-spec-dist")
+file(MAKE_DIRECTORY "${CAN_SPEC_DIST_DIR}")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} -m tools.gen_dbc      --out "${CAN_SPEC_DIST_DIR}"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/can-spec
+    RESULT_VARIABLE _spec_gen_dbc_rc
+    OUTPUT_VARIABLE _spec_gen_dbc_out
+)
+if(NOT _spec_gen_dbc_rc EQUAL 0)
+    message(FATAL_ERROR "can-spec gen_dbc failed (rc=${_spec_gen_dbc_rc}). "
+                        "Did you run `git submodule update --init`?")
+endif()
+
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} -m tools.gen_c_header --out "${CAN_SPEC_DIST_DIR}"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/can-spec
+    RESULT_VARIABLE _spec_gen_hdr_rc
+)
+if(NOT _spec_gen_hdr_rc EQUAL 0)
+    message(FATAL_ERROR "can-spec gen_c_header failed (rc=${_spec_gen_hdr_rc})")
+endif()
+
+message(STATUS "CAN spec artifacts written to ${CAN_SPEC_DIST_DIR}")
+
+# Make ifs08_can_ids.h #include-able. Firmware code can pull frame
+# IDs / DLCs from the spec instead of redefining them in
+# ams_config.hpp -- intentionally NOT done as part of this PR
+# (intrusive; needs its own review pass).
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    ${CAN_SPEC_DIST_DIR}
+)
+
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     AMS_FW_VERSION_MAJOR=${AMS_FW_VERSION_MAJOR}
