@@ -214,3 +214,103 @@ extern "C" void test_pit_diag_classify_wrong_dlc_returns_zero(void) {
     f.dlc = 3;  // anything but PitDiagCmdDlc (=4)
     TEST_ASSERT_EQUAL_INT(0, ams::pit_diag::classify_command(f));
 }
+
+// ---------------------------------------------------------------------------
+// Balance mask frames.
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_balance_mask_a_module0_cell0(void) {
+    volatile std::uint32_t dcc[5] = { 1u, 0u, 0u, 0u, 0u };
+    const auto f = ams::pit_diag::encode_balance_mask_a(
+        const_cast<const volatile std::uint32_t (&)[5]>(dcc));
+    TEST_ASSERT_EQUAL_UINT8(0x01u, f[0]);  // bit 0 set
+    for (std::uint8_t i = 1; i < 8; ++i) TEST_ASSERT_EQUAL_UINT8(0u, f[i]);
+}
+
+extern "C" void test_pit_diag_balance_mask_a_module4_cell8(void) {
+    // module 4 cell 8 -> flat cell_idx = 19*4 + 8 = 84 -> byte 84/8 = 10
+    // -> NOT in mask_a (which covers 0..63). Mask A should be all zero.
+    volatile std::uint32_t dcc[5] = { 0u, 0u, 0u, 0u, 1u << 8 };
+    const auto f = ams::pit_diag::encode_balance_mask_a(
+        const_cast<const volatile std::uint32_t (&)[5]>(dcc));
+    for (auto b : f) TEST_ASSERT_EQUAL_UINT8(0u, b);
+}
+
+extern "C" void test_pit_diag_balance_mask_b_carries_cycles(void) {
+    volatile std::uint32_t dcc[5] = { 0u, 0u, 0u, 0u, 0u };
+    const auto f = ams::pit_diag::encode_balance_mask_b(
+        const_cast<const volatile std::uint32_t (&)[5]>(dcc),
+        /*cycles_total=*/0x1234u,
+        /*cycles_active=*/0x00ABu);
+    TEST_ASSERT_EQUAL_UINT8(0x34u, f[4]);  // LE low
+    TEST_ASSERT_EQUAL_UINT8(0x12u, f[5]);
+    TEST_ASSERT_EQUAL_UINT8(0xABu, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(0x00u, f[7]);
+}
+
+// ---------------------------------------------------------------------------
+// Boot diag frame.
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_boot_diag_layout(void) {
+    const auto f = ams::pit_diag::encode_boot_diag(
+        /*jump_reason=*/0x4A554D50u,            // 'JUMP'
+        /*app_init_progress=*/7u,
+        /*fdcan1_start_result=*/0x123456u);
+    TEST_ASSERT_EQUAL_UINT8(0x50u, f[0]);  // jump LE
+    TEST_ASSERT_EQUAL_UINT8(0x4Du, f[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x55u, f[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x4Au, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(7u, f[4]);
+    TEST_ASSERT_EQUAL_UINT8(0x56u, f[5]);  // fdcan LE 24-bit
+    TEST_ASSERT_EQUAL_UINT8(0x34u, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(0x12u, f[7]);
+}
+
+// ---------------------------------------------------------------------------
+// Crash post-mortem frame.
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_post_mortem_clean_session_all_zero(void) {
+    const auto f = ams::pit_diag::encode_post_mortem(
+        /*addr=*/0u, /*watermark=*/0u, /*malloc_count=*/0u);
+    for (auto b : f) TEST_ASSERT_EQUAL_UINT8(0u, b);
+}
+
+extern "C" void test_pit_diag_post_mortem_after_stack_overflow(void) {
+    const auto f = ams::pit_diag::encode_post_mortem(
+        /*addr=*/0x20010100u,
+        /*watermark=*/3u,
+        /*malloc_count=*/5u);
+    TEST_ASSERT_EQUAL_UINT8(1u, f[0]);     // stack_overflow_seen
+    TEST_ASSERT_EQUAL_UINT8(3u, f[1]);     // watermark
+    TEST_ASSERT_EQUAL_UINT8(0x00u, f[2]);  // addr LE
+    TEST_ASSERT_EQUAL_UINT8(0x01u, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(0x01u, f[4]);
+    TEST_ASSERT_EQUAL_UINT8(0x20u, f[5]);
+    TEST_ASSERT_EQUAL_UINT8(5u, f[6]);     // malloc_count LE
+    TEST_ASSERT_EQUAL_UINT8(0u, f[7]);
+}
+
+extern "C" void test_pit_diag_post_mortem_saturates_watermark_and_malloc(void) {
+    const auto f = ams::pit_diag::encode_post_mortem(
+        /*addr=*/1u, /*watermark=*/0xFFFFFFFFu, /*malloc_count=*/0xFFFFFFFFu);
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[1]);  // watermark saturates to 0xFF
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, f[7]);
+}
+
+// ---------------------------------------------------------------------------
+// Firmware ID frame.
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_fw_id_layout(void) {
+    const std::uint8_t hash4[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
+    const auto f = ams::pit_diag::encode_fw_id(
+        /*major=*/1u, /*minor=*/4u, /*patch=*/2u,
+        hash4, /*bl_node_id=*/0x01u);
+    TEST_ASSERT_EQUAL_UINT8(1u, f[0]);
+    TEST_ASSERT_EQUAL_UINT8(4u, f[1]);
+    TEST_ASSERT_EQUAL_UINT8(2u, f[2]);
+    TEST_ASSERT_EQUAL_UINT8(0xDEu, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(0xADu, f[4]);
+    TEST_ASSERT_EQUAL_UINT8(0xBEu, f[5]);
+    TEST_ASSERT_EQUAL_UINT8(0xEFu, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(0x01u, f[7]);
+}

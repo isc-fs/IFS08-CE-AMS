@@ -59,4 +59,25 @@ const bl_fwinfo_t __firmware_info
     .reserved         = { ams::config::AmsNodeId, 0 },
 };
 
+// Pit-diag (#247) accessors. Lets AcuCanTask surface firmware identity
+// on the wire without re-declaring the bl_fwinfo_t shape in a header
+// (avoids a maintenance hazard if the BL contract evolves -- only this
+// TU needs to track it). Each getter returns a single self-contained
+// scalar; the pit_diag encoder packs them into one frame.
+uint8_t ams_fw_version_major(void) {
+    return (uint8_t)__firmware_info.fw_version_major;
+}
+uint8_t ams_fw_version_minor(void) {
+    return (uint8_t)__firmware_info.fw_version_minor;
+}
+uint8_t ams_fw_version_patch(void) {
+    return (uint8_t)__firmware_info.fw_version_patch;
+}
+uint8_t ams_bl_node_id(void) {
+    return (uint8_t)__firmware_info.reserved[0];
+}
+const uint8_t* ams_git_hash(void) {
+    return __firmware_info.git_hash;
+}
+
 }  // extern "C"

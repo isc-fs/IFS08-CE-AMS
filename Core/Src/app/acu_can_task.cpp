@@ -65,6 +65,28 @@ extern "C" volatile std::uint32_t g_bms_volt_poll_max;
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask;
 extern "C" volatile std::uint32_t g_ltc_pec_err_count[ams::config::LtcChainLength];
 
+// Balance state mirrors written by maybe_run_balance_update().
+extern "C" volatile std::uint32_t g_balance_dcc_bits[ams::config::BmsModuleCount];
+extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
+extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
+
+// Boot diagnostics. Ungated from HIL_STUB-only in #247 so flight
+// pit-diag can surface them too.
+extern "C" volatile std::uint8_t  g_app_init_progress;
+extern "C" volatile std::uint32_t g_fdcan1_start_result;
+
+// FreeRTOS stack-overflow / malloc-failed hooks (freertos.c).
+extern "C" volatile std::uint32_t g_stack_overflow_task_addr;
+extern "C" volatile std::uint32_t g_stack_overflow_watermark;
+extern "C" volatile std::uint32_t g_malloc_failed_count;
+
+// Firmware ID accessors (firmware_info.cpp).
+extern "C" std::uint8_t        ams_fw_version_major(void);
+extern "C" std::uint8_t        ams_fw_version_minor(void);
+extern "C" std::uint8_t        ams_fw_version_patch(void);
+extern "C" std::uint8_t        ams_bl_node_id(void);
+extern "C" const std::uint8_t* ams_git_hash(void);
+
 namespace {
 
 // Telemetry counters; volatile so a remote-debug session can read.
@@ -187,6 +209,37 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                      g_bms_volt_poll_ms,
                      g_bms_volt_poll_max,
                      g_temp_sweep_last_mask));
+
+    // Encoders take the volatile array by reference so we read the
+    // live values each scan -- no thread-locked snapshot needed.
+    send_or_fail(ams::config::PitDiagBalanceMaskAId,
+                 ams::pit_diag::encode_balance_mask_a(g_balance_dcc_bits));
+    send_or_fail(ams::config::PitDiagBalanceMaskBId,
+                 ams::pit_diag::encode_balance_mask_b(
+                     g_balance_dcc_bits,
+                     g_balance_cycles_total_pub,
+                     g_balance_cycles_active_pub));
+
+    // Read JumpReason once per scan -- it's stable across the boot.
+    const std::uint32_t jump_reason =
+        (&RTC->BKP0R)[ams::config::BkpJumpReasonReg];
+    send_or_fail(ams::config::PitDiagBootDiagId,
+                 ams::pit_diag::encode_boot_diag(
+                     jump_reason, g_app_init_progress, g_fdcan1_start_result));
+
+    send_or_fail(ams::config::PitDiagPostMortemId,
+                 ams::pit_diag::encode_post_mortem(
+                     g_stack_overflow_task_addr,
+                     g_stack_overflow_watermark,
+                     g_malloc_failed_count));
+
+    send_or_fail(ams::config::PitDiagFwIdId,
+                 ams::pit_diag::encode_fw_id(
+                     ams_fw_version_major(),
+                     ams_fw_version_minor(),
+                     ams_fw_version_patch(),
+                     ams_git_hash(),
+                     ams_bl_node_id()));
 }
 
 }  // namespace

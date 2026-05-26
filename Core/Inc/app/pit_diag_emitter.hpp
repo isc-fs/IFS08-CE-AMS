@@ -183,4 +183,146 @@ using Frame = std::array<std::uint8_t, 8>;
     return 0;
 }
 
+// ---------------------------------------------------------------------------
+// Balance state -- two frames carrying the full 95-bit DCC mask plus
+// the per-cycle counters. dcc_bits[m] mirrors the wire-side encoding:
+// bit c == 1 iff cell c of module m was selected for discharge in the
+// last balance window.
+//
+//   0x6C2 [byte i] = packed mask bits 8*i..8*i+7, where bit b of byte i
+//                    is cell (8*i + b) of the row-major flat (cell_idx =
+//                    19*m + c). Covers cells 0..63.
+//   0x6C3 [byte 0..3] = mask bits 64..94 (low 31 bits of byte 4..7's
+//                       concatenation; bit 31 always 0 / reserved).
+//          [byte 4..5] = balance_cycles_total LE u16 (mod 65536)
+//          [byte 6..7] = balance_cycles_active LE u16 (mod 65536)
+//
+// The pit tool reconstructs by walking 95 bits and mapping bit b ->
+// (module = b / 19, cell = b % 19).
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_balance_mask_a(const volatile std::uint32_t (&dcc_bits)[config::BmsModuleCount]) noexcept {
+    Frame f = {};
+    for (std::uint8_t cell_idx = 0; cell_idx < 64 && cell_idx < 5 * 19; ++cell_idx) {
+        const std::uint8_t m = cell_idx / config::CellsPerModule;
+        const std::uint8_t c = cell_idx % config::CellsPerModule;
+        if (dcc_bits[m] & (1u << c)) {
+            f[cell_idx / 8u] = static_cast<std::uint8_t>(f[cell_idx / 8u] | (1u << (cell_idx % 8u)));
+        }
+    }
+    return f;
+}
+
+[[nodiscard]] inline Frame encode_balance_mask_b(const volatile std::uint32_t (&dcc_bits)[config::BmsModuleCount],
+                                                 std::uint32_t cycles_total,
+                                                 std::uint32_t cycles_active) noexcept {
+    Frame f = {};
+    // Cells 64..94 -> bytes 0..3 (low 31 bits of a 32-bit field).
+    for (std::uint8_t cell_idx = 64; cell_idx < 5 * 19; ++cell_idx) {
+        const std::uint8_t m = cell_idx / config::CellsPerModule;
+        const std::uint8_t c = cell_idx % config::CellsPerModule;
+        const std::uint8_t bit_pos = cell_idx - 64u;   // 0..30
+        if (dcc_bits[m] & (1u << c)) {
+            f[bit_pos / 8u] = static_cast<std::uint8_t>(f[bit_pos / 8u] | (1u << (bit_pos % 8u)));
+        }
+    }
+    const std::uint16_t ct = (cycles_total  > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(cycles_total);
+    const std::uint16_t ca = (cycles_active > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(cycles_active);
+    f[4] = static_cast<std::uint8_t>(ct & 0xFFu);
+    f[5] = static_cast<std::uint8_t>((ct >> 8) & 0xFFu);
+    f[6] = static_cast<std::uint8_t>(ca & 0xFFu);
+    f[7] = static_cast<std::uint8_t>((ca >> 8) & 0xFFu);
+    return f;
+}
+
+// ---------------------------------------------------------------------------
+// Boot diag -- "why did we boot, how did init go". Lets the pit tool
+// distinguish a clean cold boot from a watchdog reset or a CAN-trigger
+// BL jump without SWD.
+//
+//   bytes 0..3  jump_reason  LE u32 (RTC->BKP2R contents at boot;
+//                            matches config::JumpReason enum -- see
+//                            ams_config.hpp). 0 = no jump reason
+//                            recorded (clean cold POR).
+//   byte 4      g_app_init_progress (0..7 milestone counter)
+//   bytes 5..7  g_fdcan1_start_result LE u24 (low 24 bits of HAL status;
+//                                            0 = HAL_OK, !=0 = failure)
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_boot_diag(std::uint32_t jump_reason,
+                                            std::uint8_t  app_init_progress,
+                                            std::uint32_t fdcan1_start_result) noexcept {
+    Frame f = {};
+    f[0] = static_cast<std::uint8_t>(jump_reason         & 0xFFu);
+    f[1] = static_cast<std::uint8_t>((jump_reason >>  8) & 0xFFu);
+    f[2] = static_cast<std::uint8_t>((jump_reason >> 16) & 0xFFu);
+    f[3] = static_cast<std::uint8_t>((jump_reason >> 24) & 0xFFu);
+    f[4] = app_init_progress;
+    f[5] = static_cast<std::uint8_t>(fdcan1_start_result        & 0xFFu);
+    f[6] = static_cast<std::uint8_t>((fdcan1_start_result >>  8) & 0xFFu);
+    f[7] = static_cast<std::uint8_t>((fdcan1_start_result >> 16) & 0xFFu);
+    return f;
+}
+
+// ---------------------------------------------------------------------------
+// Crash post-mortem -- surfaces the in-RAM trail left by the FreeRTOS
+// stack-overflow + malloc-failed hooks (see freertos.c). If a previous
+// session crashed, the engineer reads this frame and learns what
+// happened without SWD; on a clean session every byte stays at 0.
+//
+//   byte 0      stack_overflow_seen  (0 if g_stack_overflow_task_addr
+//                                     is still 0, else 1)
+//   byte 1      stack_overflow_watermark low byte (saturates at 0xFF;
+//                                                  0xFF on the "API
+//                                                  call itself failed"
+//                                                  sentinel)
+//   bytes 2..5  stack_overflow_task_addr LE u32 (the failing task's
+//                                                xTaskHandle value)
+//   bytes 6..7  malloc_failed_count LE u16 (saturates at 0xFFFF)
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_post_mortem(std::uint32_t stack_overflow_task_addr,
+                                              std::uint32_t stack_overflow_watermark,
+                                              std::uint32_t malloc_failed_count) noexcept {
+    Frame f = {};
+    f[0] = (stack_overflow_task_addr != 0u) ? 1u : 0u;
+    f[1] = (stack_overflow_watermark > 0xFFu)
+               ? 0xFFu
+               : static_cast<std::uint8_t>(stack_overflow_watermark);
+    f[2] = static_cast<std::uint8_t>(stack_overflow_task_addr        & 0xFFu);
+    f[3] = static_cast<std::uint8_t>((stack_overflow_task_addr >>  8) & 0xFFu);
+    f[4] = static_cast<std::uint8_t>((stack_overflow_task_addr >> 16) & 0xFFu);
+    f[5] = static_cast<std::uint8_t>((stack_overflow_task_addr >> 24) & 0xFFu);
+    const std::uint16_t mfc = (malloc_failed_count > 0xFFFFu)
+                                  ? 0xFFFFu
+                                  : static_cast<std::uint16_t>(malloc_failed_count);
+    f[6] = static_cast<std::uint8_t>(mfc & 0xFFu);
+    f[7] = static_cast<std::uint8_t>((mfc >> 8) & 0xFFu);
+    return f;
+}
+
+// ---------------------------------------------------------------------------
+// Firmware identification frame. Lets the pit tool answer "what's
+// flashed?" without an SWD read of __firmware_info.
+//
+//   byte 0      fw_version_major
+//   byte 1      fw_version_minor
+//   byte 2      fw_version_patch
+//   bytes 3..6  git_hash[0..3] (first 4 bytes of the 8-byte hash)
+//   byte 7      bl_node_id  (firmware_info.reserved[0])
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_fw_id(std::uint8_t        major,
+                                        std::uint8_t        minor,
+                                        std::uint8_t        patch,
+                                        const std::uint8_t* git_hash_4,
+                                        std::uint8_t        bl_node_id) noexcept {
+    Frame f = {};
+    f[0] = major;
+    f[1] = minor;
+    f[2] = patch;
+    f[3] = git_hash_4[0];
+    f[4] = git_hash_4[1];
+    f[5] = git_hash_4[2];
+    f[6] = git_hash_4[3];
+    f[7] = bl_node_id;
+    return f;
+}
+
 }  // namespace ams::pit_diag

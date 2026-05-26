@@ -60,6 +60,14 @@ volatile std::uint32_t g_ltc_spi_err_count = 0;
 extern "C" volatile std::uint32_t g_bms_volt_poll_ms  = 0;
 extern "C" volatile std::uint32_t g_bms_volt_poll_max = 0;
 
+// DCC mask snapshot from the last balance cycle, exposed for pit-diag
+// (#247). bit c of g_balance_dcc_bits[m] == 1 iff cell c of module m
+// was selected for discharge this cycle. 19 cells per module fit in
+// the low 19 bits of each uint32; bits 19..31 are always 0.
+extern "C" volatile std::uint32_t g_balance_dcc_bits[5] = {0, 0, 0, 0, 0};
+extern "C" volatile std::uint32_t g_balance_cycles_total_pub  = 0;
+extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -200,6 +208,15 @@ void maybe_run_balance_update() {
             per_ic[2u * m + 1u][k] = lower[k];
         }
 
+        // Publish the per-module DCC selection so pit-diag (#247) can
+        // surface "which cell is being balanced right now" without
+        // SWD. dcc_upper covers cells 0..9, dcc_lower covers 10..18 of
+        // the module -- shift the lower half by CellsPerLtcUpper so a
+        // single uint32 mirrors the cell index layout.
+        g_balance_dcc_bits[m] =
+            static_cast<std::uint32_t>(dcc_upper) |
+            (static_cast<std::uint32_t>(dcc_lower) << config::CellsPerLtcUpper);
+
         if (dcc_upper != 0u || dcc_lower != 0u) any_dcc = true;
     }
 
@@ -211,6 +228,9 @@ void maybe_run_balance_update() {
 
     ++g_balance_cycles_total;
     if (any_dcc) ++g_balance_cycles_active;
+    // Mirror to extern-linkage copies for pit-diag.
+    g_balance_cycles_total_pub  = g_balance_cycles_total;
+    g_balance_cycles_active_pub = g_balance_cycles_active;
 }
 
 // ---------------------------------------------------------------------------

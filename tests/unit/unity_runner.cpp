@@ -154,6 +154,14 @@ void test_pit_diag_classify_disable_returns_minus_one(void);
 void test_pit_diag_classify_random_payload_returns_zero(void);
 void test_pit_diag_classify_wrong_id_returns_zero(void);
 void test_pit_diag_classify_wrong_dlc_returns_zero(void);
+void test_pit_diag_balance_mask_a_module0_cell0(void);
+void test_pit_diag_balance_mask_a_module4_cell8(void);
+void test_pit_diag_balance_mask_b_carries_cycles(void);
+void test_pit_diag_boot_diag_layout(void);
+void test_pit_diag_post_mortem_clean_session_all_zero(void);
+void test_pit_diag_post_mortem_after_stack_overflow(void);
+void test_pit_diag_post_mortem_saturates_watermark_and_malloc(void);
+void test_pit_diag_fw_id_layout(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
@@ -311,6 +319,14 @@ int main(void) {
     RUN_TEST(test_pit_diag_classify_random_payload_returns_zero);
     RUN_TEST(test_pit_diag_classify_wrong_id_returns_zero);
     RUN_TEST(test_pit_diag_classify_wrong_dlc_returns_zero);
+    RUN_TEST(test_pit_diag_balance_mask_a_module0_cell0);
+    RUN_TEST(test_pit_diag_balance_mask_a_module4_cell8);
+    RUN_TEST(test_pit_diag_balance_mask_b_carries_cycles);
+    RUN_TEST(test_pit_diag_boot_diag_layout);
+    RUN_TEST(test_pit_diag_post_mortem_clean_session_all_zero);
+    RUN_TEST(test_pit_diag_post_mortem_after_stack_overflow);
+    RUN_TEST(test_pit_diag_post_mortem_saturates_watermark_and_malloc);
+    RUN_TEST(test_pit_diag_fw_id_layout);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
