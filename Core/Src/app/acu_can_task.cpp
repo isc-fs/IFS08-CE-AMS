@@ -274,6 +274,14 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               ams_fw_version_patch(),
                               ams_git_hash(),
                               ams_bl_node_id()));
+
+    // Per-IC PEC counts (#258). Adds 2 frames to the scan, brings the
+    // total to 58. Localises a chain failure to a specific IC --
+    // 0x6C0[4..5] sum tells "chain unhealthy", these tell "which one".
+    send_or_fail_blocking(ams::config::PitDiagPecPerIcAId,
+                          ams::pit_diag::encode_pec_err_count_a(g_ltc_pec_err_count));
+    send_or_fail_blocking(ams::config::PitDiagPecPerIcBId,
+                          ams::pit_diag::encode_pec_err_count_b(g_ltc_pec_err_count));
 }
 
 }  // namespace

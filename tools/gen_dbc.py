@@ -419,6 +419,39 @@ def pit_post_mortem_6c5() -> Message:
     return m
 
 
+def pit_pec_per_ic_a_6c7() -> Message:
+    m = Message(0x6C7, "PitDiag_pec_per_ic_a", 8, "AMS",
+                comment=("Per-IC PEC error count for chain indices 0..7 "
+                         "(#258). Saturating uint8 per IC. Chain index 2m = "
+                         "upper LTC of module m (cells 0..9); 2m+1 = lower "
+                         "(cells 10..18). 0xFF means '>= 255 failures' -- "
+                         "for diagnostic localisation the chip-identity "
+                         "matters, not the precise count past saturation."))
+    for ic in range(8):
+        mod = ic // 2
+        half = "upper" if ic % 2 == 0 else "lower"
+        m.signals.append(
+            Signal(f"pec_err_ic_{ic}_count", le_start_bit_for_byte(ic),
+                   8, "1", "+",
+                   unit="count",
+                   comment=f"IC {ic} = module {mod} {half} LTC6811. Saturates at 0xFF."))
+    return m
+
+
+def pit_pec_per_ic_b_6c8() -> Message:
+    m = Message(0x6C8, "PitDiag_pec_per_ic_b", 8, "AMS",
+                comment="Per-IC PEC count for ICs 8..9 + reserved bytes (#258).")
+    m.signals = [
+        Signal("pec_err_ic_8_count", le_start_bit_for_byte(0), 8, "1", "+",
+               unit="count",
+               comment="IC 8 = module 4 upper LTC6811. Saturates at 0xFF."),
+        Signal("pec_err_ic_9_count", le_start_bit_for_byte(1), 8, "1", "+",
+               unit="count",
+               comment="IC 9 = module 4 lower LTC6811. Saturates at 0xFF."),
+    ]
+    return m
+
+
 def pit_fw_id_6c6() -> Message:
     m = Message(0x6C6, "PitDiag_fw_id", 8, "AMS",
                 comment=("Firmware identification (post-#252). Populated from "
@@ -538,7 +571,9 @@ def build_all() -> List[Message]:
              pit_balance_b_6c3(),
              pit_boot_diag_6c4(),
              pit_post_mortem_6c5(),
-             pit_fw_id_6c6()]
+             pit_fw_id_6c6(),
+             pit_pec_per_ic_a_6c7(),
+             pit_pec_per_ic_b_6c8()]
     return msgs
 
 
