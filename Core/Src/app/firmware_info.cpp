@@ -10,13 +10,40 @@
 // at `BL_APP_BASE + 0x400` (= 0x08020400) by the `.firmware_info` section
 // declared in STM32H733XG_FLASH.ld.
 //
-// All version fields here are placeholders for the bench bring-up; a
-// follow-up commit should hook these into the build system so they get
-// populated from CMake (semver / git hash / timestamp) automatically.
+// Version / git_hash / build_timestamp fields are populated from CMake
+// at configure time via AMS_FW_VERSION_*, AMS_GIT_HASH_*, and
+// AMS_BUILD_TIMESTAMP defines (#118). If CMake isn't doing the
+// configuration (e.g. unit-test host build that includes this TU), the
+// fallbacks below produce a zero-filled identification block.
 
 #include "ams_config.hpp"
 
 #include <cstdint>
+
+#ifndef AMS_FW_VERSION_MAJOR
+#  define AMS_FW_VERSION_MAJOR 0
+#endif
+#ifndef AMS_FW_VERSION_MINOR
+#  define AMS_FW_VERSION_MINOR 0
+#endif
+#ifndef AMS_FW_VERSION_PATCH
+#  define AMS_FW_VERSION_PATCH 0
+#endif
+#ifndef AMS_GIT_HASH_0
+#  define AMS_GIT_HASH_0 0
+#endif
+#ifndef AMS_GIT_HASH_1
+#  define AMS_GIT_HASH_1 0
+#endif
+#ifndef AMS_GIT_HASH_2
+#  define AMS_GIT_HASH_2 0
+#endif
+#ifndef AMS_GIT_HASH_3
+#  define AMS_GIT_HASH_3 0
+#endif
+#ifndef AMS_BUILD_TIMESTAMP
+#  define AMS_BUILD_TIMESTAMP 0
+#endif
 
 extern "C" {
 
@@ -45,12 +72,18 @@ const bl_fwinfo_t __firmware_info
      // the long-term fix that pulls the struct + magic from CMake).
      .magic            = 0xF14F1B00U,
     .record_version   = 0x00010000U,        // record schema 1.0
-    .fw_version_major = 0,
-    .fw_version_minor = 1,
-    .fw_version_patch = 0,
+    .fw_version_major = AMS_FW_VERSION_MAJOR,
+    .fw_version_minor = AMS_FW_VERSION_MINOR,
+    .fw_version_patch = AMS_FW_VERSION_PATCH,
     .mcu_id           = 0x00000450U,        // STM32H7x3
-    .git_hash         = {0,0,0,0,0,0,0,0},
-    .build_timestamp  = 0,
+    // First 4 bytes of the 8-char git short hash, populated from CMake.
+    // The trailing 4 bytes stay zero -- bl_fwinfo_t's git_hash is 8
+    // bytes but a 32-bit short hash fits in 4. Leaves room for a
+    // future longer hash if the BL ever needs it.
+    .git_hash         = { AMS_GIT_HASH_0, AMS_GIT_HASH_1,
+                          AMS_GIT_HASH_2, AMS_GIT_HASH_3,
+                          0, 0, 0, 0 },
+    .build_timestamp  = static_cast<uint64_t>(AMS_BUILD_TIMESTAMP),
     .product_name     = "IFS08-CE-AMS",
     // reserved[0]: AMS node ID on the stm32-can-bootloader multi-node
     // bus. Pit-tool reads this at flash time and refuses to flash if
