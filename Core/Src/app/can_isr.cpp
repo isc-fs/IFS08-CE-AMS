@@ -49,7 +49,14 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
 
         CanFrame frame = {0};
         frame.id           = rxh.Identifier;
-        frame.dlc          = (uint8_t)((rxh.DataLength >> 16) & 0x0F);  // FDCAN DLC field
+        // HAL returns DataLength as the raw 4-bit DLC code (0..15) --
+        // it has already extracted + right-shifted from the T1 register
+        // (see HAL_FDCAN_GetRxMessage: DataLength = (raw & MASK_DLC) >> 16U).
+        // The previous `>> 16` here was treating DataLength as still
+        // bit-shifted, which zeroed the result for every RX frame --
+        // BL trigger + VCU 0x100 silently dropped on dlc<N checks (#241).
+        // Same family of bug as the TX-side dlc<<16 mistake fixed in #234.
+        frame.dlc          = (uint8_t)(rxh.DataLength & 0x0F);
         frame.extended     = (rxh.IdType == FDCAN_EXTENDED_ID) ? 1u : 0u;
         frame.fd           = (rxh.FDFormat == FDCAN_FD_CAN)   ? 1u : 0u;
         frame.timestamp_ms = osKernelGetTickCount();
