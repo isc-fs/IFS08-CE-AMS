@@ -88,9 +88,8 @@ void test_fsm_start_waits_with_dash_chg_only(void);
 void test_fsm_start_to_precharge_on_both_inputs(void);
 void test_fsm_precharge_reaches_target(void);
 void test_fsm_precharge_stays_below_target(void);
-void test_fsm_precharge_timeout_forces_error(void);
-void test_fsm_transition_holds_then_runs_in_car_mode(void);
-void test_fsm_transition_holds_then_charges_in_charger_mode(void);
+void test_fsm_transition_commits_to_run_in_car_mode(void);
+void test_fsm_transition_commits_to_charge_in_charger_mode(void);
 void test_fsm_transition_undecided_mode_forces_error(void);
 void test_fsm_transition_drops_voltage_to_error(void);
 void test_fsm_run_stays_while_tsms_and_dash_chg_high(void);
@@ -147,7 +146,6 @@ void test_balance_threshold_strict_inequality(void);
 
 // test_sil_scenarios.cpp
 void test_sil_nominal_startup_to_run(void);
-void test_sil_precharge_timeout_to_error(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
 void test_sil_tsms_drop_in_run_latches_error(void);
@@ -230,9 +228,8 @@ int main(void) {
     RUN_TEST(test_fsm_start_to_precharge_on_both_inputs);
     RUN_TEST(test_fsm_precharge_reaches_target);
     RUN_TEST(test_fsm_precharge_stays_below_target);
-    RUN_TEST(test_fsm_precharge_timeout_forces_error);
-    RUN_TEST(test_fsm_transition_holds_then_runs_in_car_mode);
-    RUN_TEST(test_fsm_transition_holds_then_charges_in_charger_mode);
+    RUN_TEST(test_fsm_transition_commits_to_run_in_car_mode);
+    RUN_TEST(test_fsm_transition_commits_to_charge_in_charger_mode);
     RUN_TEST(test_fsm_transition_undecided_mode_forces_error);
     RUN_TEST(test_fsm_transition_drops_voltage_to_error);
     RUN_TEST(test_fsm_run_stays_while_tsms_and_dash_chg_high);
@@ -285,7 +282,6 @@ int main(void) {
     RUN_TEST(test_balance_threshold_strict_inequality);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
-    RUN_TEST(test_sil_precharge_timeout_to_error);
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
     RUN_TEST(test_sil_tsms_drop_in_run_latches_error);

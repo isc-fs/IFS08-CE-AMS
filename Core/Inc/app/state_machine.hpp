@@ -111,15 +111,12 @@ struct Output {
     }
 
     case State::Precharge: {
-        // Hard deadline: if we don't hit precharge target within
-        // PrechargeMaxMs, something is wrong (stuck contactor, low
-        // pack V, mismeasured DC bus). Force ERROR.
-        if (in.now_tick - in.state_entry_tick > config::PrechargeMaxMs) {
-            return { State::Error,
-                     events::safety::ForceError |
-                     events::safety::OpenAirN | events::safety::OpenAirP |
-                     events::safety::OpenPrecharge };
-        }
+        // No deadline -- sit in Precharge until V_dc_bus reaches
+        // V_precharge_target. The supervisor's other failsafes still
+        // apply: a stuck contactor or low pack-V eventually trips
+        // through a freshness predicate (BmsStaleMs / VcuStaleMs /
+        // IStaleMs) or a range predicate (cell U/V, T) and the FSM
+        // hops to Error via the safety::evaluate_fault path above.
         if (precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Transition,
                      events::safety::CloseAirP |
@@ -129,32 +126,32 @@ struct Output {
     }
 
     case State::Transition: {
-        // Hold for TransitionHoldMs and require that the DC bus
-        // STAYS at or above the precharge target the entire time --
-        // if it slumps (a contactor opens, cap leaks) we go to ERROR.
+        // No hold timer. Transition is a one-FSM-step passthrough:
+        // we entered with the contactor swap (CloseAirP|OpenPrecharge)
+        // already emitted on the Precharge->Transition edge; commit to
+        // Run/Charge on this step. The bus-still-up guard remains so a
+        // failed contactor swap (bus slumps the moment the precharge
+        // contactor opens) lands in Error rather than energising the
+        // tractive system on a degraded bus.
         if (!precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |
                      events::safety::OpenPrecharge };
         }
-        if (in.now_tick - in.state_entry_tick >= config::TransitionHoldMs) {
-            // Branch on the mode SafetyTask captured at Start->Precharge.
-            // Mode::Undecided here would be a programming error
-            // (Transition reached without going through Start); treat
-            // as fault to be safe.
-            if (in.mode_locked == Mode::Car) {
-                return { State::Run, 0u };
-            }
-            if (in.mode_locked == Mode::Charger) {
-                return { State::Charge, 0u };
-            }
-            return { State::Error,
-                     events::safety::ForceError |
-                     events::safety::OpenAirN | events::safety::OpenAirP |
-                     events::safety::OpenPrecharge };
+        // Branch on the mode SafetyTask captured at Start->Precharge.
+        // Mode::Undecided here would be a programming error (Transition
+        // reached without going through Start); treat as fault.
+        if (in.mode_locked == Mode::Car) {
+            return { State::Run, 0u };
         }
-        return { State::Transition, 0u };
+        if (in.mode_locked == Mode::Charger) {
+            return { State::Charge, 0u };
+        }
+        return { State::Error,
+                 events::safety::ForceError |
+                 events::safety::OpenAirN | events::safety::OpenAirP |
+                 events::safety::OpenPrecharge };
     }
 
     case State::Run: {

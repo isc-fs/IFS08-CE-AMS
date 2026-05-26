@@ -108,18 +108,21 @@ voltage before AIR+ closes). Real cars typically end up at 0.95–0.98.
    set `state_entry_tick = now`).
 2. Log `bms.pack_voltage_mV` and `veh.dc_bus_V` every 100 ms while the
    precharge resistor charges the bus capacitors.
-3. Confirm `dc_bus_V` reaches `0.95 * pack_V` well within the
-   `PrechargeMaxMs` (1500 ms) timeout. Typical: 200–800 ms.
-4. If the timeout fires, either the precharge resistor is too large
-   (slow ramp) or the DC bus has an unexpected leak. Investigate
-   before increasing `PrechargeMaxMs` — the default is generous.
+3. Confirm `dc_bus_V` reaches `0.95 * pack_V`. Typical: 200–800 ms.
+4. If the bus never reaches target, the precharge resistor is too
+   large (slow ramp) or the DC bus has an unexpected leak. The FSM
+   no longer has a hard deadline here (it sits in Precharge until the
+   target is reached or a safety predicate trips); investigate the
+   ramp itself rather than waiting for a timeout.
 
-### 3.2 Transition hold
+### 3.2 Transition
 
-`TransitionHoldMs` defaults to 100 ms. Increase if you see the bus
-slumping after AIR+ closes (cap discharge, inrush). Decrease if 100 ms
-is too long for the driver to wait. Don't go below 20 ms — that's
-within FreeRTOS scheduling jitter.
+Transition is a single FSM-step passthrough: the AIR+ close +
+precharge-contactor open is emitted on the `Precharge → Transition`
+edge, and the next FSM step commits to `Run` (Car mode) or `Charge`
+(Charger mode). The bus-still-at-target guard remains, so a failed
+contactor swap (bus slumps the moment the precharge contactor opens)
+lands in Error rather than energising on a degraded bus.
 
 ---
 

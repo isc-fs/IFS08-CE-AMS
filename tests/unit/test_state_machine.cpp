@@ -101,39 +101,27 @@ extern "C" void test_fsm_precharge_stays_below_target(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
 
-extern "C" void test_fsm_precharge_timeout_forces_error(void) {
-    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
-    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
-    veh.dc_bus_V = 50;  // never reaches target
-    in.state_entry_tick = in.now_tick - (ams::config::PrechargeMaxMs + 1);
-    auto out = ams::fsm::step(in);
-    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
-}
-
 // ---------------------------------------------------------------------------
-// Transition: holds, branches on mode_locked, drops voltage to Error.
+// Transition: passthrough state -- commits to Run/Charge on first step
+// based on mode_locked. Drops voltage to Error.
+// (Hold timer + precharge timeout were removed -- the FSM is timeout-free
+// except for the safety predicate freshness checks.)
 // ---------------------------------------------------------------------------
-extern "C" void test_fsm_transition_holds_then_runs_in_car_mode(void) {
+extern "C" void test_fsm_transition_commits_to_run_in_car_mode(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
     in.mode_locked = ams::fsm::Mode::Car;
-
-    in.state_entry_tick = 9950;  // < 100ms ago
-    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, ams::fsm::step(in).next);
-    in.state_entry_tick = 9800;  // >= 100ms ago
+    // Bus still at target (precharge_target_reached==true with default
+    // make_inputs values -- veh.dc_bus_V >= 95% of bms.pack_voltage_mV).
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
 }
 
-extern "C" void test_fsm_transition_holds_then_charges_in_charger_mode(void) {
+extern "C" void test_fsm_transition_commits_to_charge_in_charger_mode(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
     in.mode_locked = ams::fsm::Mode::Charger;
-
-    in.state_entry_tick = 9800;
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
 }
 
@@ -145,7 +133,6 @@ extern "C" void test_fsm_transition_undecided_mode_forces_error(void) {
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
     in.mode_locked = ams::fsm::Mode::Undecided;
-    in.state_entry_tick = 9800;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);

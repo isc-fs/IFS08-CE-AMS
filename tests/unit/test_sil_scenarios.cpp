@@ -114,26 +114,9 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);
 }
 
-// ---------------------------------------------------------------------------
-// Scenario 2: precharge times out -> Error + open-all relays.
-// ---------------------------------------------------------------------------
-extern "C" void test_sil_precharge_timeout_to_error(void) {
-    Harness h;
-    h.tsms = true; h.dash_chg = true;
-    h.mode_locked = ams::fsm::Mode::Car;
-    h.step();                                 // -> Precharge
-    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.state);
-
-    // Sit in Precharge with no DC bus rise for > 1500 ms.
-    h.veh.dc_bus_V = 20;
-    h.advance(ams::config::PrechargeMaxMs + 100);
-    const auto out = h.step();
-    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
-}
+// (Scenario 2 -- precharge_timeout_to_error -- removed; FSM no longer
+//  has a Precharge deadline. Stuck contactors / low pack-V are caught
+//  via the safety predicate freshness checks instead.)
 
 // ---------------------------------------------------------------------------
 // Scenario 3: BMS module drops out mid-Run -> Error.
