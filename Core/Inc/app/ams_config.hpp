@@ -36,8 +36,11 @@ inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // bring-up shouldn't be misclassified as charger. Mode is locked at
 // the moment of transition and never re-evaluated.
 inline constexpr std::uint32_t VcuFreshMs     = 1000;
-inline constexpr std::uint32_t PrechargeMaxMs    = 1500;  // precharge timeout
-inline constexpr std::uint32_t TransitionHoldMs  =  100;  // hold + verify
+// Note: PrechargeMaxMs / TransitionHoldMs intentionally removed.
+// FSM is now timeout-free except for the safety predicate's freshness
+// checks (BmsStaleMs / VcuStaleMs / IStaleMs). Precharge holds until
+// V_dc_bus reaches V_precharge_target (or a predicate trips); Transition
+// commits to Run/Charge on the first FSM step after the contactor swap.
 
 inline constexpr std::uint8_t  AllModulesMask = 0x1F;  // 5 modules present
 
