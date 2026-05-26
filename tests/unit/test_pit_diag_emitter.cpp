@@ -314,3 +314,39 @@ extern "C" void test_pit_diag_fw_id_layout(void) {
     TEST_ASSERT_EQUAL_UINT8(0xEFu, f[6]);
     TEST_ASSERT_EQUAL_UINT8(0x01u, f[7]);
 }
+
+// ---------------------------------------------------------------------------
+// Per-IC PEC counters (#258).
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_pec_per_ic_a_layout(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] =
+        { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u };
+    const auto f = ams::pit_diag::encode_pec_err_count_a(
+        const_cast<const volatile std::uint32_t (&)[ams::config::LtcChainLength]>(counts));
+    for (std::uint8_t i = 0; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(i, f[i]);
+    }
+}
+
+extern "C" void test_pit_diag_pec_per_ic_b_layout(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] =
+        { 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0x80u, 0xC0u };
+    const auto f = ams::pit_diag::encode_pec_err_count_b(
+        const_cast<const volatile std::uint32_t (&)[ams::config::LtcChainLength]>(counts));
+    TEST_ASSERT_EQUAL_UINT8(0x80u, f[0]);   // IC 8
+    TEST_ASSERT_EQUAL_UINT8(0xC0u, f[1]);   // IC 9
+    for (std::uint8_t i = 2; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0u, f[i]);  // reserved
+    }
+}
+
+extern "C" void test_pit_diag_pec_per_ic_saturates(void) {
+    volatile std::uint32_t counts[ams::config::LtcChainLength] =
+        { 0xFFu, 0x100u, 0xFFFFu, 0xFFFFFFFFu, 0u, 0u, 0u, 0u, 0u, 0u };
+    const auto a = ams::pit_diag::encode_pec_err_count_a(
+        const_cast<const volatile std::uint32_t (&)[ams::config::LtcChainLength]>(counts));
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, a[0]);   // exactly at boundary
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, a[1]);   // 0x100 saturates to 0xFF
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, a[2]);   // 0xFFFF saturates
+    TEST_ASSERT_EQUAL_UINT8(0xFFu, a[3]);   // 0xFFFFFFFF saturates
+}

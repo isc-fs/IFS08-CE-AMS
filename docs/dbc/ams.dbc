@@ -541,6 +541,20 @@ BO_ 1734 PitDiag_fw_id: 8 AMS
  SG_ git_hash_3 : 48|8@1+ (1.0,0.0) [0|255] "byte" Vector__XXX
  SG_ bl_node_id : 56|8@1+ (1.0,0.0) [0|255] "id" Vector__XXX
 
+BO_ 1735 PitDiag_pec_per_ic_a: 8 AMS
+ SG_ pec_err_ic_0_count : 0|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_1_count : 8|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_2_count : 16|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_3_count : 24|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_4_count : 32|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_5_count : 40|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_6_count : 48|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_7_count : 56|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+
+BO_ 1736 PitDiag_pec_per_ic_b: 8 AMS
+ SG_ pec_err_ic_8_count : 0|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_9_count : 8|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+
 CM_ BO_ 1184 "500 ms cadence. Top-level supervisor snapshot.";
 CM_ SG_ 1184 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error";
 CM_ SG_ 1184 ams_ok "AMS_OK GPIO readback";
@@ -952,4 +966,16 @@ CM_ SG_ 1733 task_addr_lo "Low 32 bits of failing task's xTaskHandle";
 CM_ SG_ 1733 malloc_failed_count "Saturates at 0xFFFF";
 CM_ BO_ 1734 "Firmware identification (post-#252). Populated from VERSION file + git rev-parse at configure time.";
 CM_ SG_ 1734 bl_node_id "From firmware_info.reserved[0]; pit-tool checks against the BL";
+CM_ BO_ 1735 "Per-IC PEC error count for chain indices 0..7 (#258). Saturating uint8 per IC. Chain index 2m = upper LTC of module m (cells 0..9); 2m+1 = lower (cells 10..18). 0xFF means '>= 255 failures' -- for diagnostic localisation the chip-identity matters, not the precise count past saturation.";
+CM_ SG_ 1735 pec_err_ic_0_count "IC 0 = module 0 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_1_count "IC 1 = module 0 lower LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_2_count "IC 2 = module 1 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_3_count "IC 3 = module 1 lower LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_4_count "IC 4 = module 2 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_5_count "IC 5 = module 2 lower LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_6_count "IC 6 = module 3 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_7_count "IC 7 = module 3 lower LTC6811. Saturates at 0xFF.";
+CM_ BO_ 1736 "Per-IC PEC count for ICs 8..9 + reserved bytes (#258).";
+CM_ SG_ 1736 pec_err_ic_8_count "IC 8 = module 4 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1736 pec_err_ic_9_count "IC 9 = module 4 lower LTC6811. Saturates at 0xFF.";
 

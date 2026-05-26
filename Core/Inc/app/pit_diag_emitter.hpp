@@ -325,4 +325,46 @@ using Frame = std::array<std::uint8_t, 8>;
     return f;
 }
 
+// ---------------------------------------------------------------------------
+// Per-IC PEC error counts (#258). 0x6C0[4..5] already carries the sum,
+// which is enough to say "the chain is unhealthy" but not "which IC is
+// the problem". The 10 ICs (LtcChainLength) split across two frames as
+// saturating uint8 -- "error count > 255" already means catastrophic
+// chain failure for diagnostic purposes; the high bits aren't carrying
+// useful information past that. Reset only on cold boot (counts live
+// in bms_service.cpp's extern array; no per-session clear).
+//
+//   0x6C7  PitDiag_pec_per_ic_a: 8 bytes = ICs 0..7
+//   0x6C8  PitDiag_pec_per_ic_b: bytes 0..1 = ICs 8..9, bytes 2..7 = 0
+//
+// Chain-to-module mapping:
+//   IC index 0 = module 0 upper (cells 0..9)
+//   IC index 1 = module 0 lower (cells 10..18)
+//   IC index 2 = module 1 upper, etc.
+// So 0x6C7 byte 0 spike = "module 0's top LTC6811 is misbehaving".
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline std::uint8_t sat_u8(std::uint32_t v) noexcept {
+    return (v > 0xFFu) ? 0xFFu : static_cast<std::uint8_t>(v);
+}
+
+[[nodiscard]] inline Frame encode_pec_err_count_a(
+    const volatile std::uint32_t (&counts)[config::LtcChainLength]) noexcept {
+    Frame f = {};
+    constexpr std::uint8_t frame_a_lim =
+        (config::LtcChainLength < 8u) ? config::LtcChainLength : 8u;
+    for (std::uint8_t i = 0; i < frame_a_lim; ++i) {
+        f[i] = sat_u8(counts[i]);
+    }
+    return f;
+}
+
+[[nodiscard]] inline Frame encode_pec_err_count_b(
+    const volatile std::uint32_t (&counts)[config::LtcChainLength]) noexcept {
+    Frame f = {};
+    for (std::uint8_t i = 8; i < config::LtcChainLength; ++i) {
+        f[i - 8u] = sat_u8(counts[i]);
+    }
+    return f;
+}
+
 }  // namespace ams::pit_diag
