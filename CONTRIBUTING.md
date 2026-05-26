@@ -16,7 +16,7 @@ conventions that go beyond "open a feat branch and PR to dev".
 | What is the current phase plan? | [`ROADMAP.md`](ROADMAP.md) (auto-generated) |
 | Source of truth for the roadmap | [`.github/roadmap.yaml`](.github/roadmap.yaml) |
 | Day-to-day Git flow | [`README.md`](README.md) |
-| Bench acceptance criteria for a release | [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) |
+| Bench acceptance criteria for a release | Latest `Full HIL acceptance — AMS vX.Y.Z` GitHub issue |
 
 ---
 

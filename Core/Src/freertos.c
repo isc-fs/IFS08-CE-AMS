@@ -57,8 +57,9 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
 void vApplicationMallocFailedHook(void);
 
 /* USER CODE BEGIN 4 */
-/* Captured globals for SWD post-mortem. Live in .bss so a debugger
- * attaching to a bricked board can read them without symbols. */
+/* Captured globals for the pit-diag crash post-mortem frame (0x6C5).
+ * Live in .bss so they survive a soft reset and can be read off the
+ * wire without a debugger. */
 volatile uint32_t g_stack_overflow_task_addr      = 0;
 volatile char     g_stack_overflow_task_name[16]  = {0};
 /* High-water mark (free stack words remaining) at the moment of
@@ -78,10 +79,11 @@ void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
    /* configCHECK_FOR_STACK_OVERFLOW=2 -> guard pattern detected the
     * overflow. Make this loud: open the relays, latch ERROR in
     * backup register (sticky across reset), capture the failing
-    * task's name+handle + watermark for SWD post-mortem, then spin
+    * task's name+handle + watermark into the pit-diag crash frame
+    * (0x6C5) for off-board post-mortem, then spin
     * so the IWDG resets us within ~100 ms with the latch still set.
     * Next boot, the firmware will come up in ERROR — observable
-    * from telemetry even without a debugger. */
+    * directly from CAN telemetry. */
    g_stack_overflow_task_addr = (uint32_t)xTask;
    if (pcTaskName != NULL) {
       for (int i = 0; i < 15 && pcTaskName[i] != '\0'; ++i) {
