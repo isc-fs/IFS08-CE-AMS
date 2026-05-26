@@ -200,20 +200,38 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
 
     state_.ltc_online_mask = new_ltc_online;
 
-    // Module is healthy this cycle iff BOTH its LTCs passed PEC.
-    // module_online_mask stays sticky (once-online); freshness is the
-    // dynamic gate via last_rx_tick + is_healthy.
+    // Per-module health for THIS cycle: bit set iff both of the module's
+    // two LTCs passed PEC. Advance last_rx_tick for fresh modules.
+    //
+    // Then re-derive module_online_mask from last_rx_tick freshness so
+    // the mask reflects "currently responding" rather than "ever
+    // responded". A bit drops automatically once `now_tick_ms -
+    // last_rx_tick[m] > BmsStaleMs`. Previously the mask was sticky-set
+    // and never cleared, which made "chain went silent" indistinguishable
+    // from "all cells are out of range" on the telemetry side (#249).
     bool any_module_fresh = false;
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         const std::uint16_t pair =
             static_cast<std::uint16_t>((1u << (2u * m)) | (1u << (2u * m + 1u)));
         if ((new_ltc_online & pair) == pair) {
-            state_.module_online_mask = static_cast<std::uint8_t>(
-                state_.module_online_mask | (1u << m));
             state_.last_rx_tick[m] = now_tick_ms;
             any_module_fresh = true;
         }
     }
+
+    // Derive mask from last_rx_tick freshness. A module that has never
+    // reported (last_rx_tick == 0) will appear fresh during the early
+    // boot window where now_tick_ms <= BmsStaleMs, then drop out once
+    // now_tick_ms > BmsStaleMs. That early-window transient is fine
+    // because SafetyTask suppresses data-presence predicates via
+    // SafetyBootGraceMs (= 2000 ms > BmsStaleMs = 1500 ms) at boot.
+    std::uint8_t fresh_mask = 0;
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        if ((now_tick_ms - state_.last_rx_tick[m]) <= config::BmsStaleMs) {
+            fresh_mask = static_cast<std::uint8_t>(fresh_mask | (1u << m));
+        }
+    }
+    state_.module_online_mask = fresh_mask;
 
     recompute_summaries_();
     return any_module_fresh;

@@ -45,10 +45,12 @@ struct BmsState {
     // PEC-clean.
     std::uint32_t last_rx_tick[config::BmsModuleCount];
 
-    // Bit N set <=> module N has reported PEC-clean at least once.
-    // Compared against config::AllModulesMask (0x1F) by SafetyTask.
-    // Sticky: dynamic disappearance is detected via the staleness
-    // window, not by clearing this mask.
+    // Bit N set <=> module N's last PEC-clean response is within
+    // BmsStaleMs of `now_tick`. Re-derived on every
+    // update_from_ltc_response from last_rx_tick freshness (see #249).
+    // Compared against config::AllModulesMask (0x1F) by SafetyTask;
+    // also surfaced directly in 0x4A0[2] telemetry. A module that has
+    // never reported (last_rx_tick == 0) stays masked off forever.
     std::uint8_t  module_online_mask;
 
     // 10-bit "this poll's per-IC PEC-OK" mask (LSB = chain index 0).
