@@ -134,6 +134,33 @@ inline void send_or_fail(std::uint32_t id,
     }
 }
 
+// Blocking variant for pit-diag bursts (#257). The 56-frame scan
+// pushes into a 16-slot FDCAN1 TX FIFO (main.c TxFifoQueueElmtsNbr);
+// without flow control the back 40 sends hit HAL_BUSY and are dropped
+// silently -- only the first 16 cell frames reach the wire, the temp
+// frames and 0x6C0..0x6C6 status frames never make it out.
+//
+// Wait for at least one free TX slot before pushing. Worst-case wait
+// is one drained slot = ~110 us at 500 kbps -- so full 56-frame burst
+// runs in ~6 ms. The 1 Hz scan period has 150x margin; yielding via
+// osDelay(1) keeps higher-prio tasks (Safety, BmsPoll) live.
+//
+// The 100-tick guard caps total wait at 100 ms in case FDCAN1 enters
+// error-passive / bus-off and TX never completes. Falls through to
+// send_or_fail which will then drop the frame and bump g_acu_tx_fail
+// -- same observable behaviour as today's all-frames-dropped path,
+// but only when the bus genuinely can't accept TX.
+template <std::size_t N>
+inline void send_or_fail_blocking(std::uint32_t id,
+                                  const std::array<std::uint8_t, N>& payload) noexcept {
+    for (std::uint32_t guard = 0;
+         guard < 100u && HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0u;
+         ++guard) {
+        osDelay(1);
+    }
+    send_or_fail(id, payload);
+}
+
 void tx_ok_precharge() noexcept {
     send_or_fail(ams::config::AcuTxOkPrechargeId,
                  ams::acu_tx::encode_ok_precharge(g_state_telemetry));
@@ -181,16 +208,20 @@ std::uint32_t pec_err_sum() noexcept {
 }
 
 void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
-    // 24 cell frames + 25 temp frames + FSM status + timing = 51 frames.
-    // At 500 kbps with avg 12 bytes-on-wire per classical CAN frame, the
-    // burst takes ~10 ms of bus time -- well under the 1 s scan period.
+    // 24 cell + 25 temp + FSM status + timing + 2 balance + boot diag
+    // + post-mortem + FW ID = 56 frames. At 500 kbps with avg 12
+    // bytes-on-wire per classic CAN frame the burst is ~6 ms of bus
+    // time. The FDCAN1 TX FIFO holds 16 (main.c TxFifoQueueElmtsNbr),
+    // so every send goes through send_or_fail_blocking which yields
+    // for one drained slot when the FIFO is full (#257). The full
+    // burst fits comfortably in the 1 s scan period.
     for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
-        send_or_fail(ams::config::PitDiagCellBaseId + i,
-                     ams::pit_diag::encode_cell_frame(bms, i));
+        send_or_fail_blocking(ams::config::PitDiagCellBaseId + i,
+                              ams::pit_diag::encode_cell_frame(bms, i));
     }
     for (std::uint8_t i = 0; i < ams::config::PitDiagTempFrames; ++i) {
-        send_or_fail(ams::config::PitDiagTempBaseId + i,
-                     ams::pit_diag::encode_temp_frame(bms, i));
+        send_or_fail_blocking(ams::config::PitDiagTempBaseId + i,
+                              ams::pit_diag::encode_temp_frame(bms, i));
     }
 
     const bool tsms     = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
@@ -198,48 +229,48 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     const std::uint8_t ams_ok =
         (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET) ? 1u : 0u;
 
-    send_or_fail(ams::config::PitDiagFsmStatusId,
-                 ams::pit_diag::encode_fsm_status(
-                     g_state_telemetry,
-                     static_cast<ams::fsm::Mode>(g_mode_locked_telemetry),
-                     tsms, dash_chg, ams_ok,
-                     pec_err_sum()));
-    send_or_fail(ams::config::PitDiagTimingId,
-                 ams::pit_diag::encode_timing(
-                     g_bms_volt_poll_ms,
-                     g_bms_volt_poll_max,
-                     g_temp_sweep_last_mask));
+    send_or_fail_blocking(ams::config::PitDiagFsmStatusId,
+                          ams::pit_diag::encode_fsm_status(
+                              g_state_telemetry,
+                              static_cast<ams::fsm::Mode>(g_mode_locked_telemetry),
+                              tsms, dash_chg, ams_ok,
+                              pec_err_sum()));
+    send_or_fail_blocking(ams::config::PitDiagTimingId,
+                          ams::pit_diag::encode_timing(
+                              g_bms_volt_poll_ms,
+                              g_bms_volt_poll_max,
+                              g_temp_sweep_last_mask));
 
     // Encoders take the volatile array by reference so we read the
     // live values each scan -- no thread-locked snapshot needed.
-    send_or_fail(ams::config::PitDiagBalanceMaskAId,
-                 ams::pit_diag::encode_balance_mask_a(g_balance_dcc_bits));
-    send_or_fail(ams::config::PitDiagBalanceMaskBId,
-                 ams::pit_diag::encode_balance_mask_b(
-                     g_balance_dcc_bits,
-                     g_balance_cycles_total_pub,
-                     g_balance_cycles_active_pub));
+    send_or_fail_blocking(ams::config::PitDiagBalanceMaskAId,
+                          ams::pit_diag::encode_balance_mask_a(g_balance_dcc_bits));
+    send_or_fail_blocking(ams::config::PitDiagBalanceMaskBId,
+                          ams::pit_diag::encode_balance_mask_b(
+                              g_balance_dcc_bits,
+                              g_balance_cycles_total_pub,
+                              g_balance_cycles_active_pub));
 
     // Read JumpReason once per scan -- it's stable across the boot.
     const std::uint32_t jump_reason =
         (&RTC->BKP0R)[ams::config::BkpJumpReasonReg];
-    send_or_fail(ams::config::PitDiagBootDiagId,
-                 ams::pit_diag::encode_boot_diag(
-                     jump_reason, g_app_init_progress, g_fdcan1_start_result));
+    send_or_fail_blocking(ams::config::PitDiagBootDiagId,
+                          ams::pit_diag::encode_boot_diag(
+                              jump_reason, g_app_init_progress, g_fdcan1_start_result));
 
-    send_or_fail(ams::config::PitDiagPostMortemId,
-                 ams::pit_diag::encode_post_mortem(
-                     g_stack_overflow_task_addr,
-                     g_stack_overflow_watermark,
-                     g_malloc_failed_count));
+    send_or_fail_blocking(ams::config::PitDiagPostMortemId,
+                          ams::pit_diag::encode_post_mortem(
+                              g_stack_overflow_task_addr,
+                              g_stack_overflow_watermark,
+                              g_malloc_failed_count));
 
-    send_or_fail(ams::config::PitDiagFwIdId,
-                 ams::pit_diag::encode_fw_id(
-                     ams_fw_version_major(),
-                     ams_fw_version_minor(),
-                     ams_fw_version_patch(),
-                     ams_git_hash(),
-                     ams_bl_node_id()));
+    send_or_fail_blocking(ams::config::PitDiagFwIdId,
+                          ams::pit_diag::encode_fw_id(
+                              ams_fw_version_major(),
+                              ams_fw_version_minor(),
+                              ams_fw_version_patch(),
+                              ams_git_hash(),
+                              ams_bl_node_id()));
 }
 
 }  // namespace
