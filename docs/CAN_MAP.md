@@ -1,34 +1,30 @@
 # AMS CAN map
 
-Reverse-engineered from the legacy bare-metal AMS code at
-`isc-fs/IFS08-CE/AMS/Core/Src/`. Source-of-truth for the FreeRTOS refactor.
-
-The refactor MUST be byte-compatible with this map unless a CAN spec
-update is explicitly agreed with the VCU and BMS teams.
+Source-of-truth for the wire format that the firmware emits + consumes
+on the **accumulator bus (FDCAN1)**. The "BMS slave bus" sections
+further down are historical archaeology — see the note below.
 
 ---
 
 ## Bus assignment
 
-| Bus | Role | Frame format | Filter (legacy) |
+| Bus | Role | Frame format | Filter |
 |---|---|---|---|
-| **FDCAN1** | Accumulator / vehicle bus | Standard + Extended | Accept-all (FilterID1=0x0, FilterID2=0x0) |
-| **FDCAN2** | BMS slave bus | Standard | Mask FilterID1=0x10, FilterID2=0x10 |
-
-Both run classic CAN framing in the legacy firmware. The refactor may
-upgrade FDCAN2 to CAN-FD if the slave modules support it; defer to Phase 3.
+| **FDCAN1** | Accumulator / vehicle / telemetry | Standard only (extended rejected at HW filter since #236) | Accept all unmatched standard into FIFO0; reject extended; reject remote |
+| **FDCAN2** | Bootloader-only post-v1.2.0 | Standard | Initialised by CubeMX but never started by the app. The bootloader (`isc-fs/stm32-can-bootloader`) claims FDCAN2 after a magic-reset jump for the flash workflow. |
 
 ---
 
 > **DEPRECATED in v1.2.0 (LTC6811-1 isoSPI).** The five BMS modules
 > no longer talk to the AMS over FDCAN2 — they sit on a daisy-chained
 > isoSPI link driven by an LTC6820 master and read via the LTC6811-1
-> register groups. The on-MCU surface that used to ingest these
-> frames (`BmsService::update_from_frame`) is now an inert stub kept
-> alive only until `BmsRxTask` is retired in #73. New code goes
-> through `BmsService::update_from_ltc_response` and the wire format
-> is documented in `docs/BMS_LTC6811.md` (#75). The sections below
-> are kept verbatim for archaeology / firmware on legacy hardware.
+> register groups. The legacy on-MCU surface (`BmsService::update_from_frame`
+> + `BmsRxTask`) was retired in #73. New code goes through
+> `BmsService::update_from_ltc_response` and the wire format is
+> documented in `docs/BMS_LTC6811.md` (#75). The sections marked
+> `[LEGACY]` below are kept verbatim for archaeology and for firmware
+> running on legacy carriers; nothing in the current build emits or
+> consumes those frames.
 
 ## Module addressing — BMS slaves (5 modules) [LEGACY]
 
