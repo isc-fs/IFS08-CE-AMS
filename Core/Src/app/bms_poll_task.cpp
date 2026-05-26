@@ -52,9 +52,15 @@ volatile std::uint32_t g_ltc_spi_err_count = 0;
 
 // Round-trip timing for the voltage poll, both last-cycle and worst-
 // case-since-boot. Lets the HIL operator verify the issue's "complete
-// within 50 ms" acceptance criterion without a scope.
-volatile std::uint32_t g_bms_volt_poll_ms  = 0;
-volatile std::uint32_t g_bms_volt_poll_max = 0;
+// within 50 ms" acceptance criterion without a scope. Promoted to
+// extern "C" external linkage so the pit-diag stream (#247) can
+// surface them via AcuCanTask.
+}  // close anonymous namespace temporarily for the extern "C" decls
+
+extern "C" volatile std::uint32_t g_bms_volt_poll_ms  = 0;
+extern "C" volatile std::uint32_t g_bms_volt_poll_max = 0;
+
+namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
 // cycles where at least one DCC bit was set. Surfaced for HIL.
