@@ -6,15 +6,6 @@
 
 #include <cstdint>
 
-#if defined(AMS_BMS_HIL_STUB)
-// #123 ACU RX dispatch probe. Surfaced in 0x4A2[4] via safety_task.
-// Ticks on any matched ACU frame; useful as a "ACU bus is alive AND
-// AcuCanTask is draining the queue AND VehicleService is dispatching"
-// liveness counter. The start-button counter from fix/47 retired here
-// along with the 0x600 path itself.
-extern "C" volatile std::uint32_t g_acu_rx_total = 0;
-#endif
-
 namespace ams {
 
 VehicleService& VehicleService::instance() noexcept {
@@ -31,10 +22,6 @@ std::uint16_t VehicleService::decode_dc_bus_V(const std::uint8_t *data) noexcept
 
 bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
     if (f.bus != static_cast<std::uint8_t>(CanBus::Acu)) return false;
-
-#if defined(AMS_BMS_HIL_STUB)
-    ++g_acu_rx_total;
-#endif
 
     if (f.id == config::AcuRxDcBusId) {
         if (f.dlc < 2) return false;

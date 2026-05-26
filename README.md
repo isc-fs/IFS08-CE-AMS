@@ -68,7 +68,7 @@ Read in this order:
 | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Vehicle / charger / boot-trigger CAN wire protocol on FDCAN1 (FDCAN2 is bootloader-only since v1.2.0). | Before touching anything CAN-side. |
 | [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | Bench + on-vehicle calibration of every `COMMISSION`-tagged constant in `ams_config.hpp`. | Before flashing the first time, and any time you adjust a threshold. |
 | [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) | Hardware-in-the-loop test plan. 60+ tests in 6 blocks. Defines the v1.1.0-bootloader and v1.2.0-ltc6811 acceptance gates. | Before signing off a release tag. |
-| [`docs/HIL_STUB.md`](docs/HIL_STUB.md) | The `AMS_BMS_HIL_STUB` build flag — what it disables, when to use it, why it must never reach a flight build. | When setting up a bench-only test rig that doesn't have a real LTC chain attached. |
+| [`docs/HIL_BUILD.md`](docs/HIL_BUILD.md) | The `AMS_HIL_CLEAR_ERROR_LATCH` build flag — what it does, when to use it, why it must never reach a flight build. | When setting up a bench rig that needs the ErrorLatch wiped on every boot. |
 | [`ROADMAP.md`](ROADMAP.md) | Auto-generated phase plan + branch status badges. | When you want to know what's next or what shipped. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch / PR / label conventions, "how to add a CAN frame" / "how to add a new task" recipes, C++ rules. | Before you open your first PR. |
 
@@ -89,9 +89,9 @@ cmake -B build-tests -S tests/unit
 cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
 
-# HIL stub build (bench rig with no LTC chain attached; details: docs/HIL_STUB.md)
+# HIL bench build (auto-clears the ErrorLatch on boot; details: docs/HIL_BUILD.md)
 cmake -B build-hil -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
-                   -DCMAKE_CXX_FLAGS="-DAMS_BMS_HIL_STUB=1"
+                   -DAMS_HIL_CLEAR_ERROR_LATCH=ON
 cmake --build build-hil
 ```
 

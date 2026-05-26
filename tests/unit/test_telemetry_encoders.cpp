@@ -40,20 +40,12 @@ extern "C" void test_telem_status_layout(void) {
     g_bms.max_cell_mV        = 0xABCD;
 
     const auto f = ams::telemetry::encode_status(
-        /*state=*/3u, /*ams_ok=*/1u, g_bms
-#if defined(AMS_BMS_HIL_STUB)
-        , /*app_init_progress=*/0x06u
-#endif
-    );
+        /*state=*/3u, /*ams_ok=*/1u, g_bms);
 
     TEST_ASSERT_EQUAL_UINT8(0x03, f[0]);  // state Run
     TEST_ASSERT_EQUAL_UINT8(0x01, f[1]);  // ams_ok asserted
     TEST_ASSERT_EQUAL_UINT8(0x1F, f[2]);  // all 5 modules online
-#if defined(AMS_BMS_HIL_STUB)
-    TEST_ASSERT_EQUAL_UINT8(0x06, f[3]);  // app_init_progress (#123 diag)
-#else
     TEST_ASSERT_EQUAL_UINT8(0x00, f[3]);  // reserved
-#endif
     TEST_ASSERT_EQUAL_UINT8(0x12, f[4]);  // min_cell_mV BE high
     TEST_ASSERT_EQUAL_UINT8(0x34, f[5]);  // min_cell_mV BE low
     TEST_ASSERT_EQUAL_UINT8(0xAB, f[6]);  // max_cell_mV BE high
@@ -63,11 +55,7 @@ extern "C" void test_telem_status_layout(void) {
 extern "C" void test_telem_status_ams_ok_normalised(void) {
     reset_all();
     // Any non-zero value must normalise to 1 in byte 1.
-    const auto f = ams::telemetry::encode_status(0u, 0xFEu, g_bms
-#if defined(AMS_BMS_HIL_STUB)
-        , /*app_init_progress=*/0u
-#endif
-    );
+    const auto f = ams::telemetry::encode_status(0u, 0xFEu, g_bms);
     TEST_ASSERT_EQUAL_UINT8(1u, f[1]);
 }
 
@@ -123,25 +111,14 @@ extern "C" void test_telem_temps_layout(void) {
         g_bms, g_veh,
         /*heartbeat=*/0x42u,
         /*tx_fail_count_lo=*/0x99u,
-#if defined(AMS_BMS_HIL_STUB)
-        /*bms_task_state_byte=*/0xA3u,
-        /*acu_rx_total_lo=*/0x55u,
-#endif
         /*tsms_dash_chg_byte=*/0x21u
     );
 
     TEST_ASSERT_EQUAL_INT8 (18,   static_cast<std::int8_t>(f[0]));
     TEST_ASSERT_EQUAL_INT8 (47,   static_cast<std::int8_t>(f[1]));
     TEST_ASSERT_EQUAL_INT8 (30,   static_cast<std::int8_t>(f[2]));
-#if defined(AMS_BMS_HIL_STUB)
-    // Bench layout: bytes 3..4 carry #123 diag probes; dc_bus_V dropped.
-    TEST_ASSERT_EQUAL_UINT8(0xA3, f[3]);   // bms_task_state_byte
-    TEST_ASSERT_EQUAL_UINT8(0x55, f[4]);   // acu_rx_total_lo
-#else
-    // Flight layout: dc_bus_V LE in 3..4.
-    TEST_ASSERT_EQUAL_UINT8(0x5E, f[3]);   // 350 = 0x015E, LE
+    TEST_ASSERT_EQUAL_UINT8(0x5E, f[3]);   // dc_bus_V LE (350 = 0x015E)
     TEST_ASSERT_EQUAL_UINT8(0x01, f[4]);
-#endif
     TEST_ASSERT_EQUAL_UINT8(0x21, f[5]);   // cockpit byte (#246: always-on)
     TEST_ASSERT_EQUAL_UINT8(0x99, f[6]);   // tx_fail_count_lo (#123)
     TEST_ASSERT_EQUAL_UINT8(0x42, f[7]);   // heartbeat
@@ -153,11 +130,8 @@ extern "C" void test_telem_temps_clip_to_int8_range(void) {
     g_bms.max_tempC =  300;      // above int8 max
     g_bms.avg_tempC =    5;
 
-    const auto f = ams::telemetry::encode_temps(g_bms, g_veh, 0u, /*tx_fail=*/0u,
-#if defined(AMS_BMS_HIL_STUB)
-        0u, 0u,
-#endif
-        0u  /*cockpit byte*/);
+    const auto f = ams::telemetry::encode_temps(g_bms, g_veh, 0u,
+                                                /*tx_fail=*/0u, 0u /*cockpit*/);
 
     TEST_ASSERT_EQUAL_INT8(-128, static_cast<std::int8_t>(f[0]));
     TEST_ASSERT_EQUAL_INT8( 127, static_cast<std::int8_t>(f[1]));
@@ -165,28 +139,21 @@ extern "C" void test_telem_temps_clip_to_int8_range(void) {
 }
 
 // 0x4A2[5] cockpit byte appears in both build flavours (#246). Same
-// encoding regardless of HIL_STUB: bit 7 sentinel, bits 3:2 = mode,
+// encoding: bit 7 sentinel, bits 3:2 = mode,
 // bit 1 = TSMS, bit 0 = DASH_CHG.
 extern "C" void test_telem_temps_cockpit_byte_at_byte5(void) {
     reset_all();
     const std::uint8_t cockpit = 0x86u;  // sentinel + Car mode + TSMS high
     const auto f = ams::telemetry::encode_temps(g_bms, g_veh, /*hb=*/0u,
-                                                /*tx_fail=*/0u,
-#if defined(AMS_BMS_HIL_STUB)
-        /*bms_task_state_byte=*/0u, /*acu_rx_total_lo=*/0u,
-#endif
-        cockpit);
+                                                /*tx_fail=*/0u, cockpit);
     TEST_ASSERT_EQUAL_UINT8(cockpit, f[5]);
 }
 
 extern "C" void test_telem_temps_heartbeat_passthrough(void) {
     reset_all();
     for (std::uint8_t hb : { 0u, 1u, 127u, 200u, 255u }) {
-        const auto f = ams::telemetry::encode_temps(g_bms, g_veh, hb, /*tx_fail=*/0u,
-#if defined(AMS_BMS_HIL_STUB)
-            0u, 0u,
-#endif
-            0u /*cockpit byte*/);
+        const auto f = ams::telemetry::encode_temps(g_bms, g_veh, hb,
+                                                    /*tx_fail=*/0u, 0u /*cockpit*/);
         TEST_ASSERT_EQUAL_UINT8(hb, f[7]);
     }
 }
@@ -198,19 +165,11 @@ extern "C" void test_telem_temps_heartbeat_passthrough(void) {
 
 extern "C" void test_telem_field_independence(void) {
     reset_all();
-    const auto base_status = ams::telemetry::encode_status(0, 0, g_bms
-#if defined(AMS_BMS_HIL_STUB)
-        , 0u
-#endif
-    );
+    const auto base_status = ams::telemetry::encode_status(0, 0, g_bms);
 
     // Flip min_cell_mV. Bytes 4..5 should change, others must not.
     g_bms.min_cell_mV = 0xABCD;
-    const auto perturbed = ams::telemetry::encode_status(0, 0, g_bms
-#if defined(AMS_BMS_HIL_STUB)
-        , 0u
-#endif
-    );
+    const auto perturbed = ams::telemetry::encode_status(0, 0, g_bms);
     TEST_ASSERT_EQUAL_UINT8(base_status[0], perturbed[0]);
     TEST_ASSERT_EQUAL_UINT8(base_status[1], perturbed[1]);
     TEST_ASSERT_EQUAL_UINT8(base_status[2], perturbed[2]);

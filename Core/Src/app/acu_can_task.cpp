@@ -70,7 +70,7 @@ extern "C" volatile std::uint32_t g_balance_dcc_bits[ams::config::BmsModuleCount
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
 
-// Boot diagnostics. Ungated from HIL_STUB-only in #247 so flight
+// Boot diagnostics. Surfaced in flight
 // pit-diag can surface them too.
 extern "C" volatile std::uint8_t  g_app_init_progress;
 extern "C" volatile std::uint32_t g_fdcan1_start_result;

@@ -65,13 +65,13 @@ Everything else exists to enforce these:
    because the v1.2 daughterboard doesn't route it; the
    ``sdc_closed`` predicate is gone.
 
-> The HIL bench rig uses the `AMS_BMS_HIL_STUB` build flag to
-> relax a few bench-only invariants (current-sensor freshness, latch
-> stickiness, telemetry layout). The legacy BMS-data-source seeder
-> was retired in #207; HIL builds now drive a real LTC6820/LTC6811
-> via the Pi Pico emulator (IFS08_HIL `feat/pico-ltc-emulator`).
-> The flag is **never compiled into a flight build**. Full semantics
-> in [`HIL_STUB.md`](HIL_STUB.md).
+> The HIL bench rig drives a real LTC6820/LTC6811 chain via the Pi
+> Pico emulator (IFS08_HIL `feat/pico-ltc-emulator`), so flight and
+> bench run the *same* BMS path. The only HIL-only build flag still
+> in the tree is `AMS_HIL_CLEAR_ERROR_LATCH`, which wipes the
+> ErrorLatch BKP register on every boot so a faulted bench session
+> doesn't need a manual reset to come back up. It is **never
+> compiled into a flight build**. See [`HIL_BUILD.md`](HIL_BUILD.md).
 
 ---
 
@@ -166,10 +166,10 @@ DCC writes (`maybe_run_balance_update` runs every
 `BalanceUpdatePolls` voltage cycles, inline after RDCV[A-D],
 sharing the same `LTC6820::Bus`). Single owner of the chain — no
 bus mutex, no producer/consumer queue. Runs on every build flavour
-post-#207 — HIL_STUB no longer compiles out the real LTC path; the
-bench drives a Pi Pico LTC6820/LTC6811 emulator on MLC2 J8. See
-[`HIL_STUB.md`](HIL_STUB.md) for the remaining bench-only concerns
-(diag counters, 0x4A2 layout, current-sensor freshness relax).
+post-#207 — flight and HIL run the same LTC path; the bench drives
+a Pi Pico LTC6820/LTC6811 emulator on MLC2 J8. See
+[`HIL_BUILD.md`](HIL_BUILD.md) for the lone HIL build flag
+(`AMS_HIL_CLEAR_ERROR_LATCH`).
 
 The legacy `BmsRxTask` was retired in v1.2.0 (#73) once the BMS
 data path moved off FDCAN2; the bootloader-trigger frame it used
@@ -431,7 +431,7 @@ sequenceDiagram
 
   par scheduler running
     init->>init: ErrorLatch::init (DBP unlock)
-    Note over init: Under -DAMS_BMS_HIL_STUB:<br/>clear ErrorLatch (defence-in-depth)
+    Note over init: Under -DAMS_HIL_CLEAR_ERROR_LATCH:<br/>clear ErrorLatch (defence-in-depth)
     init->>HW: FDCAN1 filter + ActivateNotification + Start
     init->>HW: LTC6820 configure + wakeup + chain discovery
     alt chain discovered != LtcChainLength
@@ -695,7 +695,7 @@ IFS08-CE-AMS/
 │   ├── BMS_LTC6811.md                # isoSPI BMS wire protocol
 │   ├── CAN_MAP.md                    # vehicle / ACU CAN protocol
 │   ├── COMMISSIONING.md              # bench / on-vehicle calibration
-│   ├── HIL_STUB.md                   # AMS_BMS_HIL_STUB build flag (bench only)
+│   ├── HIL_BUILD.md                  # AMS_HIL_CLEAR_ERROR_LATCH build flag (bench only)
 │   └── HIL_TESTS.md                  # bench acceptance plan
 ├── tests/
 │   └── unit/
@@ -737,9 +737,9 @@ Different entry points by goal:
 - **Working on the LTC6811 / isoSPI path**:
   [`BMS_LTC6811.md`](BMS_LTC6811.md) is the source of truth for the
   wire protocol, cell + temp mappings, PEC15, and balancing.
-- **Setting up a bench rig with no real BMS chain**:
-  [`HIL_STUB.md`](HIL_STUB.md) explains the `AMS_BMS_HIL_STUB` build
-  flag and how to verify a flight image isn't stub-built.
+- **Setting up a bench rig**:
+  [`HIL_BUILD.md`](HIL_BUILD.md) covers the `AMS_HIL_CLEAR_ERROR_LATCH`
+  flag and how to verify it isn't compiled into a flight image.
 
 ---
 
