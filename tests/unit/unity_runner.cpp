@@ -135,6 +135,7 @@ void test_telem_pack_layout_positive_current(void);
 void test_telem_pack_layout_negative_current(void);
 void test_telem_temps_layout(void);
 void test_telem_temps_clip_to_int8_range(void);
+void test_telem_temps_cockpit_byte_at_byte5(void);
 void test_telem_temps_heartbeat_passthrough(void);
 void test_telem_field_independence(void);
 
@@ -301,6 +302,7 @@ int main(void) {
     RUN_TEST(test_telem_pack_layout_negative_current);
     RUN_TEST(test_telem_temps_layout);
     RUN_TEST(test_telem_temps_clip_to_int8_range);
+    RUN_TEST(test_telem_temps_cockpit_byte_at_byte5);
     RUN_TEST(test_telem_temps_heartbeat_passthrough);
     RUN_TEST(test_telem_field_independence);
 

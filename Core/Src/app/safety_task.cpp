@@ -264,19 +264,28 @@ void SafetyTask::run() noexcept {
             const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
                 g_telemetry_tx_fail & 0xFFu);
 
+            // Cockpit byte (#246): always-on in 0x4A2[5], regardless of
+            // build flavour. Hoisted out of HIL_STUB-only after the
+            // dashboard / pit-tool decoders started relying on it for
+            // every build, not just the legacy stub data path.
+            //   bit 7    1 (sentinel; distinguishes "live byte" from
+            //              "byte got elided by an older firmware")
+            //   bits 3:2 mode_locked (00=Undecided, 01=Car, 10=Charger)
+            //   bit 1    TSMS readback (PF9)
+            //   bit 0    DASH_CHG readback (PF10)
+            const std::uint8_t tsms_dash_chg_byte = static_cast<std::uint8_t>(
+                0x80u |
+                (static_cast<std::uint8_t>(mode_locked) << 2) |
+                (tsms    ? 0x02u : 0u) |
+                (dash_chg ? 0x01u : 0u));
+
 #if defined(AMS_BMS_HIL_STUB)
-            // Bench-only diag values riding 0x4A2[3..5]. Skipped in
+            // Bench-only diag values riding 0x4A2[3..4]. Skipped in
             // flight so we don't burn an osThreadGetState() call per
             // 500 ms tick.
             //
             // 0x4A2[3] -- BmsPollTask scheduling state (BmsPollTaskHandle)
-            // 0x4A2[4] -- g_acu_rx_total low byte  (any ACU RX = ticking)
-            // 0x4A2[5] -- TSMS + DASH_CHG pin readback + mode_locked.
-            //             High nibble 0x8 is a "this byte is live"
-            //             sentinel so 0x00 from older binaries stands
-            //             out. Bits: [7]=1, [3..2]=mode_locked
-            //             (00=Undecided, 01=Car, 10=Charger),
-            //             [1]=TSMS, [0]=DASH_CHG.
+            // 0x4A2[4] -- g_acu_rx_total low byte (any ACU RX = ticking)
             const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
                 ? 0xFFu
                 : static_cast<std::uint8_t>(
@@ -284,11 +293,6 @@ void SafetyTask::run() noexcept {
                                  osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
             const std::uint8_t acu_rx_total_lo = static_cast<std::uint8_t>(
                 g_acu_rx_total & 0xFFu);
-            const std::uint8_t tsms_dash_chg_byte = static_cast<std::uint8_t>(
-                0x80u |
-                (static_cast<std::uint8_t>(mode_locked) << 2) |
-                (tsms    ? 0x02u : 0u) |
-                (dash_chg ? 0x01u : 0u));
 
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap,
@@ -302,7 +306,7 @@ void SafetyTask::run() noexcept {
                 g_state_telemetry, ams_ok, bms_snap);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
-                bms_snap, veh_snap, heartbeat, tx_fail_lo);
+                bms_snap, veh_snap, heartbeat, tx_fail_lo, tsms_dash_chg_byte);
 #endif
 
             if (!send_telem(config::AmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
