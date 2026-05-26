@@ -136,6 +136,32 @@ void test_telem_temps_clip_to_int8_range(void);
 void test_telem_temps_heartbeat_passthrough(void);
 void test_telem_field_independence(void);
 
+// test_pit_diag_emitter.cpp
+void test_pit_diag_cell_frame_zero_indexes_module0(void);
+void test_pit_diag_cell_frame_spans_module_boundary(void);
+void test_pit_diag_cell_frame_last_has_sentinels(void);
+void test_pit_diag_cell_frame_out_of_range_returns_zeros(void);
+void test_pit_diag_temp_frame_first_byte_is_module0_temp0(void);
+void test_pit_diag_temp_frame_clips_int8_range(void);
+void test_pit_diag_temp_frame_last_covers_module4(void);
+void test_pit_diag_fsm_status_layout(void);
+void test_pit_diag_fsm_status_pec_saturates(void);
+void test_pit_diag_timing_layout(void);
+void test_pit_diag_timing_clips_poll_at_ffff(void);
+void test_pit_diag_classify_enable_returns_plus_one(void);
+void test_pit_diag_classify_disable_returns_minus_one(void);
+void test_pit_diag_classify_random_payload_returns_zero(void);
+void test_pit_diag_classify_wrong_id_returns_zero(void);
+void test_pit_diag_classify_wrong_dlc_returns_zero(void);
+void test_pit_diag_balance_mask_a_module0_cell0(void);
+void test_pit_diag_balance_mask_a_module4_cell8(void);
+void test_pit_diag_balance_mask_b_carries_cycles(void);
+void test_pit_diag_boot_diag_layout(void);
+void test_pit_diag_post_mortem_clean_session_all_zero(void);
+void test_pit_diag_post_mortem_after_stack_overflow(void);
+void test_pit_diag_post_mortem_saturates_watermark_and_malloc(void);
+void test_pit_diag_fw_id_layout(void);
+
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
 void test_balance_single_hot_cell_in_charge(void);
@@ -273,6 +299,31 @@ int main(void) {
     RUN_TEST(test_telem_temps_clip_to_int8_range);
     RUN_TEST(test_telem_temps_heartbeat_passthrough);
     RUN_TEST(test_telem_field_independence);
+
+    RUN_TEST(test_pit_diag_cell_frame_zero_indexes_module0);
+    RUN_TEST(test_pit_diag_cell_frame_spans_module_boundary);
+    RUN_TEST(test_pit_diag_cell_frame_last_has_sentinels);
+    RUN_TEST(test_pit_diag_cell_frame_out_of_range_returns_zeros);
+    RUN_TEST(test_pit_diag_temp_frame_first_byte_is_module0_temp0);
+    RUN_TEST(test_pit_diag_temp_frame_clips_int8_range);
+    RUN_TEST(test_pit_diag_temp_frame_last_covers_module4);
+    RUN_TEST(test_pit_diag_fsm_status_layout);
+    RUN_TEST(test_pit_diag_fsm_status_pec_saturates);
+    RUN_TEST(test_pit_diag_timing_layout);
+    RUN_TEST(test_pit_diag_timing_clips_poll_at_ffff);
+    RUN_TEST(test_pit_diag_classify_enable_returns_plus_one);
+    RUN_TEST(test_pit_diag_classify_disable_returns_minus_one);
+    RUN_TEST(test_pit_diag_classify_random_payload_returns_zero);
+    RUN_TEST(test_pit_diag_classify_wrong_id_returns_zero);
+    RUN_TEST(test_pit_diag_classify_wrong_dlc_returns_zero);
+    RUN_TEST(test_pit_diag_balance_mask_a_module0_cell0);
+    RUN_TEST(test_pit_diag_balance_mask_a_module4_cell8);
+    RUN_TEST(test_pit_diag_balance_mask_b_carries_cycles);
+    RUN_TEST(test_pit_diag_boot_diag_layout);
+    RUN_TEST(test_pit_diag_post_mortem_clean_session_all_zero);
+    RUN_TEST(test_pit_diag_post_mortem_after_stack_overflow);
+    RUN_TEST(test_pit_diag_post_mortem_saturates_watermark_and_malloc);
+    RUN_TEST(test_pit_diag_fw_id_layout);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);

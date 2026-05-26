@@ -69,6 +69,12 @@ extern "C" volatile bool g_force_error_request = false;
 // Updated on every transition.
 extern "C" volatile std::uint8_t g_state_telemetry = 0;
 
+// Mode locked at Start->Precharge, mirrored here so the pit-diag stream
+// (#247) in AcuCanTask can surface it without taking a snapshot mutex.
+// Same 8-bit volatile read pattern as g_state_telemetry. Values match
+// the fsm::Mode enum (0=Undecided, 1=Car, 2=Charger).
+extern "C" volatile std::uint8_t g_mode_locked_telemetry = 0;
+
 // Telemetry TX failure counter, surfaced via a future diag frame.
 extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 
@@ -209,6 +215,8 @@ void SafetyTask::run() noexcept {
                             config::VcuFreshMs;
                     mode_locked = vcu_fresh ? fsm::Mode::Car
                                             : fsm::Mode::Charger;
+                    g_mode_locked_telemetry =
+                        static_cast<std::uint8_t>(mode_locked);
                 }
 
                 const fsm::Inputs fsm_in = {

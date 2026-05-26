@@ -134,6 +134,48 @@ inline constexpr std::uint32_t EcuFastTxMs           = 50;
 inline constexpr std::uint32_t EcuMidTxMs            = 100;
 inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 
+// ---------------------------------------------------------------------------
+// Pit-side diagnostic stream (#247). Runtime-toggleable full-grid telemetry
+// for pit-stop debugging when the accumulator is plugged into can0 (car
+// stationary in the pit, or accumulator on the charger). Off by default.
+//
+// Enable contract:
+//   RX 0x7F0 [4] DE AD BE EF  -> stream ON
+//   RX 0x7F0 [4] 00 00 00 00  -> stream OFF
+//   TX 0x7F1 [1] {01|00}      -> one-shot ACK after a state transition
+//
+// State lives in RAM only -- reboot clears it (no risk of leaving diag on
+// through a track session). Stream continues through FSM::Error so that
+// charging-fault diagnostics survive a trip.
+//
+// Stream IDs (1 Hz cadence; ~50 frames/scan ~= 1 % bus load at 500 kbps):
+//   0x680..0x697   24 frames of 4 cells each (BE u16 mV); last frame has
+//                  3 real cells + 1 sentinel 0xFFFF for cells 95..95.
+//                  Decoder: cell_index = 4 * (id - 0x680) + slot;
+//                           module = cell_index / 19, cell = cell_index % 19.
+//   0x6A0..0x6B8   25 frames of 8 NTC temps each (i8 degC); covers all
+//                  200 NTCs row-major over cell_tempC[5][40].
+//   0x6C0          FSM extended status (see pit_diag_emitter.hpp layout).
+//   0x6C1          Poll timing (last/max V-poll ms, last temp-sweep mask).
+inline constexpr std::uint32_t PitDiagCmdRxId            = 0x7F0u;
+inline constexpr std::uint32_t PitDiagAckTxId            = 0x7F1u;
+inline constexpr std::uint32_t PitDiagCellBaseId         = 0x680u;
+inline constexpr std::uint32_t PitDiagTempBaseId         = 0x6A0u;
+inline constexpr std::uint32_t PitDiagFsmStatusId        = 0x6C0u;
+inline constexpr std::uint32_t PitDiagTimingId           = 0x6C1u;
+inline constexpr std::uint32_t PitDiagBalanceMaskAId     = 0x6C2u;  // DCC bits cells 0..63
+inline constexpr std::uint32_t PitDiagBalanceMaskBId     = 0x6C3u;  // DCC bits cells 64..94 + cycle counts
+inline constexpr std::uint32_t PitDiagBootDiagId         = 0x6C4u;  // reset reason + app_init_progress
+inline constexpr std::uint32_t PitDiagPostMortemId       = 0x6C5u;  // stack overflow + malloc fail
+inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + git hash[0..3] + BL node id
+inline constexpr std::uint8_t  PitDiagCmdDlc             = 4u;
+inline constexpr std::uint8_t  PitDiagEnableMagic[4]     = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
+inline constexpr std::uint8_t  PitDiagDisableMagic[4]    = { 0x00u, 0x00u, 0x00u, 0x00u };
+inline constexpr std::uint32_t PitDiagScanPeriodMs       = 1000u;  // 1 Hz scan when enabled
+inline constexpr std::uint8_t  PitDiagCellFrames         = 24u;    // ceil(95 / 4)
+inline constexpr std::uint8_t  PitDiagTempFrames         = 25u;    // 200 / 8 exactly
+inline constexpr std::uint16_t PitDiagCellSentinel       = 0xFFFFu;
+
 // Stub sentinel for the temp_dcdc byte (0x137 data[4..5]) while the
 // DCDC temperature sensor is not wired. INT16_MIN = "not available".
 inline constexpr std::int16_t  DcdcTempStubValue     = -32768;

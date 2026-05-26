@@ -353,6 +353,48 @@ Source: `BMS_MOD::parse()` `class_bms.cpp:170`,
 
 ---
 
+## TX — AMS pit-diag stream (FDCAN1, runtime-toggleable)
+
+Optional full-grid diagnostic stream gated by a runtime CAN command.
+Default OFF; intended for pit-stop debugging when the accumulator is
+plugged into a `candump`-grade tool — either with the pack mounted in
+the car (stationary) or out of the car on the charger. **Never on
+during a track session** because nothing persists the flag across
+reboots (#247).
+
+### Enable / disable
+
+| Direction | ID | DLC | Payload | Meaning |
+|---|---|---|---|---|
+| RX | `0x7F0` | 4 | `DE AD BE EF` | Pit-diag stream ON |
+| RX | `0x7F0` | 4 | `00 00 00 00` | Pit-diag stream OFF |
+| TX | `0x7F1` | 1 | `01` or `00` | One-shot ACK after a state change |
+
+Reboot clears the flag — every power-cycle returns to OFF. Stream
+continues through `fsm::State::Error` so charging-fault diagnostics
+survive a predicate trip.
+
+### Stream layout (cadence 1 Hz when enabled)
+
+| IDs | Frames | Layout | Cadence |
+|---|---|---|---|
+| `0x680..0x697` | 24 cell-V frames | 4 cells per frame, BE u16 mV. Row-major over `cell_mV[5][19]`. Last frame has 3 real cells + 2-byte sentinel `0xFFFF`. Decode: `cell_index = 4·(id - 0x680) + slot; module = cell_index / 19; cell = cell_index % 19`. | 1 Hz |
+| `0x6A0..0x6B8` | 25 cell-T frames | 8 NTCs per frame, signed i8 °C each. Row-major over `cell_tempC[5][40]`. Decode: `temp_index = 8·(id - 0x6A0) + slot; module = temp_index / 40; temp = temp_index % 40`. | 1 Hz |
+| `0x6C0` | 1 FSM extended status | `[0]` FSM state, `[1]` mode_locked (0/1/2), `[2]` bits `1`=TSMS, `0`=DASH_CHG, `[3]` AMS_OK GPIO, `[4..5]` PEC error total BE u16, `[6..7]` reserved | 1 Hz |
+| `0x6C1` | 1 poll timing | `[0..1]` last V-poll ms BE u16, `[2..3]` worst-case V-poll BE u16, `[4..7]` last T-sweep failure mask LE u32 | 1 Hz |
+
+Encoders are pure-logic in
+[`Core/Inc/app/pit_diag_emitter.hpp`](../Core/Inc/app/pit_diag_emitter.hpp);
+unit tests in
+[`tests/unit/test_pit_diag_emitter.cpp`](../tests/unit/test_pit_diag_emitter.cpp).
+Dispatch + flag ownership in
+[`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
+
+Bus cost: 51 frames × ~12 bytes-on-wire = ~5 kbit, ~10 ms at 500 kbps
+= ~1 % bus load when enabled.
+
+---
+
 ## TX — AMS telemetry (FDCAN1)
 
 Three single-purpose 8-byte frames emitted every **500 ms** by
