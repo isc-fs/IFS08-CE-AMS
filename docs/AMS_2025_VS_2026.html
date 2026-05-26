@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>AMS firmware — 2025 vs 2026</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg-card: #161a23;
+    --bg-card-2: #1c2130;
+    --fg: #e6e8ee;
+    --fg-mute: #98a2b3;
+    --fg-dim: #6b7280;
+    --line: #2a2f3e;
+    --old: #f59e0b;       /* amber: last season */
+    --old-bg: rgba(245,158,11,.08);
+    --old-line: rgba(245,158,11,.4);
+    --new: #10b981;       /* emerald: this season */
+    --new-bg: rgba(16,185,129,.08);
+    --new-line: rgba(16,185,129,.4);
+    --accent: #60a5fa;
+    --code-bg: #0a0d14;
+    --warn: #ef4444;
+  }
+  html, body { background: var(--bg); color: var(--fg); margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+    line-height: 1.55;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 60px 32px 80px; }
+
+  /* HERO */
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    background: radial-gradient(1200px 400px at 50% -100px, rgba(96,165,250,.12), transparent);
+    padding: 80px 32px 60px;
+  }
+  header.hero .wrap { padding: 0; max-width: 1180px; margin: 0 auto; }
+  header.hero h1 {
+    font-size: 56px; line-height: 1.05; margin: 0 0 12px;
+    letter-spacing: -1.5px; font-weight: 800;
+  }
+  header.hero h1 span.old { color: var(--old); }
+  header.hero h1 span.new { color: var(--new); }
+  header.hero p.lead {
+    font-size: 19px; color: var(--fg-mute); max-width: 700px; margin: 0 0 8px;
+  }
+  header.hero p.sub {
+    font-size: 14px; color: var(--fg-dim); margin-top: 18px;
+  }
+  header.hero p.sub code { background: var(--code-bg); padding: 2px 6px; border-radius: 3px; color: var(--accent); }
+
+  /* SECTIONS */
+  h2 {
+    font-size: 28px; margin: 70px 0 8px; letter-spacing: -0.5px; font-weight: 700;
+  }
+  h2 .num {
+    color: var(--fg-dim); font-weight: 500; font-variant-numeric: tabular-nums;
+    margin-right: 12px; font-size: 22px;
+  }
+  h2 + p.section-lead {
+    color: var(--fg-mute); margin: 0 0 28px; font-size: 16px;
+  }
+
+  /* STATS GRID */
+  .stats {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    margin: 30px 0;
+  }
+  .stat {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 18px 18px 16px;
+  }
+  .stat .label {
+    font-size: 12px; color: var(--fg-dim); text-transform: uppercase;
+    letter-spacing: 0.5px; margin-bottom: 6px;
+  }
+  .stat .row {
+    display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px;
+  }
+  .stat .num {
+    font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums;
+    line-height: 1;
+  }
+  .stat .num.old { color: var(--old); }
+  .stat .num.new { color: var(--new); }
+  .stat .tag {
+    font-size: 11px; color: var(--fg-dim); text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .stat .arrow {
+    font-size: 14px; color: var(--fg-dim); margin: 6px 0;
+  }
+  .stat .delta {
+    font-size: 12px; color: var(--fg-mute); margin-top: 2px;
+  }
+  .stat .delta.up { color: var(--new); }
+  .stat .delta.down { color: var(--old); }
+
+  /* COLUMN COMPARISON */
+  .compare {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 18px;
+    margin: 28px 0 18px;
+  }
+  .col {
+    border-radius: 10px; padding: 22px 24px;
+    border: 1px solid;
+  }
+  .col.old { background: var(--old-bg); border-color: var(--old-line); }
+  .col.new { background: var(--new-bg); border-color: var(--new-line); }
+  .col h3 {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 14px; text-transform: uppercase; letter-spacing: 1.5px;
+    margin: 0 0 12px; font-weight: 700;
+  }
+  .col.old h3 { color: var(--old); }
+  .col.new h3 { color: var(--new); }
+  .col h3 .badge {
+    background: rgba(255,255,255,.05); padding: 3px 8px; border-radius: 4px;
+    font-weight: 600; font-size: 11px; letter-spacing: 0.5px;
+  }
+  .col p, .col li { color: var(--fg); }
+  .col p { margin: 0 0 10px; }
+  .col ul { margin: 0; padding-left: 18px; }
+  .col li { margin-bottom: 6px; }
+  .col code, code.inline {
+    background: var(--code-bg); color: var(--accent);
+    padding: 2px 6px; border-radius: 3px; font-size: 13px;
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .col pre {
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 6px; padding: 12px 14px; margin: 10px 0 0;
+    font-size: 12px; line-height: 1.5;
+    overflow-x: auto;
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .col pre .kw { color: #c084fc; }
+  .col pre .num { color: #34d399; }
+  .col pre .cm { color: #6b7280; font-style: italic; }
+  .col pre .str { color: #fbbf24; }
+
+  /* WHY-CHANGED INSET */
+  .why {
+    background: var(--bg-card);
+    border-left: 3px solid var(--accent);
+    padding: 14px 18px; margin: 16px 0 0;
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+    color: var(--fg-mute);
+  }
+  .why strong { color: var(--fg); }
+
+  /* TIMELINE */
+  .timeline { position: relative; margin: 30px 0; padding-left: 30px; }
+  .timeline::before {
+    content: ""; position: absolute; left: 8px; top: 6px; bottom: 6px;
+    width: 2px; background: var(--line);
+  }
+  .tl-item { position: relative; margin-bottom: 18px; padding-left: 20px; }
+  .tl-item::before {
+    content: ""; position: absolute; left: -28px; top: 6px;
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--bg); border: 2px solid var(--accent);
+  }
+  .tl-item .when { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .tl-item .what { color: var(--fg); font-weight: 600; }
+  .tl-item .desc { color: var(--fg-mute); font-size: 14px; margin-top: 2px; }
+
+  /* TABLE */
+  table.cmp {
+    width: 100%; border-collapse: collapse; margin: 18px 0;
+    background: var(--bg-card); border-radius: 8px; overflow: hidden;
+  }
+  table.cmp th, table.cmp td {
+    padding: 12px 16px; text-align: left; vertical-align: top;
+    border-bottom: 1px solid var(--line); font-size: 14px;
+  }
+  table.cmp th {
+    background: var(--bg-card-2); font-weight: 600; color: var(--fg-mute);
+    text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px;
+  }
+  table.cmp td.old { color: var(--old); }
+  table.cmp td.new { color: var(--new); }
+  table.cmp td code { background: var(--code-bg); padding: 1px 5px; border-radius: 3px; color: var(--accent); font-size: 12px; }
+
+  /* TASK TABLE */
+  .tasks {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+    margin: 24px 0;
+  }
+  .task {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 14px 16px;
+  }
+  .task .name { font-weight: 700; font-size: 14px; color: var(--accent); }
+  .task .prio { font-size: 11px; color: var(--fg-dim); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .task .desc { font-size: 13px; color: var(--fg-mute); margin-top: 8px; }
+
+  /* SVG ARCH */
+  .arch-diag {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 10px; padding: 24px; margin: 18px 0;
+    display: flex; justify-content: center;
+  }
+
+  /* READING ORDER */
+  .reading {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin: 24px 0;
+  }
+  .reading-card {
+    background: var(--bg-card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 18px 20px;
+  }
+  .reading-card .step {
+    display: inline-block; background: var(--accent); color: var(--bg);
+    border-radius: 50%; width: 26px; height: 26px;
+    line-height: 26px; text-align: center; font-weight: 700;
+    font-size: 13px; margin-bottom: 10px;
+  }
+  .reading-card h4 { margin: 0 0 6px; font-size: 15px; }
+  .reading-card p { margin: 0; font-size: 13px; color: var(--fg-mute); }
+  .reading-card code { background: var(--code-bg); color: var(--accent); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+
+  /* FOOTER */
+  footer {
+    margin-top: 80px; padding-top: 24px; border-top: 1px solid var(--line);
+    color: var(--fg-dim); font-size: 13px;
+  }
+  footer a { color: var(--accent); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* RESPONSIVE */
+  @media (max-width: 800px) {
+    .compare, .stats, .tasks, .reading { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: repeat(2, 1fr); }
+    header.hero h1 { font-size: 36px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <h1>AMS firmware<br/><span class="old">2025</span> &nbsp;→&nbsp; <span class="new">2026</span></h1>
+    <p class="lead">A side-by-side look at what the Accumulator Management System firmware looked like last season vs the rewrite that's flying this year.</p>
+    <p class="sub">
+      <code>isc-fs/IFS08-CE/AMS</code> &nbsp;·&nbsp; bare-metal C++, last commit 2024-09-29
+      &nbsp;&nbsp;&nbsp;<strong>vs</strong>&nbsp;&nbsp;&nbsp;
+      <code>isc-fs/IFS08-CE-AMS</code> &nbsp;·&nbsp; FreeRTOS C++ at <code>v1.5.0</code>
+    </p>
+  </div>
+</header>
+
+<div class="wrap">
+
+<!-- AT A GLANCE STATS -->
+<h2><span class="num">01</span>By the numbers</h2>
+<p class="section-lead">Raw size, file count, and observability surface.</p>
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">Application source LOC</div>
+    <div class="row"><div class="num old">3 026</div><div class="tag">2025</div></div>
+    <div class="arrow">↓</div>
+    <div class="row"><div class="num new">2 607</div><div class="tag">2026 (cpp only)</div></div>
+    <div class="delta">+ 1 747 LOC headers, +&nbsp;2&nbsp;161 LOC tests on top</div>
+  </div>
+  <div class="stat">
+    <div class="label">Hand-written files</div>
+    <div class="row"><div class="num old">14</div><div class="tag">2025</div></div>
+    <div class="arrow">→</div>
+    <div class="row"><div class="num new">41</div><div class="tag">2026</div></div>
+    <div class="delta">smaller files, single responsibility per TU</div>
+  </div>
+  <div class="stat">
+    <div class="label">Unit tests</div>
+    <div class="row"><div class="num old">0</div><div class="tag">2025</div></div>
+    <div class="arrow">→</div>
+    <div class="row"><div class="num new">149</div><div class="tag">2026</div></div>
+    <div class="delta up">host-side Unity; every PR green-gates on these</div>
+  </div>
+  <div class="stat">
+    <div class="label">FreeRTOS tasks</div>
+    <div class="row"><div class="num old">0</div><div class="tag">2025 bare-metal</div></div>
+    <div class="arrow">→</div>
+    <div class="row"><div class="num new">6</div><div class="tag">2026 RTOS</div></div>
+    <div class="delta">Safety / BmsPoll / AcuCan / CurrentSensor / AppInit / Default</div>
+  </div>
+  <div class="stat">
+    <div class="label">CAN buses used by the app</div>
+    <div class="row"><div class="num old">2</div><div class="tag">FDCAN1 + FDCAN2</div></div>
+    <div class="arrow">→</div>
+    <div class="row"><div class="num new">1</div><div class="tag">FDCAN1 only</div></div>
+    <div class="delta">FDCAN2 is bootloader-only post-rewrite</div>
+  </div>
+  <div class="stat">
+    <div class="label">BMS protocol</div>
+    <div class="row"><div class="num old">CAN</div><div class="tag">FDCAN2 polling</div></div>
+    <div class="arrow">→</div>
+    <div class="row"><div class="num new">isoSPI</div><div class="tag">LTC6811-1 chain</div></div>
+    <div class="delta">hardware change to BMS_LITE boards</div>
+  </div>
+  <div class="stat">
+    <div class="label">CAN frames on FDCAN1 (live)</div>
+    <div class="row"><div class="num old">~6</div><div class="tag">2025</div></div>
+    <div class="arrow">↑</div>
+    <div class="row"><div class="num new">11&nbsp;+&nbsp;56</div><div class="tag">flight + pit-diag</div></div>
+    <div class="delta up">runtime-toggleable diag firehose adds 56</div>
+  </div>
+  <div class="stat">
+    <div class="label">FLASH used (Release)</div>
+    <div class="row"><div class="num old">~?</div><div class="tag">2025</div></div>
+    <div class="arrow">→</div>
+    <div class="row"><div class="num new">5.5&nbsp;%</div><div class="tag">2026 of 768 KB</div></div>
+    <div class="delta">~ 43 KB binary, plenty of headroom</div>
+  </div>
+</div>
+
+<!-- TOP-LEVEL DIFFERENCE -->
+<h2><span class="num">02</span>What's the AMS, briefly</h2>
+<p class="section-lead">Same MCU (STM32H733), same job: keep the tractive-system pack safe and observable. The <em>how</em> changed radically.</p>
+
+<div class="compare">
+  <div class="col old">
+    <h3><span>2025</span><span class="badge">bare-metal</span></h3>
+    <p>A single <code>main.cpp</code> with a <code>while(1)</code> loop. Five hand-written classes (<code>BMS_MOD</code>, <code>CPU_MOD</code>, <code>Current_MOD</code>, <code>Temperatures_MOD</code>, plus a global state-machine module) own everything. CAN ISRs push frames into globals; the main loop polls timers and dispatches. No RTOS, no priority concept, no isolation.</p>
+    <pre><span class="kw">while</span> (1) {
+  <span class="kw">if</span> (msg_acu_new) parse_acu(...);
+  <span class="kw">if</span> (msg_bms_new) parse_bms(...);
+  select_state();    <span class="cm">// FSM tick</span>
+  send_telemetry();
+  HAL_Delay(<span class="num">10</span>);
+}</pre>
+  </div>
+  <div class="col new">
+    <h3><span>2026</span><span class="badge">FreeRTOS</span></h3>
+    <p>Six tasks with explicit priorities + a pure-logic FSM in a header that the host unit-test build exercises directly. Services own mutex-protected state; tasks own scheduling. The supervisor task (SafetyTask) runs at 10 ms cadence and gates everything that can close an AIR.</p>
+    <pre><span class="kw">for</span> (;;) {
+  last_wake += SafetyPeriodMs;    <span class="cm">// 10 ms</span>
+  osDelayUntil(last_wake);
+  <span class="kw">auto</span> bms_snap = BmsService::snapshot();
+  <span class="kw">if</span> (evaluate_fault(...)) latch_error_();
+  state = fsm::step(...);
+  watchdog::refresh();
+}</pre>
+  </div>
+</div>
+
+<div class="why"><strong>Why?</strong> Last season's bare-metal loop had no isolation between the BMS poll latency and the AIR-open response time — a long CAN burst from the slaves could delay an emergency open. With FreeRTOS the supervisor runs at <code>osPriorityRealtime</code> and preempts everything else, so AIRs open within one 10 ms tick of a detected fault regardless of what the BMS layer is doing.</div>
+
+<!-- BMS COMMS -->
+<h2><span class="num">03</span>BMS communication — the big one</h2>
+<p class="section-lead">The biggest physical-layer change of the rewrite. Same five modules, completely different wire.</p>
+
+<div class="compare">
+  <div class="col old">
+    <h3>FDCAN2 polling</h3>
+    <p>Each BMS slave was a separate microcontroller on its own CAN ID. The AMS polled them in turn over <strong>FDCAN2</strong>:</p>
+    <ul>
+      <li>5 modules × 6 frames per cycle = 30 RX frames per poll</li>
+      <li>One CAN bus dedicated just to the pack</li>
+      <li>One firmware per slave to maintain</li>
+      <li>Module addressing: <code>0x12C + 0x1E·m</code> for module&nbsp;<code>m</code></li>
+      <li>Slave responses parsed by <code>BMS_MOD::parse()</code> using ID&nbsp;ranges</li>
+    </ul>
+  </div>
+  <div class="col new">
+    <h3>LTC6811-1 isoSPI</h3>
+    <p>The 5 modules now share a single daisy-chained isoSPI link driven by an LTC6820 master on SPI1. The AMS speaks to the chain directly — no slave firmware:</p>
+    <ul>
+      <li>10 LTC6811-1 ICs (2 per module) in series</li>
+      <li>Single CS line, one master, no per-slave CAN ID</li>
+      <li>PEC15 per IC at the wire level</li>
+      <li>FDCAN2 now <strong>bootloader-only</strong> — the BL claims it after a magic-reset jump for flash workflow</li>
+      <li>Code in <code>ltc6811.hpp</code> + <code>ltc6820.hpp</code> + <code>bms_poll_task.cpp</code></li>
+    </ul>
+  </div>
+</div>
+
+<div class="why"><strong>Why?</strong> Removing the slave microcontrollers from the pack drops 5 firmware images and 5 sets of CAN dependencies. The LTC6811-1 + LTC6820 path is the BMS industry standard (Tesla, Rivian, AMP); maintenance becomes "read the datasheet" instead of "find the slave repo". The PEC15 wire-level check is also stricter than per-frame CAN CRC, so chain-integrity bugs surface before they corrupt cell readings.</div>
+
+<!-- CODE STRUCTURE -->
+<h2><span class="num">04</span>Code structure</h2>
+<p class="section-lead">From 5 god-classes to small services + pure-logic headers.</p>
+
+<table class="cmp">
+  <thead><tr><th>Concern</th><th class="old">2025</th><th class="new">2026</th></tr></thead>
+  <tbody>
+    <tr><td>BMS data</td><td class="old"><code>BMS_MOD</code> class (5 instances)</td><td class="new"><code>BmsService</code> singleton + <code>BmsState</code> POD</td></tr>
+    <tr><td>Temperatures</td><td class="old"><code>Temperatures_MOD</code> class (parse + store)</td><td class="new">folded into <code>BmsService::update_temperature()</code></td></tr>
+    <tr><td>Current sensor</td><td class="old"><code>Current_MOD</code> class</td><td class="new"><code>CurrentService</code> + <code>CurrentSensorTask</code></td></tr>
+    <tr><td>State machine</td><td class="old">global <code>STATE</code> + free functions</td><td class="new"><code>namespace fsm</code> + pure-logic <code>fsm::step()</code> in a header</td></tr>
+    <tr><td>Safety logic</td><td class="old">scattered <code>if</code>s inside <code>select_state()</code></td><td class="new">explicit predicate file <code>safety_predicates.hpp</code> with unit tests</td></tr>
+    <tr><td>Relays</td><td class="old">direct <code>HAL_GPIO_WritePin</code> calls</td><td class="new"><code>Relays</code> driver (opens-all on every fault path)</td></tr>
+    <tr><td>Bootloader contract</td><td class="old">none (manual flash via SWD)</td><td class="new"><code>bl_fwinfo_t</code> record + CAN-trigger reboot</td></tr>
+    <tr><td>Error stickiness</td><td class="old">RAM-only fault flag</td><td class="new">RTC backup register (sticky across reset)</td></tr>
+    <tr><td>Diagnostics</td><td class="old">printf to UART2 + SWD only</td><td class="new">runtime-toggleable pit-diag CAN stream (56 frames @ 1 Hz)</td></tr>
+  </tbody>
+</table>
+
+<div class="why"><strong>Why split the FSM out as pure logic?</strong> Because <code>fsm::step()</code> takes plain inputs and returns the next state with no FreeRTOS / HAL dependency, the host unit-test build runs it under Unity. We can exercise every transition (TSMS drop in Run, precharge target reached, mode-locked at Car, etc.) without flashing a board.</div>
+
+<!-- FSM -->
+<h2><span class="num">05</span>State machine</h2>
+<p class="section-lead">Same six states, totally different plumbing. The <em>states</em> are a Formula Student rules-driven contract — they don't change between seasons.</p>
+
+<div class="arch-diag">
+<svg viewBox="0 0 1080 200" width="100%" style="max-width:1040px" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, system-ui, sans-serif">
+  <!-- styles -->
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#60a5fa"/></marker>
+    <marker id="arr2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#ef4444"/></marker>
+  </defs>
+  <!-- nodes -->
+  <g font-size="13" fill="#e6e8ee">
+    <rect x="20"   y="60" rx="8" ry="8" width="140" height="60" fill="#161a23" stroke="#2a2f3e"/>
+    <text x="90"  y="85"  text-anchor="middle" font-weight="700">Start</text>
+    <text x="90"  y="105" text-anchor="middle" font-size="11" fill="#98a2b3">TSMS && DASH_CHG ?</text>
+
+    <rect x="200" y="60" rx="8" ry="8" width="140" height="60" fill="#161a23" stroke="#2a2f3e"/>
+    <text x="270" y="85"  text-anchor="middle" font-weight="700">Precharge</text>
+    <text x="270" y="105" text-anchor="middle" font-size="11" fill="#98a2b3">V_dc &gt; 95% V_pack</text>
+
+    <rect x="380" y="60" rx="8" ry="8" width="140" height="60" fill="#161a23" stroke="#2a2f3e"/>
+    <text x="450" y="85"  text-anchor="middle" font-weight="700">Transition</text>
+    <text x="450" y="105" text-anchor="middle" font-size="11" fill="#98a2b3">close AIR+</text>
+
+    <rect x="560" y="20"  rx="8" ry="8" width="140" height="60" fill="#161a23" stroke="#2a2f3e"/>
+    <text x="630" y="45"  text-anchor="middle" font-weight="700">Run</text>
+    <text x="630" y="65"  text-anchor="middle" font-size="11" fill="#98a2b3">VCU heard recently</text>
+
+    <rect x="560" y="100" rx="8" ry="8" width="140" height="60" fill="#161a23" stroke="#2a2f3e"/>
+    <text x="630" y="125" text-anchor="middle" font-weight="700">Charge</text>
+    <text x="630" y="145" text-anchor="middle" font-size="11" fill="#98a2b3">VCU silent (charger)</text>
+
+    <rect x="800" y="60" rx="8" ry="8" width="160" height="60" fill="#1a0d10" stroke="#ef4444"/>
+    <text x="880" y="85"  text-anchor="middle" font-weight="700" fill="#ef4444">Error</text>
+    <text x="880" y="105" text-anchor="middle" font-size="11" fill="#fca5a5">sticky · RTC-backed</text>
+
+    <!-- arrows happy path -->
+    <line x1="160" y1="90" x2="200" y2="90" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="340" y1="90" x2="380" y2="90" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="520" y1="80" x2="560" y2="55" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+    <line x1="520" y1="100" x2="560" y2="130" stroke="#60a5fa" stroke-width="2" marker-end="url(#arr)"/>
+
+    <!-- to error from anywhere (dashed) -->
+    <path d="M 90  140 Q 450 200 880 140" stroke="#ef4444" fill="none" stroke-dasharray="4 4" stroke-width="1.5" marker-end="url(#arr2)"/>
+    <text x="490" y="190" text-anchor="middle" font-size="11" fill="#ef4444">any fault predicate · always-on safety net</text>
+  </g>
+</svg>
+</div>
+
+<table class="cmp">
+  <thead><tr><th>Aspect</th><th class="old">2025</th><th class="new">2026</th></tr></thead>
+  <tbody>
+    <tr><td>State enum</td><td class="old"><code>enum STATE { start, precharge, ... };</code> global</td><td class="new"><code>enum class fsm::State</code> scoped + typed</td></tr>
+    <tr><td>Transition logic</td><td class="old">if-ladder inside <code>select_state()</code></td><td class="new">switch in pure-logic <code>fsm::step(Inputs)</code></td></tr>
+    <tr><td>Unit-testable</td><td class="old">no — touches HAL globals</td><td class="new">yes — 17 FSM tests + 5 end-to-end SIL scenarios</td></tr>
+    <tr><td>Start → Precharge trigger</td><td class="old"><code>0x600</code> start-button frame</td><td class="new">physical TSMS + DASH_CHG GPIOs (PF9 / PF10), pull-down</td></tr>
+    <tr><td>Charger vs Car</td><td class="old">separate <code>0x18FF50E7</code> charger-detect frame</td><td class="new">VCU 0x100 freshness at the moment of Start → Precharge (mode locks once, never re-evaluated)</td></tr>
+    <tr><td>Internal timeouts</td><td class="old"><code>PrechargeMaxMs</code>, <code>TransitionHoldMs</code></td><td class="new">removed — predicate freshness checks catch stuck contactors</td></tr>
+  </tbody>
+</table>
+
+<!-- TASKS -->
+<h2><span class="num">06</span>The six tasks</h2>
+<p class="section-lead">There were none in 2025. Each one in 2026 has a single, named responsibility.</p>
+
+<div class="tasks">
+  <div class="task">
+    <div class="name">SafetyTask</div>
+    <div class="prio">priority: Realtime · 10 ms</div>
+    <div class="desc">FSM step, predicate evaluation, watchdog refresh, telemetry emit. Preempts everything below.</div>
+  </div>
+  <div class="task">
+    <div class="name">BmsPollTask</div>
+    <div class="prio">priority: Normal · event-driven</div>
+    <div class="desc">Owns the LTC chain — ADCV broadcast, RDCV[A-D] reads, mux temperature sweeps, balancing WRCFGA writes.</div>
+  </div>
+  <div class="task">
+    <div class="name">AcuCanTask</div>
+    <div class="prio">priority: AboveNormal · queue-driven</div>
+    <div class="desc">Drains the FDCAN1 RX queue, dispatches VCU frames + BL trigger, runs the ECU TX matrix scheduler.</div>
+  </div>
+  <div class="task">
+    <div class="name">CurrentSensorTask</div>
+    <div class="prio">priority: AboveNormal · 50 ms</div>
+    <div class="desc">ADC3 polls of the SSA-2-250A current sensor on PF7. Calibrates once, then samples + filters.</div>
+  </div>
+  <div class="task">
+    <div class="name">App_InitTask</div>
+    <div class="prio">priority: High · single-shot</div>
+    <div class="desc">Brings up FDCAN1, LTC chain discovery + PEC validation, ErrorLatch init. Self-deletes after.</div>
+  </div>
+  <div class="task">
+    <div class="name">defaultTask</div>
+    <div class="prio">priority: Low · idle</div>
+    <div class="desc">CubeMX-generated, kept for completeness. Sleeps. Could carry future low-priority housekeeping.</div>
+  </div>
+</div>
+
+<!-- TESTING -->
+<h2><span class="num">07</span>Testing</h2>
+<p class="section-lead">Going from "flash and pray" to a 149-test green wall on every PR.</p>
+
+<div class="compare">
+  <div class="col old">
+    <h3>2025</h3>
+    <p><strong>None.</strong> Every change required flashing the board and watching <code>candump</code>. Refactors were terrifying; regressions surfaced at the bench at 11 PM the night before testing days.</p>
+    <p>The only "test" was hardware-in-the-loop, ad-hoc, manual.</p>
+  </div>
+  <div class="col new">
+    <h3>2026</h3>
+    <ul>
+      <li><strong>149 host-side unit tests</strong> in Unity, run in CI on every push</li>
+      <li>Pure-logic modules (FSM, predicates, encoders, LTC6811 decode, balance controller) tested without HAL</li>
+      <li>5 end-to-end <code>test_sil_*</code> scenarios drive a full FSM cycle</li>
+      <li>HIL_STUB build flavour for bench tests against a Pi Pico LTC emulator</li>
+      <li>HIL acceptance plan (<code>#245</code>) gates v1.5.0 release on 6 test blocks A–F (boot, predicates, FSM, BL, LTC, flash endurance)</li>
+    </ul>
+  </div>
+</div>
+
+<div class="why"><strong>Why?</strong> Every confidence-breaking story from last season (the precharge ladder firing at the wrong threshold, the CAN ID confusion that put telemetry on the wrong bus) maps to "we couldn't test that without flashing". The unit tests catch them at <code>make</code> time; the bench is now for things you genuinely can't simulate (relay timing, real-pack EMI, charging behaviour).</div>
+
+<!-- DIAGNOSTICS -->
+<h2><span class="num">08</span>Diagnostics &amp; observability</h2>
+<p class="section-lead">The pit-side experience: from a debugger probe + UART log to a CAN firehose you toggle with one frame.</p>
+
+<table class="cmp">
+  <thead><tr><th>Question</th><th class="old">2025 answer</th><th class="new">2026 answer</th></tr></thead>
+  <tbody>
+    <tr><td>Is the AMS alive?</td><td class="old">SWD attached, watch UART2</td><td class="new"><code>0x4A2[7]</code> heartbeat byte on can0</td></tr>
+    <tr><td>What state is the FSM in?</td><td class="old">read a global via GDB</td><td class="new"><code>0x4A0[0]</code> always-on, every 500 ms</td></tr>
+    <tr><td>Why did Error fire?</td><td class="old">re-flash with prints, redo run</td><td class="new"><code>RTC->BKP2R</code> JumpReason + pit-diag <code>0x6C4</code></td></tr>
+    <tr><td>Which cell is high?</td><td class="old">SWD memory dump of <code>cell_mV[]</code></td><td class="new">pit-diag <code>0x680..0x697</code>: all 95 cells live</td></tr>
+    <tr><td>Is the chain healthy?</td><td class="old">SWD inspect <code>BMS_MOD::status</code></td><td class="new"><code>0x4A0[2]</code> mask + per-IC PEC counters</td></tr>
+    <tr><td>Did we crash earlier?</td><td class="old">post-mortem only via SWD</td><td class="new">pit-diag <code>0x6C5</code>: stack-overflow + malloc-fail surfaced on CAN</td></tr>
+    <tr><td>Which firmware is flashed?</td><td class="old">git-log the build folder, hope</td><td class="new">pit-diag <code>0x6C6</code>: semver + git hash from <code>VERSION</code> + CMake</td></tr>
+  </tbody>
+</table>
+
+<!-- BUILD -->
+<h2><span class="num">09</span>Build system</h2>
+
+<div class="compare">
+  <div class="col old">
+    <h3>2025</h3>
+    <p>STM32CubeIDE workspace. Build via the GUI. Linker scripts edited by hand. No version stamping. No CI.</p>
+    <p>Reproducing a flash from 3 weeks ago meant <code>git checkout</code> + clicking buttons in the right order.</p>
+  </div>
+  <div class="col new">
+    <h3>2026</h3>
+    <p>CMake from the command line.  <code>VERSION</code> file is the semver source of truth; <code>git rev-parse</code> populates the firmware identity record at configure time.</p>
+    <pre><span class="cm"># Flight build</span>
+cmake -B build \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+      -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+<span class="cm"># HIL build (Pico emulator on the bench)</span>
+cmake -B build-hil  -DAMS_BMS_HIL_STUB=ON</pre>
+    <p>CI runs the cross-compile + unit tests on every push. Tag <code>v1.5.x</code> → GitHub Release with <code>.elf / .bin / .hex</code> attached.</p>
+  </div>
+</div>
+
+<!-- TIMELINE -->
+<h2><span class="num">10</span>Rewrite milestones</h2>
+<p class="section-lead">A high-level walk through how 2026 got here.</p>
+
+<div class="timeline">
+  <div class="tl-item">
+    <div class="when">v1.0 · early 2025</div>
+    <div class="what">FreeRTOS skeleton + first telemetry</div>
+    <div class="desc">CubeMX baseline brought up under the new structure. 0x4A0..0x4A2 telemetry frames on FDCAN1 at 500 ms cadence.</div>
+  </div>
+  <div class="tl-item">
+    <div class="when">v1.1 · mid 2025</div>
+    <div class="what">Pure-logic FSM + safety predicates</div>
+    <div class="desc">State machine extracted into a unit-testable header. Predicate file consolidates "what counts as a fault" into one place with explicit per-rule tests.</div>
+  </div>
+  <div class="tl-item">
+    <div class="when">v1.2 · #67–#75</div>
+    <div class="what">BMS moves from CAN to LTC6811-1 isoSPI</div>
+    <div class="desc">The biggest physical-layer change. BmsRxTask retired, LTC6811 wire-format decoder + LTC6820 master driver shipped. FDCAN2 becomes bootloader-only.</div>
+  </div>
+  <div class="tl-item">
+    <div class="when">v1.3 · #48</div>
+    <div class="what">TSMS + DASH_CHG GPIOs replace 0x600 / 0x18FF50E7</div>
+    <div class="desc">Cockpit inputs become physical pins (PF9 / PF10) with pull-down defaults. Mode-lock (Car vs Charger) captured from VCU freshness at the moment of Start → Precharge.</div>
+  </div>
+  <div class="tl-item">
+    <div class="when">v1.4 · #52, #53</div>
+    <div class="what">Current sensor + ECU TX matrix</div>
+    <div class="desc">Bourns SSA-2-250A bipolar current sensor on PF7. ECU TX matrix (8 frames on FDCAN1) feeds the wireless telemetry uplink.</div>
+  </div>
+  <div class="tl-item">
+    <div class="when">v1.5 · #207, #243, #247, #249, #252</div>
+    <div class="what">Bench bring-up + production hardening</div>
+    <div class="desc">Pi Pico LTC emulator replaces the stub data source. Critical RX-DLC bug fixed (the BL trigger was silently dropped). Pit-diag runtime CAN stream lands. <code>module_online_mask</code> reflects current freshness. CMake-driven firmware identification. Ready for HIL acceptance.</div>
+  </div>
+</div>
+
+<!-- READING ORDER -->
+<h2><span class="num">11</span>Reading order for new members</h2>
+<p class="section-lead">If you're picking this up cold, work top-to-bottom. Each step is ~30 min of reading.</p>
+
+<div class="reading">
+  <div class="reading-card">
+    <div class="step">1</div>
+    <h4>The state machine</h4>
+    <p><code>Core/Inc/app/state_machine.hpp</code> — pure-logic, fits in one file. Six states, transitions in one switch. Start here.</p>
+  </div>
+  <div class="reading-card">
+    <div class="step">2</div>
+    <h4>The safety predicates</h4>
+    <p><code>Core/Inc/app/safety_predicates.hpp</code> — explicit "what counts as a fault". Boot-grace handling, BMS staleness, VCU heartbeat, cell V/T range.</p>
+  </div>
+  <div class="reading-card">
+    <div class="step">3</div>
+    <h4>The 6 tasks</h4>
+    <p><code>docs/ARCHITECTURE.md</code> §2 task table, then skim <code>Core/Src/app/*_task.cpp</code>. SafetyTask first, then BmsPollTask.</p>
+  </div>
+  <div class="reading-card">
+    <div class="step">4</div>
+    <h4>The CAN map</h4>
+    <p><code>docs/CAN_MAP.md</code> — every frame on FDCAN1, byte-by-byte. Skip the [LEGACY] sections; they're archaeology.</p>
+  </div>
+  <div class="reading-card">
+    <div class="step">5</div>
+    <h4>BMS chain protocol</h4>
+    <p><code>docs/BMS_LTC6811.md</code> + <code>Core/Inc/app/ltc6811.hpp</code>. Datasheet-driven; nothing magic.</p>
+  </div>
+  <div class="reading-card">
+    <div class="step">6</div>
+    <h4>HIL bench operating doc</h4>
+    <p><code>docs/HIL_STUB.md</code> — what flags exist, what each one relaxes, how to build for the bench.</p>
+  </div>
+</div>
+
+<footer>
+  Generated <span style="font-variant-numeric: tabular-nums;">May&nbsp;2026</span> against
+  <a href="https://github.com/isc-fs/IFS08-CE-AMS/tree/dev">isc-fs/IFS08-CE-AMS@dev</a>.
+  Last season's source: <a href="https://github.com/isc-fs/IFS08-CE/tree/main/AMS">isc-fs/IFS08-CE/AMS@main</a>.
+  Bench operating doc: <a href="https://github.com/isc-fs/IFS08_HIL/blob/main/CLAUDE.md">IFS08_HIL</a>.
+  Questions → AMS channel on Slack.
+</footer>
+
+</div>
+</body>
+</html>
