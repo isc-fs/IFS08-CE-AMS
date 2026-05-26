@@ -64,7 +64,12 @@ bool send_acu(std::uint32_t id, std::uint8_t dlc,
     tx.Identifier          = id;
     tx.IdType              = FDCAN_STANDARD_ID;
     tx.TxFrameType         = FDCAN_DATA_FRAME;
-    tx.DataLength          = static_cast<std::uint32_t>(dlc) << 16;
+    // STM32H7 HAL takes DataLength as the raw byte count (FDCAN_DLC_BYTES_N
+     // macros are unshifted; HAL applies the bit-16 register shift internally).
+     // The pre-shift this site used to do produced DLC=0 on the wire for every
+     // ECU TX matrix frame -- see #234. Note: STM32G4's HAL pre-shifts the
+     // macros, which is why this regression was easy to port-import.
+     tx.DataLength          = dlc;
     tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
     tx.BitRateSwitch       = FDCAN_BRS_OFF;
     tx.FDFormat            = FDCAN_CLASSIC_CAN;
