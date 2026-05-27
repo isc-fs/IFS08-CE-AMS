@@ -696,7 +696,7 @@ IFS08-CE-AMS/
 │   ├── CAN_MAP.md                    # vehicle / ACU CAN protocol
 │   ├── COMMISSIONING.md              # bench / on-vehicle calibration
 │   ├── HIL_BUILD.md                  # AMS_HIL_CLEAR_ERROR_LATCH build flag (bench only)
-│   └── HIL_TESTS.md                  # bench acceptance plan
+│   └── (per-release HIL acceptance issues live on GitHub)
 ├── tests/
 │   └── unit/
 │       ├── CMakeLists.txt            # host CMake (FetchContent Unity)

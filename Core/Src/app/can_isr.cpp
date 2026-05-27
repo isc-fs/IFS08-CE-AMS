@@ -25,8 +25,10 @@ extern osMessageQueueId_t acu_rx_queueHandle;
 // AcuCanTask hasn't drained fast enough, or pre-scheduler bursts).
 // Distinct from g_acu_rx_dropped_unknown (acu_can_task.cpp), which
 // counts frames that DID land in the queue but whose ID didn't match
-// any known ACU dispatch case. Read via GDB / SWD / a future diag
-// telemetry frame.
+// any known ACU dispatch case. Surfaced via a future pit-diag frame
+// (the existing 0x6C0..0x6C8 stream is the canonical observability
+// path; this counter will get its own slot when next-rev pit-diag
+// grows).
 volatile uint32_t g_acu_rx_isr_drop = 0;
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
