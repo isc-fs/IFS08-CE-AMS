@@ -10,7 +10,7 @@
 //   - software resets (NVIC_SystemReset)
 //   - watchdog resets (IWDG, WWDG)
 //   - brownout resets while VBAT holds the backup domain alive
-//   - JTAG/SWD-triggered resets
+//   - external debugger-triggered resets
 //
 // It is cleared by:
 //

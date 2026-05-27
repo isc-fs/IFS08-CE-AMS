@@ -37,9 +37,9 @@ Three orthogonal concerns, all guarded by `#if defined(AMS_BMS_HIL_STUB)`:
 VBAT-backed `RTC_BKP_DR1` survives 30+ seconds of power-off on most
 bench carriers (coin cell + bulk caps). Without this clear the unit
 boots into `Error` whenever a previous session ended with the latch
-set, and there's no SWD attached on the bench to clear it
-externally. On flight the latch is intentionally sticky; clearing it
-every boot would defeat the contract.
+set, and there's no external clear path on the bench. On flight the
+latch is intentionally sticky; clearing it every boot would defeat
+the contract.
 
 The clear is gated on **two** independent flags so the bench can
 mix-and-match (#224):
@@ -55,8 +55,8 @@ Both flags are flight-build-excluded.
 
 `Core/Src/app/app_init_task.cpp` emits an FDCAN `0x7FF` frame at
 each `App_InitTask` milestone (post-clear, post-filter,
-post-Start, etc.) so the bench can confirm init progress without
-SWD. Sibling globals `g_app_init_progress`, `g_fdcan1_start_result`
+post-Start, etc.) so the bench can confirm init progress purely from
+can0. Sibling globals `g_app_init_progress`, `g_fdcan1_start_result`
 also gated on this flag.
 
 ### 3. `0x4A2` telemetry-frame layout swap

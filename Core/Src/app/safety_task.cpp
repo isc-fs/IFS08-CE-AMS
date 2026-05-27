@@ -56,7 +56,7 @@ extern volatile std::uint32_t g_acu_rx_total;
 #if defined(AMS_BMS_HIL_STUB)
 // HIL-only fault-injection hook for Block B safety-predicate tests
 // (e.g. B-024 current overlimit, B-025 sensor-fault paths). The bench
-// flips this via GDB / SWD / a CAN backdoor; SafetyTask passes it to
+// flips this via a CAN backdoor; SafetyTask passes it to
 // safety::evaluate_fault as `force_error_set`, which short-circuits
 // to true on the next 10 ms tick -> latched Error.
 //
