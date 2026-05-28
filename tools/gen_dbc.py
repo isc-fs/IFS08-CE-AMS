@@ -331,6 +331,20 @@ def pit_fsm_status_6c0() -> Message:
         Signal("pec_err_total", be_start_bit_for_byte(4), 16, "0", "+",
                unit="count",
                comment="Sum of g_ltc_pec_err_count[10]; saturates at 0xFFFF"),
+        Signal("fault_reason", le_start_bit_for_byte(6), 8, "1", "+",
+               unit="enum",
+               comment=("Predicate branch that latched ERROR (#276). "
+                        "0=None, 1=ForceError, 2=BmsModuleOffline, "
+                        "3=BmsStale, 4=CellUnderVoltage, 5=CellOverVoltage, "
+                        "6=CellUnderTemp, 7=CellOverTemp, "
+                        "8=CurrentSensorFault, 9=CurrentStale, "
+                        "10=CurrentOverLimit, 11=VcuStale, "
+                        "12=FsmError (FSM-driven Error path).")),
+        Signal("fault_detail", le_start_bit_for_byte(7), 8, "1", "+",
+               unit="raw",
+               comment=("Per-branch detail. BmsStale: offending module "
+                        "index. BmsModuleOffline: live module_online_mask. "
+                        "Otherwise 0.")),
     ]
     return m
 
