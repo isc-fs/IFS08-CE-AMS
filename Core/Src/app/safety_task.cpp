@@ -59,6 +59,13 @@ extern "C" volatile std::uint8_t g_mode_locked_telemetry = 0;
 // Telemetry TX failure counter, surfaced via a future diag frame.
 extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 
+// Predicate branch that latched ERROR, surfaced on pit-diag 0x6C0[6]
+// (reason) and 0x6C0[7] (detail) for bench fault localisation (#276).
+// Written once, on the first transition into the latched state;
+// values match ams::safety::FaultReason (12 == FSM-driven Error path).
+extern "C" volatile std::uint8_t g_fault_reason_telemetry = 0;
+extern "C" volatile std::uint8_t g_fault_detail_telemetry = 0;
+
 namespace ams {
 
 SafetyTask& SafetyTask::instance() noexcept {
@@ -158,10 +165,18 @@ void SafetyTask::run() noexcept {
             force_error_set,
             now,
         };
-        const bool fault = error_latched_ || safety::evaluate_fault(pred_in);
+        const auto fault_res = safety::evaluate_fault_detail(pred_in);
+        const bool fault     = error_latched_ || fault_res.faulted();
 
         if (fault) {
             if (!error_latched_) {
+                // Capture the branch that latched us before doing
+                // anything else, so the bench can read it off pit-diag
+                // 0x6C0[6]/[7] (#276).
+                g_fault_reason_telemetry =
+                    static_cast<std::uint8_t>(fault_res.reason);
+                g_fault_detail_telemetry = fault_res.detail;
+
                 latch_error_();
                 state            = fsm::State::Error;
                 state_entry_tick = now;
@@ -218,6 +233,13 @@ void SafetyTask::run() noexcept {
                     if (state == fsm::State::Error) {
                         ErrorLatch::set();
                         error_latched_ = true;
+                        // Distinguish FSM-driven Error (precharge
+                        // timeout / TSMS / DASH_CHG drop) from a
+                        // predicate fault on pit-diag 0x6C0[6] (#276).
+                        // 12 == FsmError (reserved past FaultReason).
+                        if (g_fault_reason_telemetry == 0u) {
+                            g_fault_reason_telemetry = 12u;
+                        }
                     }
                 }
             }
