@@ -382,10 +382,15 @@ survive a predicate trip.
 | `0x6A0..0x6B8` | 25 cell-T frames | 8 NTCs per frame, signed i8 °C each. Row-major over `cell_tempC[5][40]`. Decode: `temp_index = 8·(id - 0x6A0) + slot; module = temp_index / 40; temp = temp_index % 40`. | 1 Hz |
 | `0x6C0` | 1 FSM extended status | `[0]` FSM state, `[1]` mode_locked (0/1/2), `[2]` bits `1`=TSMS, `0`=DASH_CHG, `[3]` AMS_OK GPIO, `[4..5]` PEC error total BE u16, `[6]` fault_reason (latched-ERROR predicate branch; see below), `[7]` fault_detail (BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index; BmsModuleOffline: module_online_mask; else 0) | 1 Hz |
 | `0x6C1` | 1 poll timing | `[0..1]` last V-poll ms BE u16, `[2..3]` worst-case V-poll BE u16, `[4..7]` last T-sweep failure mask LE u32 | 1 Hz |
-
-`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / TSMS / DASH_CHG drop). Latched once at the transition into ERROR; stays put until the latch clears.
+| `0x6C2` | 1 balance mask A | DCC mask bits 0..63: `[i]` bit `b` = cell `(8·i + b)` of the row-major flat (`cell_idx = 19·m + c`) selected for discharge last balance window. | 1 Hz |
+| `0x6C3` | 1 balance mask B | `[0..3]` DCC mask bits 64..94 (bit 31 reserved 0), `[4..5]` `balance_cycles_total` LE u16 (mod 65536), `[6..7]` `balance_cycles_active` LE u16. Reconstruct: bit `b` → `module = b/19, cell = b%19`. | 1 Hz |
+| `0x6C4` | 1 boot diag | `[0..3]` `jump_reason` LE u32 (RTC→BKP2R; `config::JumpReason`; 0 = clean cold POR), `[4]` `g_app_init_progress` (0..7 milestone), `[5..7]` `g_fdcan1_start_result` LE u24 (0 = HAL_OK). | 1 Hz |
+| `0x6C5` | 1 crash post-mortem | `[0]` stack-overflow seen (0/1), `[1]` stack-overflow watermark low byte (0xFF = API-failed sentinel), `[2..5]` failing-task `xTaskHandle` LE u32, `[6..7]` `malloc_failed_count` LE u16 (sat 0xFFFF). All 0 on a clean session. | 1 Hz |
+| `0x6C6` | 1 firmware ID | `[0]` fw major, `[1]` minor, `[2]` patch, `[3..6]` `git_hash[0..3]` (first 4 of 8 bytes), `[7]` `bl_node_id` (`firmware_info.reserved[0]`). | 1 Hz |
 | `0x6C7` | 1 per-IC PEC count (ICs 0..7) | 8 bytes, one saturating uint8 per chain index. Maps chain index → module: IC `2m`=upper / `2m+1`=lower of module `m`. (#258) | 1 Hz |
 | `0x6C8` | 1 per-IC PEC count (ICs 8..9 + reserved) | `[0]` IC 8, `[1]` IC 9, `[2..7]` reserved 0 | 1 Hz |
+
+`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / TSMS / DASH_CHG drop). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
 
 Encoders are pure-logic in
 [`Core/Inc/app/pit_diag_emitter.hpp`](../Core/Inc/app/pit_diag_emitter.hpp);
@@ -394,8 +399,9 @@ unit tests in
 Dispatch + flag ownership in
 [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
 
-Bus cost: 51 frames × ~12 bytes-on-wire = ~5 kbit, ~10 ms at 500 kbps
-= ~1 % bus load when enabled.
+Bus cost: 58 frames/scan (24 cell-V + 25 cell-T + 9 status `0x6C0..0x6C8`)
+× ~12 bytes-on-wire ≈ 5.6 kbit, ~11 ms at 500 kbps = ~1 % bus load when
+enabled.
 
 ---
 
