@@ -31,7 +31,7 @@ to verify the committed file matches what the generator would produce
 
 import sys
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Tuple
 
 # --- module / cell layout constants ----------------------------------------
 
@@ -69,6 +69,11 @@ class Signal:
     unit: str = ""
     receivers: List[str] = field(default_factory=lambda: ["Vector__XXX"])
     comment: str = ""
+    # Optional value->name enum table, emitted as a DBC `VAL_` line so a
+    # DBC-consuming tool can decode the enum without re-hardcoding the
+    # mapping (#291). Order preserved; keep the human-readable `comment`
+    # too for anyone reading the raw file.
+    values: List[Tuple[int, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -81,6 +86,25 @@ class Message:
     comment: str = ""
 
 
+# --- shared enum tables (emitted as DBC VAL_; see #291) ---------------------
+# Single source of truth for the value->name mappings that also appear in
+# the human-readable signal comments. Keep the two in sync.
+
+FSM_STATE_VALUES = [
+    (0, "Start"), (1, "Precharge"), (2, "Transition"),
+    (3, "Run"), (4, "Charge"), (5, "Error"),
+]
+MODE_LOCKED_VALUES = [
+    (0, "Undecided"), (1, "Car"), (2, "Charger"),
+]
+FAULT_REASON_VALUES = [
+    (0, "None"), (1, "ForceError"), (2, "BmsModuleOffline"), (3, "BmsStale"),
+    (4, "CellUnderVoltage"), (5, "CellOverVoltage"), (6, "CellUnderTemp"),
+    (7, "CellOverTemp"), (8, "CurrentSensorFault"), (9, "CurrentStale"),
+    (10, "CurrentOverLimit"), (11, "VcuStale"), (12, "FsmError"),
+]
+
+
 # --- message builders -------------------------------------------------------
 
 def status_4a0() -> Message:
@@ -88,7 +112,7 @@ def status_4a0() -> Message:
                 comment="500 ms cadence. Top-level supervisor snapshot.")
     m.signals = [
         Signal("fsm_state", le_start_bit_for_byte(0), 8, "1", "+",
-               unit="enum",
+               unit="enum", values=FSM_STATE_VALUES,
                comment="0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error"),
         Signal("ams_ok", le_start_bit_for_byte(1), 8, "1", "+",
                unit="bool", comment="AMS_OK GPIO readback"),
@@ -317,9 +341,10 @@ def pit_fsm_status_6c0() -> Message:
                 comment="FSM extended status frame. 1 Hz when pit-diag enabled.")
     m.signals = [
         Signal("fsm_state",     le_start_bit_for_byte(0), 8, "1", "+",
-               unit="enum"),
+               unit="enum", values=FSM_STATE_VALUES,
+               comment="0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error"),
         Signal("mode_locked",   le_start_bit_for_byte(1), 8, "1", "+",
-               unit="enum",
+               unit="enum", values=MODE_LOCKED_VALUES,
                comment="0=Undecided, 1=Car, 2=Charger"),
         Signal("tsms_readback", le_start_bit_for_byte(2), 1, "1", "+",
                unit="bool"),
@@ -331,7 +356,7 @@ def pit_fsm_status_6c0() -> Message:
                unit="count",
                comment="Sum of g_ltc_pec_err_count[10]; saturates at 0xFFFF"),
         Signal("fault_reason", le_start_bit_for_byte(6), 8, "1", "+",
-               unit="enum",
+               unit="enum", values=FAULT_REASON_VALUES,
                comment=("Predicate branch that latched ERROR (#276). "
                         "0=None, 1=ForceError, 2=BmsModuleOffline, "
                         "3=BmsStale, 4=CellUnderVoltage, 5=CellOverVoltage, "
@@ -495,9 +520,24 @@ def pit_fw_id_6c6() -> Message:
 
 NODES = ["AMS", "VCU", "ECU", "Pit_Tool"]
 
+def _repo_version() -> str:
+    """Semver from the repo VERSION file, stamped into the DBC VERSION
+    line as a freshness signal (#291). Changes only on a version bump --
+    not per-commit -- so it doesn't churn the generated file. The host
+    can compare this against the running firmware's 0x6C6 fw-id frame to
+    warn when its cached DBC may be behind the board on the bus."""
+    import pathlib
+    try:
+        v = (pathlib.Path(__file__).resolve().parent.parent
+             / "VERSION").read_text().strip()
+        return f"AMS {v}"
+    except OSError:
+        return "AMS"
+
+
 def emit_dbc(messages: List[Message]) -> str:
     lines = []
-    lines.append('VERSION ""')
+    lines.append(f'VERSION "{_repo_version()}"')
     lines.append("")
     lines.append("NS_ :")
     # Minimal but valid NS_ block.
@@ -554,6 +594,14 @@ def emit_dbc(messages: List[Message]) -> str:
                 lines.append(
                     f'CM_ SG_ {m.can_id} {s.name} "{s.comment}";'
                 )
+
+    # Value tables (VAL_). Machine-readable enum decoding for DBC
+    # consumers (#291). Format: VAL_ <id> <signal> <v> "name" ... ;
+    for m in messages:
+        for s in m.signals:
+            if s.values:
+                pairs = " ".join(f'{v} "{name}"' for v, name in s.values)
+                lines.append(f"VAL_ {m.can_id} {s.name} {pairs} ;")
 
     lines.append("")
     return "\n".join(lines) + "\n"

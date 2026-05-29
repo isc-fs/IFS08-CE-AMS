@@ -18,7 +18,7 @@ CAN database describing every frame the AMS firmware emits or consumes on FDCAN1
 | **ECU TX matrix** | `0x020`, `0x12C`, `0x131..0x137`, `0x135` | feeds the ECU's wireless telemetry uplink |
 | **External RX** | `0x100` (VCU), `0x002` (BL trigger) | what the AMS consumes |
 | **Pit-diag enable / ACK** | `0x7F0` / `0x7F1` | runtime toggle |
-| **Pit-diag stream** | `0x680..0x697` (24 cell-V), `0x6A0..0x6B8` (25 temps), `0x6C0..0x6C6` (FSM / timing / balance / boot diag / post-mortem / firmware ID) | 56 frames @ 1 Hz when enabled |
+| **Pit-diag stream** | `0x680..0x697` (24 cell-V), `0x6A0..0x6B8` (25 temps), `0x6C0..0x6C8` (FSM+fault-reason / timing / balance / boot diag / post-mortem / firmware ID / per-IC PEC) | 58 frames @ 1 Hz when enabled |
 
 ## Decoding from the wire
 

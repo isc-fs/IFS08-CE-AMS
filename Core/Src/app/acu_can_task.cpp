@@ -141,7 +141,7 @@ inline void send_or_fail(std::uint32_t id,
 }
 
 // Diag-stream variant of send_or_fail (#257). The pit-diag burst pushes
-// ~57 frames into a 16-deep TX FIFO inside a single task iteration. Without
+// 58 frames into a 16-deep TX FIFO inside a single task iteration. Without
 // flow control, frames 17+ NACK silently and the engineer sees only the
 // front 16 IDs on the wire. Yield-while-full keeps the burst end-to-end
 // at the cost of ~6 ms of task time per scan (16 frames × ~110 us at
@@ -216,7 +216,7 @@ std::uint32_t pec_err_sum() noexcept {
 }
 
 void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
-    // 24 cell + 25 temp + 7 status = 56 frames per scan.
+    // 24 cell + 25 temp + 9 status = 58 frames per scan.
     // FDCAN1 TX FIFO depth is 16 (main.c TxFifoQueueElmtsNbr). Without
     // flow control, frames 17+ get NACKed silently and only the front
     // of the burst reaches the wire (#257). Use the blocking variant

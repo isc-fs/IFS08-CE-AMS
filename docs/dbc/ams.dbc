@@ -1,4 +1,4 @@
-VERSION ""
+VERSION "AMS 1.5.0"
 
 NS_ :
 	NS_DESC_
@@ -948,6 +948,7 @@ CM_ SG_ 1720 temp_m4_t37_C "Module 4, NTC 37";
 CM_ SG_ 1720 temp_m4_t38_C "Module 4, NTC 38";
 CM_ SG_ 1720 temp_m4_t39_C "Module 4, NTC 39";
 CM_ BO_ 1728 "FSM extended status frame. 1 Hz when pit-diag enabled.";
+CM_ SG_ 1728 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error";
 CM_ SG_ 1728 mode_locked "0=Undecided, 1=Car, 2=Charger";
 CM_ SG_ 1728 pec_err_total "Sum of g_ltc_pec_err_count[10]; saturates at 0xFFFF";
 CM_ SG_ 1728 fault_reason "Predicate branch that latched ERROR (#276). 0=None, 1=ForceError, 2=BmsModuleOffline, 3=BmsStale, 4=CellUnderVoltage, 5=CellOverVoltage, 6=CellUnderTemp, 7=CellOverTemp, 8=CurrentSensorFault, 9=CurrentStale, 10=CurrentOverLimit, 11=VcuStale, 12=FsmError (FSM-driven Error path).";
@@ -982,4 +983,8 @@ CM_ SG_ 1735 pec_err_ic_7_count "IC 7 = module 3 lower LTC6811. Saturates at 0xF
 CM_ BO_ 1736 "Per-IC PEC count for ICs 8..9 + reserved bytes (#258).";
 CM_ SG_ 1736 pec_err_ic_8_count "IC 8 = module 4 upper LTC6811. Saturates at 0xFF.";
 CM_ SG_ 1736 pec_err_ic_9_count "IC 9 = module 4 lower LTC6811. Saturates at 0xFF.";
+VAL_ 1184 fsm_state 0 "Start" 1 "Precharge" 2 "Transition" 3 "Run" 4 "Charge" 5 "Error" ;
+VAL_ 1728 fsm_state 0 "Start" 1 "Precharge" 2 "Transition" 3 "Run" 4 "Charge" 5 "Error" ;
+VAL_ 1728 mode_locked 0 "Undecided" 1 "Car" 2 "Charger" ;
+VAL_ 1728 fault_reason 0 "None" 1 "ForceError" 2 "BmsModuleOffline" 3 "BmsStale" 4 "CellUnderVoltage" 5 "CellOverVoltage" 6 "CellUnderTemp" 7 "CellOverTemp" 8 "CurrentSensorFault" 9 "CurrentStale" 10 "CurrentOverLimit" 11 "VcuStale" 12 "FsmError" ;
 
