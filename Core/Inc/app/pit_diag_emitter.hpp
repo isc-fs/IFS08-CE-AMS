@@ -105,20 +105,14 @@ using Frame = std::array<std::uint8_t, 8>;
 //   byte 3  ams_ok_gpio (0/1)
 //   bytes 4..5  pec_err_total  BE u16 (saturates at 0xFFFF if all 10
 //                              ICs combined exceed 65 535)
-//   byte 6  fault_reason  the predicate branch that latched ERROR
-//                         (ams::safety::FaultReason; 12=FSM-driven
-//                         Error path; 0=not latched) (#276)
-//   byte 7  fault_detail  BmsStale: module index; BmsModuleOffline:
-//                         live module_online_mask; else 0
+//   bytes 6..7  reserved (0)
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_fsm_status(std::uint8_t  fsm_state,
                                              fsm::Mode     mode_locked,
                                              bool          tsms,
                                              bool          dash_chg,
                                              std::uint8_t  ams_ok_gpio,
-                                             std::uint32_t pec_err_total,
-                                             std::uint8_t  fault_reason = 0u,
-                                             std::uint8_t  fault_detail = 0u) noexcept {
+                                             std::uint32_t pec_err_total) noexcept {
     Frame f = {};
     f[0] = fsm_state;
     f[1] = static_cast<std::uint8_t>(mode_locked);
@@ -129,8 +123,8 @@ using Frame = std::array<std::uint8_t, 8>;
                                     : static_cast<std::uint16_t>(pec_err_total);
     f[4] = static_cast<std::uint8_t>((pec16 >> 8) & 0xFFu);
     f[5] = static_cast<std::uint8_t>(pec16 & 0xFFu);
-    f[6] = fault_reason;
-    f[7] = fault_detail;
+    f[6] = 0u;
+    f[7] = 0u;
     return f;
 }
 

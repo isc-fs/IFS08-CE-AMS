@@ -82,13 +82,6 @@ void test_predicates_vcu_stale(void);
 void test_predicates_boot_grace_suppresses_data_predicates(void);
 void test_predicates_boot_grace_does_not_suppress_force_error(void);
 void test_predicates_after_grace_zero_ticks_faults(void);
-void test_predicates_future_tick_not_stale(void);
-void test_predicates_tick_age_clamps_future(void);
-void test_predicates_reason_none_when_nominal(void);
-void test_predicates_reason_force_error(void);
-void test_predicates_reason_bms_stale_reports_module(void);
-void test_predicates_reason_current_stale(void);
-void test_predicates_reason_vcu_stale(void);
 
 // test_state_machine.cpp
 void test_fsm_start_waits_without_tsms_or_dash_chg(void);
@@ -155,7 +148,6 @@ void test_pit_diag_temp_frame_first_byte_is_module0_temp0(void);
 void test_pit_diag_temp_frame_clips_int8_range(void);
 void test_pit_diag_temp_frame_last_covers_module4(void);
 void test_pit_diag_fsm_status_layout(void);
-void test_pit_diag_fsm_status_fault_reason(void);
 void test_pit_diag_fsm_status_pec_saturates(void);
 void test_pit_diag_timing_layout(void);
 void test_pit_diag_timing_clips_poll_at_ffff(void);
@@ -263,13 +255,6 @@ int main(void) {
     RUN_TEST(test_predicates_boot_grace_suppresses_data_predicates);
     RUN_TEST(test_predicates_boot_grace_does_not_suppress_force_error);
     RUN_TEST(test_predicates_after_grace_zero_ticks_faults);
-    RUN_TEST(test_predicates_future_tick_not_stale);
-    RUN_TEST(test_predicates_tick_age_clamps_future);
-    RUN_TEST(test_predicates_reason_none_when_nominal);
-    RUN_TEST(test_predicates_reason_force_error);
-    RUN_TEST(test_predicates_reason_bms_stale_reports_module);
-    RUN_TEST(test_predicates_reason_current_stale);
-    RUN_TEST(test_predicates_reason_vcu_stale);
 
     RUN_TEST(test_fsm_start_waits_without_tsms_or_dash_chg);
     RUN_TEST(test_fsm_start_waits_with_tsms_only);
@@ -332,7 +317,6 @@ int main(void) {
     RUN_TEST(test_pit_diag_temp_frame_clips_int8_range);
     RUN_TEST(test_pit_diag_temp_frame_last_covers_module4);
     RUN_TEST(test_pit_diag_fsm_status_layout);
-    RUN_TEST(test_pit_diag_fsm_status_fault_reason);
     RUN_TEST(test_pit_diag_fsm_status_pec_saturates);
     RUN_TEST(test_pit_diag_timing_layout);
     RUN_TEST(test_pit_diag_timing_clips_poll_at_ffff);

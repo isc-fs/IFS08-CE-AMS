@@ -60,11 +60,6 @@ extern "C" volatile std::uint8_t g_state_telemetry;
 // g_bms_volt_poll_ms / _max, and run_temperature_poll exposes the
 // last sweep failure mask. Per-LTC PEC counters live in bms_service.cpp.
 extern "C" volatile std::uint8_t  g_mode_locked_telemetry;
-// Latched-fault diagnostics from SafetyTask, surfaced on 0x6C0[6]/[7]
-// (#276). reason matches ams::safety::FaultReason; detail is the
-// per-branch detail byte (module index / mask).
-extern "C" volatile std::uint8_t  g_fault_reason_telemetry;
-extern "C" volatile std::uint8_t  g_fault_detail_telemetry;
 extern "C" volatile std::uint32_t g_bms_volt_poll_ms;
 extern "C" volatile std::uint32_t g_bms_volt_poll_max;
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask;
@@ -242,9 +237,7 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               g_state_telemetry,
                               static_cast<ams::fsm::Mode>(g_mode_locked_telemetry),
                               tsms, dash_chg, ams_ok,
-                              pec_err_sum(),
-                              g_fault_reason_telemetry,
-                              g_fault_detail_telemetry));
+                              pec_err_sum()));
     send_or_fail_blocking(ams::config::PitDiagTimingId,
                           ams::pit_diag::encode_timing(
                               g_bms_volt_poll_ms,
