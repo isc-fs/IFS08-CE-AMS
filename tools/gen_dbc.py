@@ -341,7 +341,8 @@ def pit_fsm_status_6c0() -> Message:
                         "12=FsmError (FSM-driven Error path).")),
         Signal("fault_detail", le_start_bit_for_byte(7), 8, "1", "+",
                unit="raw",
-               comment=("Per-branch detail. BmsStale: offending module "
+               comment=("Per-branch detail. BmsStale / CellUnderVoltage / "
+                        "CellOverVoltage / CellOverTemp: offending module "
                         "index. BmsModuleOffline: live module_online_mask. "
                         "Otherwise 0.")),
     ]
