@@ -70,6 +70,34 @@ struct FaultResult {
     return (now >= last) ? (now - last) : 0u;
 }
 
+// First module whose per-module aggregate is below / above a limit, for
+// the 0x6C0[7] fault-detail byte (#279). Returns 0 if none match (the
+// summary already crossed the threshold, so this is belt-and-braces).
+[[nodiscard]] inline std::uint8_t
+module_below(const std::uint16_t (&per_module)[config::BmsModuleCount],
+             std::uint16_t limit) noexcept {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        if (per_module[m] < limit) return m;
+    }
+    return 0u;
+}
+[[nodiscard]] inline std::uint8_t
+module_above_u16(const std::uint16_t (&per_module)[config::BmsModuleCount],
+                 std::uint16_t limit) noexcept {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        if (per_module[m] > limit) return m;
+    }
+    return 0u;
+}
+[[nodiscard]] inline std::uint8_t
+module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
+                 std::int16_t limit) noexcept {
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        if (per_module[m] > limit) return m;
+    }
+    return 0u;
+}
+
 [[nodiscard]] inline FaultResult evaluate_fault_detail(const Inputs& in) noexcept {
     // The AMS does not sense the SDC line directly: it IS part of the
     // SDC via the AMS_OK output. There's no dedicated DIGITAL1 input on
@@ -107,11 +135,28 @@ struct FaultResult {
         }
     }
 
-    // Cell V / T ranges.
-    if (in.bms.min_cell_mV < config::CellUnderVoltageMv) return { FaultReason::CellUnderVoltage, 0 };
-    if (in.bms.max_cell_mV > config::CellOverVoltageMv)  return { FaultReason::CellOverVoltage,  0 };
-    if (in.bms.min_tempC   < config::CellUnderTempC)     return { FaultReason::CellUnderTemp,    0 };
-    if (in.bms.max_tempC   > config::CellOverTempC)      return { FaultReason::CellOverTemp,     0 };
+    // Cell V / T ranges. Gated on first_full_poll_done (#279): until
+    // every module has reported PEC-clean at least once, cell_mV /
+    // cell_tempC may hold boot sentinels or a partially-populated mix
+    // that must not latch a false under-voltage at the grace edge. A
+    // genuinely-absent module is still caught above by the freshness /
+    // module_online_mask checks. The detail byte carries the offending
+    // module index so the bench can localise the cell over CAN (0x6C0[7]).
+    if (in.bms.first_full_poll_done) {
+        if (in.bms.min_cell_mV < config::CellUnderVoltageMv) {
+            return { FaultReason::CellUnderVoltage,
+                     module_below(in.bms.vmin_module, config::CellUnderVoltageMv) };
+        }
+        if (in.bms.max_cell_mV > config::CellOverVoltageMv) {
+            return { FaultReason::CellOverVoltage,
+                     module_above_u16(in.bms.vmax_module, config::CellOverVoltageMv) };
+        }
+        if (in.bms.min_tempC < config::CellUnderTempC) return { FaultReason::CellUnderTemp, 0 };
+        if (in.bms.max_tempC > config::CellOverTempC) {
+            return { FaultReason::CellOverTemp,
+                     module_above_i16(in.bms.tmax_module, config::CellOverTempC) };
+        }
+    }
 
     // Current sensor: not faulted, fresh, within absolute limit.
     if (in.current.sensor_fault) return { FaultReason::CurrentSensorFault, 0 };

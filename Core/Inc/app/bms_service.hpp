@@ -57,6 +57,16 @@ struct BmsState {
     // Source of truth from which module_online_mask is derived. Not
     // sticky -- reflects the most recent update_from_ltc_response.
     std::uint16_t ltc_online_mask;
+
+    // Sticky: set true once EVERY module has reported PEC-clean (both
+    // its LTCs) at least once, i.e. all last_rx_tick[m] != 0. Gates the
+    // cell V/T range predicates so a partially-populated BmsState at the
+    // boot-grace edge can't trip CellUnderVoltage on cells that haven't
+    // been read yet (#279). Never cleared -- once the whole pack has
+    // been seen, the range checks stay armed. A module that goes silent
+    // afterwards is caught by the freshness / module_online_mask path,
+    // not this flag.
+    bool          first_full_poll_done;
 };
 
 class BmsService {

@@ -25,11 +25,19 @@ ams::safety::Inputs make_nominal(ams::BmsState& bms,
     bms.module_online_mask = ams::config::AllModulesMask;
     for (std::uint8_t m = 0; m < ams::config::BmsModuleCount; ++m) {
         bms.last_rx_tick[m] = now - 100;
+        // Per-module aggregates consistent with a healthy pack so the
+        // fault-detail localisation (#279) has something to scan.
+        bms.vmin_module[m] = 3700;
+        bms.vmax_module[m] = 3800;
+        bms.tmax_module[m] = 35;
     }
     bms.min_cell_mV = 3700;
     bms.max_cell_mV = 3800;
     bms.min_tempC   =  20;
     bms.max_tempC   =  35;
+    // A nominal pack has been fully polled at least once, so the cell
+    // V/T range predicates are armed (#279 gate).
+    bms.first_full_poll_done = true;
 
     cur.last_update_tick = now - 50;
     cur.filtered_mA      = 5000;       // 5 A discharge, well under limit
@@ -249,4 +257,50 @@ extern "C" void test_predicates_reason_vcu_stale(void) {
     TEST_ASSERT_EQUAL_UINT8(
         static_cast<std::uint8_t>(ams::safety::FaultReason::VcuStale),
         static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+}
+
+// ---------------------------------------------------------------------------
+// #279: the cell V/T range predicates are gated on first_full_poll_done.
+// A partially-populated BmsState at the boot-grace edge (a module that
+// hasn't reported, so min_cell reads a sentinel/zero) must NOT trip
+// CellUnderVoltage until the whole pack has been polled once.
+// ---------------------------------------------------------------------------
+extern "C" void test_predicates_undervoltage_suppressed_before_first_poll(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.first_full_poll_done = false;          // pack not fully polled yet
+    bms.min_cell_mV    = 0;                     // partial / zero-init cells
+    bms.vmin_module[2] = 0;
+    // Freshness + mask are still fine (boot free-pass), so no other branch
+    // fires either -- the chip must stay out of ERROR.
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+}
+
+// Once armed, a genuine under-voltage still trips -- and the detail byte
+// names the offending module so the bench can localise it on 0x6C0[7].
+extern "C" void test_predicates_undervoltage_armed_reports_module(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.first_full_poll_done = true;
+    bms.min_cell_mV    = ams::config::CellUnderVoltageMv - 1;
+    bms.vmin_module[3] = ams::config::CellUnderVoltageMv - 1;  // module 3 is low
+    const auto res = ams::safety::evaluate_fault_detail(in);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ams::safety::FaultReason::CellUnderVoltage),
+        static_cast<std::uint8_t>(res.reason));
+    TEST_ASSERT_EQUAL_UINT8(3u, res.detail);
+}
+
+// A genuinely-offline module still latches ERROR before the gate is even
+// consulted -- the gate only relaxes the *value* checks, never the
+// data-presence checks.
+extern "C" void test_predicates_offline_module_trips_regardless_of_gate(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.first_full_poll_done = false;
+    bms.module_online_mask   = ams::config::AllModulesMask & ~0x04u;  // module 2 off
+    const auto res = ams::safety::evaluate_fault_detail(in);
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ams::safety::FaultReason::BmsModuleOffline),
+        static_cast<std::uint8_t>(res.reason));
 }

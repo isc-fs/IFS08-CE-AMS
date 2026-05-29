@@ -44,6 +44,22 @@ BmsService::BmsService() {
             state_.cell_tempC[m][t] = 25;
         }
     }
+
+    // Default cell_mV to a nominal-healthy sentinel for the SAME reason
+    // (#279): before the first poll, or for a module that the boot
+    // free-pass window briefly marks "online" before it has actually
+    // reported, the zero-initialised cells would otherwise read 0 mV
+    // and trip CellUnderVoltage. 3700 mV sits comfortably inside
+    // [CellUnderVoltageMv, CellOverVoltageMv]; a real reading overwrites
+    // each slot once a PEC-clean RDCV group commits. This is hygiene
+    // only -- the authoritative guard is first_full_poll_done below.
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+            state_.cell_mV[m][c] = 3700;
+        }
+    }
+
+    state_.first_full_poll_done = false;
 }
 
 namespace {
@@ -232,6 +248,20 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
         }
     }
     state_.module_online_mask = fresh_mask;
+
+    // Arm the cell V/T range predicates only once EVERY module has
+    // genuinely reported at least once (#279). last_rx_tick[m] is set
+    // (line above) solely on a both-LTCs-PEC-clean poll, so a non-zero
+    // tick for every module means every cell has been written with real
+    // data. Until then, cells may hold the boot sentinel (3700 mV) or a
+    // partially-populated mix, which must not trip CellUnderVoltage.
+    if (!state_.first_full_poll_done) {
+        bool all_reported = true;
+        for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+            if (state_.last_rx_tick[m] == 0u) { all_reported = false; break; }
+        }
+        if (all_reported) state_.first_full_poll_done = true;
+    }
 
     recompute_summaries_();
     return any_module_fresh;
