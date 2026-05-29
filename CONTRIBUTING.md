@@ -12,7 +12,7 @@ conventions that go beyond "open a feat branch and PR to dev".
 | What is the architecture? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | What CAN frames does the AMS speak? | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) |
 | How does the LTC6811 / isoSPI BMS path work? | [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) |
-| What is `AMS_BMS_HIL_STUB`? When do I use it? | [`docs/HIL_STUB.md`](docs/HIL_STUB.md) |
+| What is `AMS_HIL_CLEAR_ERROR_LATCH`? When do I use it? | [`docs/HIL_BUILD.md`](docs/HIL_BUILD.md) |
 | What is the current phase plan? | [`ROADMAP.md`](ROADMAP.md) (auto-generated) |
 | Source of truth for the roadmap | [`.github/roadmap.yaml`](.github/roadmap.yaml) |
 | Day-to-day Git flow | [`README.md`](README.md) |
@@ -195,12 +195,12 @@ cmake --build build
 arm-none-eabi-size build/AMS.elf
 scripts/check_flash_layout.py build/AMS.elf   # sector-0 / overflow guard
 
-# HIL stub build (no LTC chain attached; see docs/HIL_STUB.md)
+# HIL bench build (auto-clears ErrorLatch on boot; see docs/HIL_BUILD.md)
 cmake -B build-hil -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
-                   -DCMAKE_CXX_FLAGS="-DAMS_BMS_HIL_STUB=1"
+                   -DAMS_HIL_CLEAR_ERROR_LATCH=ON
 cmake --build build-hil
 ```
 
 CI (`.github/workflows/build-tests.yml`) runs the host-test and
-firmware-cross-compile builds on every push. The HIL-stub build is
-operator-driven; CI never produces a stub image.
+firmware-cross-compile builds on every push. The HIL bench build is
+operator-driven; CI never produces an image with HIL flags enabled.

@@ -97,7 +97,7 @@ def status_4a0() -> Message:
                comment="Bit N set iff module N's last PEC-clean response is within BmsStaleMs"),
         Signal("app_init_progress_or_reserved", le_start_bit_for_byte(3), 8, "1", "+",
                unit="enum",
-               comment="HIL_STUB: g_app_init_progress (0..7); flight: reserved=0"),
+               comment="Reserved (=0)."),
         Signal("min_cell_mV", be_start_bit_for_byte(4), 16, "0", "+",
                minimum=0, maximum=5000, unit="mV"),
         Signal("max_cell_mV", be_start_bit_for_byte(6), 16, "0", "+",
@@ -120,9 +120,8 @@ def pack_4a1() -> Message:
 
 def temps_4a2() -> Message:
     m = Message(0x4A2, "AMS_temps_diag", 8, "AMS",
-                comment=("500 ms cadence. Bytes 3..4 carry dc_bus_V (flight) "
-                         "or diag probes (HIL_STUB). Byte 5 is the always-on "
-                         "cockpit byte (#251)."))
+                comment=("500 ms cadence. Bytes 3..4 carry dc_bus_V. "
+                         "Byte 5 is the always-on cockpit byte (#251)."))
     m.signals = [
         Signal("min_tempC",   le_start_bit_for_byte(0), 8, "1", "-",
                unit="degC"),
@@ -130,11 +129,10 @@ def temps_4a2() -> Message:
                unit="degC"),
         Signal("avg_tempC",   le_start_bit_for_byte(2), 8, "1", "-",
                unit="degC"),
-        # bytes 3..4: dc_bus_V LE u16 OR bms_task_state+acu_rx_total (HIL_STUB)
-        # The DBC describes the flight layout; HIL builds repurpose these.
+        # bytes 3..4: dc_bus_V LE u16
         Signal("dc_bus_V",    le_start_bit_for_byte(3), 16, "1", "+",
                minimum=0, maximum=600, unit="V",
-               comment="Flight layout only. HIL_STUB overlays diag probes."),
+               comment="DC bus voltage mirrored from VehicleService."),
         Signal("tsms_dash_chg_byte", le_start_bit_for_byte(5), 8, "1", "+",
                unit="packed",
                comment=("Cockpit snapshot (#251, always-on): bit7=sentinel, "

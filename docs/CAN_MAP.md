@@ -448,15 +448,10 @@ Flight layout:
 | 6 | `tx_fail_lo` | Low byte of `g_telemetry_tx_fail` |
 | 7 | `heartbeat` | Wraparound 8-bit counter, increments per MainTask telemetry cycle (500 ms). Useful for detecting dropped frames on the receiver. |
 
-HIL_STUB layout (`-DAMS_BMS_HIL_STUB`): bytes 0..2 and 6..7 unchanged;
-bytes 3..5 carry bench diagnostic probes instead of `dc_bus_V`
-(the bench injects `dc_bus_V` from the host so visibility is unaffected):
-
-| Byte | Field | Notes |
-|:---:|---|---|
-| 3 | `bms_task_state_byte` | `0xA0 | (osThreadGetState(BmsPollTaskHandle) & 0x0F)`. `0xFF` if handle is NULL. |
-| 4 | `acu_rx_total_lo` | Low byte of `g_acu_rx_total` (ticks on any matched ACU RX frame; AcuCanTask + queue + dispatch liveness) |
-| 5 | `tsms_dash_chg_byte` | `0x80 | (mode_locked << 2) | (TSMS<<1) | DASH_CHG`. High bit `0x80` is a sentinel so older binaries' `0x00` stands out. mode_locked: `0`=Undecided, `1`=Car, `2`=Charger. TSMS is the side-of-car master switch (external operator); DASH_CHG is the cockpit dashboard / charger button. |
+> The legacy HIL_STUB byte 3..4 overlay (which carried bench diagnostic
+> probes in place of `dc_bus_V`) was retired with the `AMS_BMS_HIL_STUB`
+> flag; the equivalent diagnostics now live on the pit-diag stream
+> (`0x680..0x6C8`). The flight layout above is the only layout.
 
 ---
 

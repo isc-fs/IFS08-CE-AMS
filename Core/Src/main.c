@@ -203,7 +203,7 @@ int main(void)
    * the pre-scheduler window" invariant. SafetyTask owns the refresh
    * cadence (10 ms period; ~100 ms reload at nominal LSI). */
 
-  /* App_InitTask calls ErrorLatch::clear() under -DAMS_BMS_HIL_STUB
+  /* App_InitTask calls ErrorLatch::clear() under -DAMS_HIL_CLEAR_ERROR_LATCH
    * as defence-in-depth against a backup register surviving a
    * previous session on the bench. HIL builds drive a Pi Pico
    * LTC6820/LTC6811 emulator (IFS08_HIL feat/pico-ltc-emulator), so

@@ -116,11 +116,9 @@ message(STATUS "AMS build timestamp: ${AMS_BUILD_TIMESTAMP}")
 # ---------------------------------------------------------------------------
 # HIL build flags (#205). Promote the legacy CLI-only #defines to
 # proper CMake options.  Defaults are OFF -- flight is the safe-by-
-# default build; bench users opt in via -DAMS_BMS_HIL_STUB=ON etc.
+# default build; bench users opt in via -DAMS_HIL_CLEAR_ERROR_LATCH=ON.
 # ---------------------------------------------------------------------------
-option(AMS_BMS_HIL_STUB           "HIL umbrella: bench-only diag counters, 0x4A2 layout swap, current-sensor freshness relax" OFF)
-option(AMS_HIL_CLEAR_ERROR_LATCH  "HIL standalone: wipe RTC->BKP_DR1 ErrorLatch on every boot" OFF)
-message(STATUS "AMS_BMS_HIL_STUB          = ${AMS_BMS_HIL_STUB}")
+option(AMS_HIL_CLEAR_ERROR_LATCH  "HIL: wipe RTC->BKP_DR1 ErrorLatch on every boot" OFF)
 message(STATUS "AMS_HIL_CLEAR_ERROR_LATCH = ${AMS_HIL_CLEAR_ERROR_LATCH}")
 
 # Add project symbols (macros)
@@ -133,7 +131,6 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     AMS_GIT_HASH_2=0x${AMS_GIT_HASH_2_HEX}
     AMS_GIT_HASH_3=0x${AMS_GIT_HASH_3_HEX}
     AMS_BUILD_TIMESTAMP=${AMS_BUILD_TIMESTAMP}
-    $<$<BOOL:${AMS_BMS_HIL_STUB}>:AMS_BMS_HIL_STUB=1>
     $<$<BOOL:${AMS_HIL_CLEAR_ERROR_LATCH}>:AMS_HIL_CLEAR_ERROR_LATCH=1>
 )
 
