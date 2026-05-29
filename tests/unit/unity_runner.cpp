@@ -139,6 +139,11 @@ void test_telem_temps_cockpit_byte_at_byte5(void);
 void test_telem_temps_heartbeat_passthrough(void);
 void test_telem_field_independence(void);
 
+// test_dsl_parity_ams_status.cpp  (Phase-1 code-first DSL prototype)
+void test_dsl_ams_status_matches_handrolled_encoder(void);
+void test_dsl_ams_status_roundtrip(void);
+void test_dsl_ams_status_descriptor_table_well_formed(void);
+
 // test_pit_diag_emitter.cpp
 void test_pit_diag_cell_frame_zero_indexes_module0(void);
 void test_pit_diag_cell_frame_spans_module_boundary(void);
@@ -308,6 +313,10 @@ int main(void) {
     RUN_TEST(test_telem_temps_cockpit_byte_at_byte5);
     RUN_TEST(test_telem_temps_heartbeat_passthrough);
     RUN_TEST(test_telem_field_independence);
+
+    RUN_TEST(test_dsl_ams_status_matches_handrolled_encoder);
+    RUN_TEST(test_dsl_ams_status_roundtrip);
+    RUN_TEST(test_dsl_ams_status_descriptor_table_well_formed);
 
     RUN_TEST(test_pit_diag_cell_frame_zero_indexes_module0);
     RUN_TEST(test_pit_diag_cell_frame_spans_module_boundary);

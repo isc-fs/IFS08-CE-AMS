@@ -49,6 +49,7 @@ add_executable(ams_unit_tests
     test_sil_scenarios.cpp
     test_state_machine.cpp
     test_telemetry_encoders.cpp
+    test_dsl_parity_ams_status.cpp
     test_pit_diag_emitter.cpp
     test_vehicle_service.cpp
     unity_runner.cpp

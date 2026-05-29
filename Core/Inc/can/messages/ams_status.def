@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x4A0  AMS_status -- the ONE place this frame's byte layout is declared.
+ *
+ * This file is not compiled standalone. Core/Inc/can/can_codecs.hpp
+ * #includes it four times with different macro definitions to produce:
+ *
+ *   1. struct AMS_status_t              (typed fields)
+ *   2. encode_AMS_status(in, bytes)     (firmware -> wire)
+ *   3. decode_AMS_status(bytes, out)    (wire -> firmware)
+ *   4. can_dsl::FieldDesc[]             (runtime metadata for dbc_dump)
+ *
+ * Mirrors the hand-rolled layout currently in
+ * Core/Inc/app/telemetry_encoders.hpp::encode_status(). The host-side
+ * parity test in tests/unit/test_dsl_parity_ams_status.cpp asserts
+ * byte-for-byte equality between the two paths.
+ *
+ * Field macro args: (name, ctype, byte_idx, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(AMS_status, 0x4A0, 8, "AMS", 500)
+    FIELD_LE (fsm_state,            uint8_t,  0,  8, 1, 0, "enum")
+    FIELD_LE (ams_ok,               uint8_t,  1,  8, 1, 0, "bool")
+    FIELD_LE (module_online_mask,   uint8_t,  2,  8, 1, 0, "bitmask")
+    FIELD_LE (reserved_b3,          uint8_t,  3,  8, 1, 0, "")
+    FIELD_BE (min_cell_mV,          uint16_t, 4, 16, 1, 0, "mV")
+    FIELD_BE (max_cell_mV,          uint16_t, 6, 16, 1, 0, "mV")
+CAN_MSG_END(AMS_status)
