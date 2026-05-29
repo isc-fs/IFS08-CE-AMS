@@ -152,6 +152,21 @@ extern "C" void test_pit_diag_fsm_status_layout(void) {
     TEST_ASSERT_EQUAL_UINT8(0u, f[7]);
 }
 
+// Fault reason + detail land in bytes 6/7 (#276).
+extern "C" void test_pit_diag_fsm_status_fault_reason(void) {
+    const auto f = ams::pit_diag::encode_fsm_status(
+        /*fsm_state=*/5u,                 // Error
+        /*mode_locked=*/ams::fsm::Mode::Car,
+        /*tsms=*/false,
+        /*dash_chg=*/false,
+        /*ams_ok_gpio=*/0u,
+        /*pec_err_total=*/0u,
+        /*fault_reason=*/9u,              // CurrentStale
+        /*fault_detail=*/2u);
+    TEST_ASSERT_EQUAL_UINT8(9u, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(2u, f[7]);
+}
+
 extern "C" void test_pit_diag_fsm_status_pec_saturates(void) {
     const auto f = ams::pit_diag::encode_fsm_status(0u, ams::fsm::Mode::Undecided,
                                                     false, false, 0u,
