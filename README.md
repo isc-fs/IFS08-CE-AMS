@@ -67,6 +67,7 @@ Read in this order:
 | [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) | LTC6811 / LTC6820 / ADG731 wire protocol, register groups, cell + NTC slot maps, PEC15, balancing CFGR layout. | Before touching anything under `Core/{Inc,Src}/app/{ltc6811,ltc6820,bms_*,balance_*}.{h,hpp,cpp}`. |
 | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Vehicle / charger / boot-trigger CAN wire protocol on FDCAN1 (FDCAN2 is bootloader-only since v1.2.0). | Before touching anything CAN-side. |
 | [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | Bench + on-vehicle calibration of every `COMMISSION`-tagged constant in `ams_config.hpp`. | Before flashing the first time, and any time you adjust a threshold. |
+| [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) | Hardware-in-the-loop test plan. 60+ tests in 6 blocks. Defines the v1.1.0-bootloader and v1.2.0-ltc6811 acceptance gates. | Before signing off a release tag. |
 | [`docs/HIL_BUILD.md`](docs/HIL_BUILD.md) | The `AMS_HIL_CLEAR_ERROR_LATCH` build flag — what it does, when to use it, why it must never reach a flight build. | When setting up a bench rig that needs the ErrorLatch wiped on every boot. |
 | [`ROADMAP.md`](ROADMAP.md) | Auto-generated phase plan + branch status badges. | When you want to know what's next or what shipped. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch / PR / label conventions, "how to add a CAN frame" / "how to add a new task" recipes, C++ rules. | Before you open your first PR. |
@@ -81,7 +82,7 @@ host-side unit-test binary. CI exercises both on every push.
 # Firmware (cross-compile)
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 cmake --build build
-# Output: build/AMS.elf — flash via the AMS bootloader (CAN, see CAN_MAP.md).
+# Output: build/AMS.elf — flash via stm32-can-bootloader or ST-Link SWD.
 
 # Host unit tests (~95 tests, ~0.5 s)
 cmake -B build-tests -S tests/unit
@@ -301,8 +302,7 @@ permanent record.
 When `dev` holds a set of validated changes that are ready for the
 car, a responsible team member opens a Pull Request from `dev` into
 `main`. This only happens after full firmware validation
-(per-release HIL acceptance plan tracked as a GitHub issue — see
-the most recent `Full HIL acceptance — AMS vX.Y.Z` issue — green on
+([`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) acceptance gate green on
 the same firmware SHA).
 
 ---

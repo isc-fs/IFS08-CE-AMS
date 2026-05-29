@@ -141,7 +141,7 @@ jobs:
             echo "Cross-compiled with \`arm-none-eabi-gcc 14.2.Rel1\` against \`STM32H733ZGTx\` for the IFS08-CE accumulator."
             echo
             echo "## Assets"
-            echo "- \`AMS.elf\` — debug symbols included; useful for offline disassembly + symbol lookup"
+            echo "- \`AMS.elf\` — debug symbols included; use this for GDB / OpenOCD"
             echo "- \`AMS.bin\` — raw image, flash to \`0x08020000\` (sector 1)"
             echo "- \`AMS.hex\` — Intel HEX with absolute addressing"
             echo

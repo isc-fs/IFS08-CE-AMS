@@ -209,8 +209,8 @@ void maybe_run_balance_update() {
         }
 
         // Publish the per-module DCC selection so pit-diag (#247) can
-        // surface "which cell is being balanced right now" over CAN.
-        // dcc_upper covers cells 0..9, dcc_lower covers 10..18 of
+        // surface "which cell is being balanced right now" without
+        // SWD. dcc_upper covers cells 0..9, dcc_lower covers 10..18 of
         // the module -- shift the lower half by CellsPerLtcUpper so a
         // single uint32 mirrors the cell index layout.
         g_balance_dcc_bits[m] =
@@ -258,9 +258,8 @@ void maybe_run_balance_update() {
 // Per-channel sweep-failure tracking. `last_mask` reflects ONLY the most
 // recent sweep (cleared at the start). `sticky_mask` is OR-accumulated
 // across all sweeps since boot; useful for catching intermittent NTC /
-// mux failures that don't show up every cycle. Cleared only by a
-// full power-cycle (no in-band reset path, intentionally — we want
-// the cumulative history to survive a watchdog reset).
+// mux failures that don't show up every cycle. Reset via SWD/GDB by
+// writing 0 to sticky_mask.
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask   = 0;
 extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
 
