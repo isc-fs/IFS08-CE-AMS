@@ -66,17 +66,12 @@ struct Inputs {
     if (in.bms.min_tempC   < config::CellUnderTempC)       return true;
     if (in.bms.max_tempC   > config::CellOverTempC)       return true;
 
-    // Current sensor: not faulted, fresh, within absolute limit.
+    // Current sensor: not faulted, fresh, within absolute limit. The
+    // freshness check is unconditional now that the HIL bench drives a
+    // real current path (the Pico-emulated chain + bench current
+    // injection), so flight and bench evaluate identically.
     if (in.current.sensor_fault)                                       return true;
-#if !defined(AMS_BMS_HIL_STUB)
-    // Bench has no real current sensor (#123 Block B/C sweep: chip
-    // latched Error ~200 ms after boot_grace_ms because no fixture
-    // feeds current-sensor frames). Skip the freshness check on the
-    // stub build -- sensor_fault + Imax still apply, so a fixture
-    // that DOES inject current frames will still see meaningful
-    // safety behaviour.
     if (in.now_tick - in.current.last_update_tick > config::IStaleMs) return true;
-#endif
     if (std::abs(in.current.filtered_mA) > config::CurrentMaxMa)            return true;
 
     // VCU DC bus heartbeat.

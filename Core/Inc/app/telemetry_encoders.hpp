@@ -27,28 +27,10 @@ using Frame = std::array<std::uint8_t, 8>;
 //   byte 0   FSM state (0..5 per ams::fsm::State enum)
 //   byte 1   AMS_OK GPIO read-back (0 / 1)
 //   byte 2   module_online_mask (low byte of bms.module_online_mask)
-//   byte 3   flight: reserved (0)
-//            HIL_STUB: app_init_progress (#123 diag, 0..7)
+//   byte 3   reserved (0)
 //   bytes 4..5  min_cell_mV  big-endian uint16
 //   bytes 6..7  max_cell_mV  big-endian uint16
 // ---------------------------------------------------------------------------
-#if defined(AMS_BMS_HIL_STUB)
-[[nodiscard]] inline Frame encode_status(std::uint8_t       state,
-                                         std::uint8_t       ams_ok,
-                                         const BmsState&    bms,
-                                         std::uint8_t       app_init_progress) noexcept {
-    Frame f = {};
-    f[0] = state;
-    f[1] = ams_ok ? 1u : 0u;
-    f[2] = bms.module_online_mask;
-    f[3] = app_init_progress;
-    f[4] = static_cast<std::uint8_t>(bms.min_cell_mV >> 8);
-    f[5] = static_cast<std::uint8_t>(bms.min_cell_mV & 0xFFu);
-    f[6] = static_cast<std::uint8_t>(bms.max_cell_mV >> 8);
-    f[7] = static_cast<std::uint8_t>(bms.max_cell_mV & 0xFFu);
-    return f;
-}
-#else
 [[nodiscard]] inline Frame encode_status(std::uint8_t       state,
                                          std::uint8_t       ams_ok,
                                          const BmsState&    bms) noexcept {
@@ -63,7 +45,6 @@ using Frame = std::array<std::uint8_t, 8>;
     f[7] = static_cast<std::uint8_t>(bms.max_cell_mV & 0xFFu);
     return f;
 }
-#endif
 
 // ---------------------------------------------------------------------------
 // 0x4A1  "AMS pack" (cadence 500 ms)
@@ -91,7 +72,6 @@ using Frame = std::array<std::uint8_t, 8>;
 // ---------------------------------------------------------------------------
 // 0x4A2  "AMS temps + diagnostics" (cadence 500 ms)
 //
-// Flight layout (no AMS_BMS_HIL_STUB):
 //   byte 0   min_tempC  signed int8 (clipped from BmsState int16)
 //   byte 1   max_tempC  signed int8
 //   byte 2   avg_tempC  signed int8
@@ -101,14 +81,7 @@ using Frame = std::array<std::uint8_t, 8>;
 //   byte 6   tx_fail_count_lo  low byte of g_telemetry_tx_fail
 //   byte 7   heartbeat counter (caller supplies; wraps at 255)
 //
-// HIL_STUB layout (AMS_BMS_HIL_STUB defined): same byte 5 + last 2
-// bytes; bytes 3..4 are repurposed as #123 diagnostic probes (dc_bus_V
-// dropped on this build only -- the bench injects it from the host):
-//   byte 3   bms_poll_task_state  0xA0 | (osThreadGetState low nibble),
-//                                 or 0xFF when BmsPollTaskHandle == NULL
-//   byte 4   acu_rx_total_lo    low byte of g_acu_rx_total (ACU RX liveness)
-//
-// Cockpit byte encoding (same in both builds, #246 hoisted it out):
+// Cockpit byte encoding (#246):
 //   bit 7    1 (sentinel; lets the dashboard distinguish "live byte"
 //             from "byte got eaten by older firmware or compiler")
 //   bits 3:2 mode_locked (00=Undecided, 01=Car, 10=Charger)
@@ -121,28 +94,6 @@ using Frame = std::array<std::uint8_t, 8>;
     return static_cast<std::int8_t>(v);
 }
 
-#if defined(AMS_BMS_HIL_STUB)
-[[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
-                                        const VehicleState& veh,
-                                        std::uint8_t        heartbeat,
-                                        std::uint8_t        tx_fail_count_lo,
-                                        std::uint8_t        bms_task_state_byte,
-                                        std::uint8_t        acu_rx_total_lo,
-                                        std::uint8_t        tsms_dash_chg_byte) noexcept {
-    Frame f = {};
-    f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
-    f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
-    f[2] = static_cast<std::uint8_t>(clip_int8(bms.avg_tempC));
-    // Bench: bytes 3..5 carry diagnostic probes for #123.
-    (void)veh;
-    f[3] = bms_task_state_byte;
-    f[4] = acu_rx_total_lo;
-    f[5] = tsms_dash_chg_byte;
-    f[6] = tx_fail_count_lo;
-    f[7] = heartbeat;
-    return f;
-}
-#else
 [[nodiscard]] inline Frame encode_temps(const BmsState&     bms,
                                         const VehicleState& veh,
                                         std::uint8_t        heartbeat,
@@ -152,7 +103,7 @@ using Frame = std::array<std::uint8_t, 8>;
     f[0] = static_cast<std::uint8_t>(clip_int8(bms.min_tempC));
     f[1] = static_cast<std::uint8_t>(clip_int8(bms.max_tempC));
     f[2] = static_cast<std::uint8_t>(clip_int8(bms.avg_tempC));
-    // Flight: bytes 3..4 carry dc_bus_V LE, byte 5 = cockpit byte (#246).
+    // bytes 3..4 carry dc_bus_V LE, byte 5 = cockpit byte (#246).
     f[3] = static_cast<std::uint8_t>(veh.dc_bus_V & 0xFFu);
     f[4] = static_cast<std::uint8_t>((veh.dc_bus_V >> 8) & 0xFFu);
     f[5] = tsms_dash_chg_byte;
@@ -160,6 +111,5 @@ using Frame = std::array<std::uint8_t, 8>;
     f[7] = heartbeat;
     return f;
 }
-#endif
 
 }  // namespace ams::telemetry

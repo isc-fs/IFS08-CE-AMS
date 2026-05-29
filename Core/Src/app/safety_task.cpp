@@ -44,26 +44,7 @@ extern FDCAN_HandleTypeDef hfdcan1;
 // osThreadNew silently failed at boot.
 extern osThreadId_t BmsPollTaskHandle;
 
-// #123 diagnostics maintained by other TUs.
-#if defined(AMS_BMS_HIL_STUB)
-extern volatile std::uint8_t  g_app_init_progress;  // app_init_task.cpp (#123 iter 12)
-// ACU RX dispatch liveness counter. Surfaced in 0x4A2[4] -- ticks on
-// any matched ACU frame.
-extern volatile std::uint32_t g_acu_rx_total;
-#endif
 }
-
-#if defined(AMS_BMS_HIL_STUB)
-// HIL-only fault-injection hook for Block B safety-predicate tests
-// (e.g. B-024 current overlimit, B-025 sensor-fault paths). The bench
-// flips this via a CAN backdoor; SafetyTask passes it to
-// safety::evaluate_fault as `force_error_set`, which short-circuits
-// to true on the next 10 ms tick -> latched Error.
-//
-// Gated under HIL_STUB so flight builds have NO writable backdoor
-// into the safety supervisor.
-extern "C" volatile bool g_force_error_request = false;
-#endif
 
 // FSM state mirror exposed for BmsPollTask / other read-only consumers.
 // Updated on every transition.
@@ -132,8 +113,8 @@ void SafetyTask::run() noexcept {
     ErrorLatch::init();
 
     // Boot in ERROR if the previous run latched it. App_InitTask
-    // clears the latch under -DAMS_BMS_HIL_STUB, so on the bench we
-    // come up clean unless the latch was set this session.
+    // clears the latch under -DAMS_HIL_CLEAR_ERROR_LATCH, so on the
+    // bench we come up clean unless the latch was set this session.
     const bool boot_in_error = ErrorLatch::is_set();
     if (boot_in_error) {
         Relays::open_all();
@@ -171,11 +152,7 @@ void SafetyTask::run() noexcept {
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
 
         // ---------------- Safety predicate (every 10 ms) ----------------
-#if defined(AMS_BMS_HIL_STUB)
-        const bool force_error_set = g_force_error_request;
-#else
-        constexpr bool force_error_set = false;  // no flight-side setter
-#endif
+        constexpr bool force_error_set = false;  // no live setter
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
             force_error_set,
@@ -255,19 +232,13 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            // Three telemetry frames. Under AMS_BMS_HIL_STUB the
-            // 0x4A2 encoder repurposes bytes 3..5 as diagnostic probes
-            // (dropping dc_bus_V on this build only; the bench injects
-            // dc_bus_V from the host). Flight builds keep the
-            // standard 0x4A2 layout.
-
+            // Three telemetry frames. Diagnostic surfaces previously
+            // gated behind a HIL build flag now live on the pit-diag
+            // stream (0x6C0..0x6C8) which carries strictly more info.
             const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
                 g_telemetry_tx_fail & 0xFFu);
 
-            // Cockpit byte (#246): always-on in 0x4A2[5], regardless of
-            // build flavour. Hoisted out of HIL_STUB-only after the
-            // dashboard / pit-tool decoders started relying on it for
-            // every build, not just the legacy stub data path.
+            // Cockpit byte at 0x4A2[5]: always-on cockpit-input snapshot.
             //   bit 7    1 (sentinel; distinguishes "live byte" from
             //              "byte got elided by an older firmware")
             //   bits 3:2 mode_locked (00=Undecided, 01=Car, 10=Charger)
@@ -279,35 +250,11 @@ void SafetyTask::run() noexcept {
                 (tsms    ? 0x02u : 0u) |
                 (dash_chg ? 0x01u : 0u));
 
-#if defined(AMS_BMS_HIL_STUB)
-            // Bench-only diag values riding 0x4A2[3..4]. Skipped in
-            // flight so we don't burn an osThreadGetState() call per
-            // 500 ms tick.
-            //
-            // 0x4A2[3] -- BmsPollTask scheduling state (BmsPollTaskHandle)
-            // 0x4A2[4] -- g_acu_rx_total low byte (any ACU RX = ticking)
-            const std::uint8_t bms_task_state_byte = (BmsPollTaskHandle == nullptr)
-                ? 0xFFu
-                : static_cast<std::uint8_t>(
-                    0xA0u | (static_cast<std::uint8_t>(
-                                 osThreadGetState(BmsPollTaskHandle)) & 0x0Fu));
-            const std::uint8_t acu_rx_total_lo = static_cast<std::uint8_t>(
-                g_acu_rx_total & 0xFFu);
-
-            const auto frame_status = telemetry::encode_status(
-                g_state_telemetry, ams_ok, bms_snap,
-                /*app_init_progress=*/g_app_init_progress);
-            const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
-            const auto frame_temps  = telemetry::encode_temps(
-                bms_snap, veh_snap, heartbeat, tx_fail_lo,
-                bms_task_state_byte, acu_rx_total_lo, tsms_dash_chg_byte);
-#else
             const auto frame_status = telemetry::encode_status(
                 g_state_telemetry, ams_ok, bms_snap);
             const auto frame_pack   = telemetry::encode_pack(bms_snap, cur_snap);
             const auto frame_temps  = telemetry::encode_temps(
                 bms_snap, veh_snap, heartbeat, tx_fail_lo, tsms_dash_chg_byte);
-#endif
 
             if (!send_telem(config::AmsTelemStatusId, frame_status)) ++g_telemetry_tx_fail;
             if (!send_telem(config::AmsTelemPackId,   frame_pack))   ++g_telemetry_tx_fail;

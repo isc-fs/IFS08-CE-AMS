@@ -113,13 +113,7 @@ extern "C" void test_predicates_current_stale(void) {
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
     cur.last_update_tick = 10000 - ams::config::IStaleMs - 10;
-#if defined(AMS_BMS_HIL_STUB)
-    // Bench has no current sensor; freshness check is gated out
-    // under HIL_STUB so this stops faulting. See safety_predicates.hpp.
-    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
-#else
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
-#endif
 }
 
 extern "C" void test_predicates_vcu_stale(void) {
