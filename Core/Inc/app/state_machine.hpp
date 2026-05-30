@@ -118,15 +118,12 @@ struct Output {
     }
 
     case State::Precharge: {
-        // Bounded precharge (#302 follow-up). If the bus doesn't reach
-        // the target within PrechargeMaxMs, latch Error and open every
-        // contactor. This caps how long the precharge contactor +
-        // resistor are held closed -- protecting the resistor (transient
-        // duty only) for ANY stuck-precharge cause. The case that drove
-        // this: a car with a dead VCU locks Charger mode (VCU-absence is
-        // ambiguous) and, since dc_bus_V comes only from the VCU's 0x100,
-        // precharge_target_reached can never become true, so it would
-        // otherwise sit here forever. now_tick >= state_entry_tick always
+        // Bounded precharge (#302 follow-up). If the precharge-complete
+        // condition isn't met within PrechargeMaxMs, latch Error and open
+        // every contactor -- caps how long the precharge contactor +
+        // resistor are held closed (transient duty only) for ANY
+        // stuck-precharge cause (stuck contactor, bus fault, operator
+        // never asserts charge, etc.). now_tick >= state_entry_tick always
         // (both owned by SafetyTask, which sets entry = now on the edge),
         // so the subtraction can't underflow.
         if (in.now_tick - in.state_entry_tick > config::PrechargeMaxMs) {
@@ -135,7 +132,20 @@ struct Output {
                      events::safety::OpenAirN | events::safety::OpenAirP |
                      events::safety::OpenPrecharge };
         }
-        if (precharge_target_reached(in.bms, in.vehicle)) {
+        // Precharge-complete criterion is mode-specific (#305):
+        //  - Car: confirm the inverter DC-link reached the target via
+        //    dc_bus_V (VCU-measured) before closing AIR+.
+        //  - Charger: the inverter isn't in the charge loop, the charger
+        //    has no comms with the AMS, and dc_bus_V is VCU-only (absent
+        //    during a charge). The operator's charge-mode request (0x101)
+        //    is the proceed signal -- the AMS does not compute precharge
+        //    completion itself; the charger soft-starts its own output.
+        const bool precharge_done =
+            (in.mode_locked == Mode::Charger)
+                ? VehicleService::charge_requested(in.now_tick,
+                                                   in.vehicle.last_charge_req_tick)
+                : precharge_target_reached(in.bms, in.vehicle);
+        if (precharge_done) {
             return { State::Transition,
                      events::safety::CloseAirP |
                      events::safety::OpenPrecharge };
@@ -150,8 +160,11 @@ struct Output {
         // Run/Charge on this step. The bus-still-up guard remains so a
         // failed contactor swap (bus slumps the moment the precharge
         // contactor opens) lands in Error rather than energising the
-        // tractive system on a degraded bus.
-        if (!precharge_target_reached(in.bms, in.vehicle)) {
+        // tractive system on a degraded bus. Car-only: the guard relies
+        // on the VCU-measured dc_bus_V, which is absent during a charge
+        // (#305), so Charger mode commits to Charge directly.
+        if (in.mode_locked == Mode::Car &&
+            !precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |

@@ -115,6 +115,8 @@ void test_fsm_precharge_reaches_target(void);
 void test_fsm_precharge_stays_below_target(void);
 void test_fsm_transition_commits_to_run_in_car_mode(void);
 void test_fsm_transition_commits_to_charge_in_charger_mode(void);
+void test_fsm_precharge_charger_commits_on_request(void);
+void test_fsm_precharge_charger_holds_without_request(void);
 void test_fsm_transition_undecided_mode_forces_error(void);
 void test_fsm_transition_drops_voltage_to_error(void);
 void test_fsm_precharge_times_out_to_error(void);
@@ -313,6 +315,8 @@ int main(void) {
     RUN_TEST(test_fsm_precharge_stays_below_target);
     RUN_TEST(test_fsm_transition_commits_to_run_in_car_mode);
     RUN_TEST(test_fsm_transition_commits_to_charge_in_charger_mode);
+    RUN_TEST(test_fsm_precharge_charger_commits_on_request);
+    RUN_TEST(test_fsm_precharge_charger_holds_without_request);
     RUN_TEST(test_fsm_transition_undecided_mode_forces_error);
     RUN_TEST(test_fsm_transition_drops_voltage_to_error);
     RUN_TEST(test_fsm_precharge_times_out_to_error);

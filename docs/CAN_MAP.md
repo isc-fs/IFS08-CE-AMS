@@ -491,8 +491,8 @@ voltage during precharge is a real fault.
 | Bus | FDCAN1 (standard 11-bit) |
 | DLC | ≥ 4 |
 | Payload | bytes `[0..3]` must equal the magic `43 48 52 47` ("CHRG"); other bytes ignored |
-| Use | Declares "we are on the charger." The AMS enters **Charger** mode only if a fresh request (within `ChargeReqFreshMs` = 1000 ms) is present **and** the VCU is absent, at the Start→Precharge mode lock. |
-| Cadence | operator tool should send periodically (e.g. ≥ 2 Hz) while on the charger so it is fresh at the lock |
+| Use | Two roles, both keyed off freshness (within `ChargeReqFreshMs` = 1000 ms): (1) **mode lock** — the AMS enters **Charger** mode only if a fresh request is present *and* the VCU is absent at Start→Precharge; (2) **precharge proceed** — in Charger mode the AMS closes AIR+ when the request is fresh (it does not measure precharge completion itself; the charger soft-starts its own output). |
+| Cadence | operator tool sends periodically (e.g. ≥ 2 Hz) for the **whole** charge bring-up — it must be fresh both at the mode lock and through Precharge, or the AMS holds and eventually times out (`PrechargeMaxMs`) |
 
 The charger itself has no comms with the AMS, so this operator-asserted
 frame is the positive charge-detect. Without it, a car with a dead VCU

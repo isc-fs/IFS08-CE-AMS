@@ -122,7 +122,34 @@ extern "C" void test_fsm_transition_commits_to_charge_in_charger_mode(void) {
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
     in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 0;   // no VCU during charge -- charger must NOT need it
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
+}
+
+// Charger precharge-complete gates on the operator's fresh 0x101 request
+// (#305), not on dc_bus_V. Without a fresh request it holds (-> timeout).
+extern "C" void test_fsm_precharge_charger_commits_on_request(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.dash_chg = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 0;                         // no VCU during charge
+    veh.last_charge_req_tick = in.now_tick;   // operator asserting 0x101
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
+}
+
+extern "C" void test_fsm_precharge_charger_holds_without_request(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.dash_chg = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 0;
+    veh.last_charge_req_tick = 0u;            // operator NOT asserting 0x101
+    // Within the deadline, no request -> holds in Precharge.
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
 
 extern "C" void test_fsm_transition_undecided_mode_forces_error(void) {

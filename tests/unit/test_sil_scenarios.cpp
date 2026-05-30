@@ -161,14 +161,15 @@ extern "C" void test_sil_charger_path(void) {
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
-    // Precharge -> Transition once bus catches up
+    // Precharge -> Transition gates on the operator's fresh 0x101
+    // charge-mode request (#305), not on dc_bus_V (no VCU during charge).
     h.advance(20);
-    h.veh.dc_bus_V = 350;
+    h.veh.dc_bus_V = 0;                  // VCU absent during a charge
+    h.veh.last_charge_req_tick = h.now;  // operator asserting 0x101
     out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
 
-    // Hold elapses -> Charge (not Run)
-    for (int i = 0; i < 5; ++i) { h.advance(20); h.step(); }
+    // Transition is a one-step passthrough -> Charge (not Run).
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
 }
