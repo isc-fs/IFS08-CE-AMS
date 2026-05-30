@@ -232,8 +232,17 @@ void SafetyTask::run() noexcept {
                         veh_snap.last_dc_bus_tick != 0u &&
                         (now - veh_snap.last_dc_bus_tick) <=
                             config::VcuFreshMs;
-                    mode_locked = vcu_fresh ? fsm::Mode::Car
-                                            : fsm::Mode::Charger;
+                    // Charger mode requires BOTH the operator's explicit
+                    // charge-mode request AND VCU absence (#305). A car
+                    // with a dead VCU does NOT send the request, so it
+                    // locks Car and faults on VcuStale instead of
+                    // silently charging; a stray charge request while the
+                    // VCU is live cannot flip a running car into Charger.
+                    const bool charge_req = VehicleService::charge_requested(
+                        now, veh_snap.last_charge_req_tick);
+                    mode_locked = (charge_req && !vcu_fresh)
+                                      ? fsm::Mode::Charger
+                                      : fsm::Mode::Car;
                     g_mode_locked_telemetry =
                         static_cast<std::uint8_t>(mode_locked);
                 }

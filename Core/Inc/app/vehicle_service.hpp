@@ -25,6 +25,10 @@ namespace ams {
 struct VehicleState {
     std::uint16_t dc_bus_V;          // from 0x100, little-endian bytes 0..1
     std::uint32_t last_dc_bus_tick;
+    // Tick of the last valid (magic-matched) operator charge-mode request
+    // frame (ChargeModeReqId). 0 = never seen. SafetyTask reads its
+    // freshness at the Start->Precharge mode lock (#305).
+    std::uint32_t last_charge_req_tick;
 };
 
 class VehicleService {
@@ -39,6 +43,11 @@ public:
 
     // Pure helper, public for unit testing.
     static std::uint16_t decode_dc_bus_V(const std::uint8_t *data) noexcept;
+
+    // True iff an operator charge-mode request was seen within
+    // ChargeReqFreshMs of now_tick (#305). Pure; future-tick safe.
+    [[nodiscard]] static bool charge_requested(std::uint32_t now_tick,
+                                               std::uint32_t last_req_tick) noexcept;
 
 private:
     VehicleService() = default;

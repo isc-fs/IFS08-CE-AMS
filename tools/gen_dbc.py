@@ -247,6 +247,19 @@ def vcu_100() -> Message:
     return m
 
 
+def charge_req_101() -> Message:
+    m = Message(0x101, "Operator_charge_request", 4, "Pit_Tool",
+                comment=("Operator declares 'on the charger' (#305). AMS "
+                         "enters Charger mode only if fresh (<=1000 ms) AND "
+                         "VCU absent at the Start->Precharge lock. Magic-gated "
+                         "so noise can't flip HV mode."))
+    m.signals = [
+        Signal("magic", be_start_bit_for_byte(0), 32, "0", "+",
+               unit="magic", comment="Must equal 0x43485247 (ascii CHRG)"),
+    ]
+    return m
+
+
 def bl_trigger_002() -> Message:
     m = Message(0x002, "BL_boot_trigger", 4, "Pit_Tool",
                 comment=("Reboot AMS into bootloader. Payload must be the "
@@ -622,7 +635,7 @@ def build_all() -> List[Message]:
              tmax_mod(0x136, [0, 1, 2], "A"),
              tmax_mod(0x137, [3, 4],    "B", include_dcdc=True)]
     # VCU + BL trigger.
-    msgs += [vcu_100(), bl_trigger_002()]
+    msgs += [vcu_100(), charge_req_101(), bl_trigger_002()]
     # Pit-diag.
     msgs += [pit_cmd_7f0(), pit_ack_7f1()]
     msgs += pit_cells()
