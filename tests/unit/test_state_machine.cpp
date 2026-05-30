@@ -122,7 +122,6 @@ extern "C" void test_fsm_transition_commits_to_charge_in_charger_mode(void) {
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
     in.mode_locked = ams::fsm::Mode::Charger;
-    veh.dc_bus_V = 0;   // no VCU during charge -- charger must NOT need it
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
 }
 
@@ -140,13 +139,10 @@ extern "C" void test_fsm_transition_undecided_mode_forces_error(void) {
 }
 
 extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
-    // Car mode: the bus-still-up guard catches a failed contactor swap.
-    // (Charger mode has no dc_bus_V to check, so the guard is Car-only.)
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
-    in.mode_locked = ams::fsm::Mode::Car;
-    veh.dc_bus_V = 100;   // bus slumped after the swap
+    veh.dc_bus_V = 100;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
@@ -217,17 +213,15 @@ extern "C" void test_fsm_error_is_sticky(void) {
 }
 
 // ---------------------------------------------------------------------------
-// #305: bounded precharge (Car-mode voltage-gated backstop). If the bus
-// never reaches the target -- a stuck contactor or degraded resistor,
-// VCU alive but dc_bus_V stuck low -- latch Error at PrechargeMaxMs
-// instead of holding the resistor closed forever.
+// #302 follow-up: bounded precharge. A precharge that never reaches the
+// target (e.g. dead VCU -> no dc_bus_V -> Charger-mode stuck) must latch
+// Error at PrechargeMaxMs instead of holding the resistor closed forever.
 // ---------------------------------------------------------------------------
 extern "C" void test_fsm_precharge_times_out_to_error(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
-    in.mode_locked = ams::fsm::Mode::Car;
-    veh.dc_bus_V = 100;   // VCU alive but bus stuck below target -> never completes
+    veh.dc_bus_V = 0;   // bus never confirmed (no VCU 0x100) -> never completes
     in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs + 1;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
@@ -240,36 +234,7 @@ extern "C" void test_fsm_precharge_holds_within_deadline(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
-    in.mode_locked = ams::fsm::Mode::Car;
-    veh.dc_bus_V = 100;   // not reached yet, but still within the deadline
+    veh.dc_bus_V = 0;   // not reached yet, but still within the deadline
     in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs - 1;
-    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
-}
-
-// ---------------------------------------------------------------------------
-// #305 follow-up: Charger-mode precharge is TIME-BASED (the inverter
-// isn't in the charge loop and dc_bus_V is VCU-only / absent). It commits
-// after PrechargeDwellMs regardless of dc_bus_V, and holds before it.
-// ---------------------------------------------------------------------------
-extern "C" void test_fsm_precharge_charger_commits_after_dwell(void) {
-    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
-    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
-    in.mode_locked = ams::fsm::Mode::Charger;
-    veh.dc_bus_V = 0;   // no VCU during charge -- time-based, not voltage
-    in.now_tick = in.state_entry_tick + ams::config::PrechargeDwellMs;
-    auto out = ams::fsm::step(in);
-    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
-}
-
-extern "C" void test_fsm_precharge_charger_holds_before_dwell(void) {
-    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
-    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
-    in.mode_locked = ams::fsm::Mode::Charger;
-    veh.dc_bus_V = 0;
-    in.now_tick = in.state_entry_tick + ams::config::PrechargeDwellMs - 1;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }

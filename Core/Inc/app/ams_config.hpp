@@ -50,22 +50,6 @@ inline constexpr std::uint32_t VcuFreshMs     = 1000;
 // TransitionHoldMs stays removed (Transition is a one-step passthrough).
 inline constexpr std::uint32_t PrechargeMaxMs = 5000;  // COMMISSION (resistor thermal limit)
 
-// Charger-mode precharge dwell (#305). The car's inverter is NOT in the
-// charge loop (charger and tractive system are separated, though they
-// share the AIRs), and dc_bus_V (the Car-mode precharge-complete input)
-// comes only from the VCU's 0x100, which is off during a charge -- so
-// Charger mode can't VOLTAGE-gate precharge. Instead it dwells a fixed
-// time, then commits AIR+. Must be < PrechargeMaxMs.
-//
-// COMMISSION: size this >= the CAR's worst-case precharge time (a few
-// RC, to ~99%), NOT just the charger's output RC. Rationale: car/charger
-// is inferred from VCU presence, so a car with a DEAD VCU misclassifies
-// as Charger and runs this same dwell before closing AIR+ into the
-// inverter DC-link. Sizing the dwell to fully precharge the inverter
-// makes that misclassification inrush-safe too. (The proper fix for the
-// ambiguity is a positive charge-detect signal -- see #305.)
-inline constexpr std::uint32_t PrechargeDwellMs = 1500;  // COMMISSION (>= car worst-case precharge)
-
 inline constexpr std::uint8_t  AllModulesMask = 0x1F;  // 5 modules present
 
 // ---------------------------------------------------------------------------
