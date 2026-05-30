@@ -104,8 +104,8 @@ extern "C" void test_fsm_precharge_stays_below_target(void) {
 // ---------------------------------------------------------------------------
 // Transition: passthrough state -- commits to Run/Charge on first step
 // based on mode_locked. Drops voltage to Error.
-// (Hold timer + precharge timeout were removed -- the FSM is timeout-free
-// except for the safety predicate freshness checks.)
+// (TransitionHoldMs stays removed -- Transition is one-step. The
+// precharge deadline was re-added as PrechargeMaxMs, #302 follow-up.)
 // ---------------------------------------------------------------------------
 extern "C" void test_fsm_transition_commits_to_run_in_car_mode(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
@@ -210,4 +210,31 @@ extern "C" void test_fsm_error_is_sticky(void) {
     auto in = make_inputs(ams::fsm::State::Error, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;  // even with both inputs high
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, ams::fsm::step(in).next);
+}
+
+// ---------------------------------------------------------------------------
+// #302 follow-up: bounded precharge. A precharge that never reaches the
+// target (e.g. dead VCU -> no dc_bus_V -> Charger-mode stuck) must latch
+// Error at PrechargeMaxMs instead of holding the resistor closed forever.
+// ---------------------------------------------------------------------------
+extern "C" void test_fsm_precharge_times_out_to_error(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.dash_chg = true;
+    veh.dc_bus_V = 0;   // bus never confirmed (no VCU 0x100) -> never completes
+    in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs + 1;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
+}
+
+extern "C" void test_fsm_precharge_holds_within_deadline(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.dash_chg = true;
+    veh.dc_bus_V = 0;   // not reached yet, but still within the deadline
+    in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs - 1;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
