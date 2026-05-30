@@ -302,3 +302,80 @@ extern "C" void test_predicates_offline_module_trips_regardless_of_gate(void) {
         static_cast<std::uint8_t>(ams::safety::FaultReason::BmsModuleOffline),
         static_cast<std::uint8_t>(res.reason));
 }
+
+// ---------------------------------------------------------------------------
+// #279 follow-up: torn-snapshot fingerprint + cell-fault debounce.
+// ---------------------------------------------------------------------------
+
+// module_below returns the NoOffendingModule sentinel (0xFF) when the
+// summary crossed the threshold but no per-module aggregate did -- the
+// signature of a torn lock-free snapshot read (min_cell_mV and
+// vmin_module copied from different poll cycles). Distinct from a real
+// module index so the bench can tell them apart on 0x6C0[7].
+extern "C" void test_module_below_sentinel_when_none(void) {
+    std::uint16_t per_module[ams::config::BmsModuleCount];
+    for (std::uint8_t m = 0; m < ams::config::BmsModuleCount; ++m) per_module[m] = 3700;
+    TEST_ASSERT_EQUAL_UINT8(ams::safety::NoOffendingModule,
+                            ams::safety::module_below(per_module, 2800));
+    per_module[2] = 2000;  // now module 2 is genuinely low
+    TEST_ASSERT_EQUAL_UINT8(2u, ams::safety::module_below(per_module, 2800));
+}
+
+// is_cell_range_reason classifies only the four V/T range reasons.
+extern "C" void test_is_cell_range_reason(void) {
+    using R = ams::safety::FaultReason;
+    TEST_ASSERT_TRUE(ams::safety::is_cell_range_reason(R::CellUnderVoltage));
+    TEST_ASSERT_TRUE(ams::safety::is_cell_range_reason(R::CellOverVoltage));
+    TEST_ASSERT_TRUE(ams::safety::is_cell_range_reason(R::CellUnderTemp));
+    TEST_ASSERT_TRUE(ams::safety::is_cell_range_reason(R::CellOverTemp));
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(R::None));
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(R::ForceError));
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(R::BmsStale));
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(R::CurrentStale));
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(R::VcuStale));
+}
+
+// A cell-range fault must persist for `confirm` consecutive updates
+// before the debounce confirms it. A transient (single tick) never does.
+extern "C" void test_cell_debounce_confirms_after_n(void) {
+    ams::safety::CellFaultDebounce db;
+    const std::uint16_t N = 30;
+    // 29 consecutive under-voltage ticks: not yet confirmed.
+    for (std::uint16_t i = 0; i < N - 1; ++i) {
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CellUnderVoltage, N));
+    }
+    // The Nth consecutive tick confirms.
+    TEST_ASSERT_TRUE(db.update(ams::safety::FaultReason::CellUnderVoltage, N));
+    // Stays confirmed while it persists.
+    TEST_ASSERT_TRUE(db.update(ams::safety::FaultReason::CellUnderVoltage, N));
+}
+
+extern "C" void test_cell_debounce_transient_never_confirms(void) {
+    ams::safety::CellFaultDebounce db;
+    const std::uint16_t N = 30;
+    // A single sub-threshold tick surrounded by clean ticks: a glitch.
+    for (int cycle = 0; cycle < 50; ++cycle) {
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CellUnderVoltage, N));  // 1 bad
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::None, N));              // clean -> reset
+    }
+}
+
+// A changed offending reason restarts the streak (no cross-reason carry).
+extern "C" void test_cell_debounce_reason_change_resets(void) {
+    ams::safety::CellFaultDebounce db;
+    const std::uint16_t N = 3;
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CellUnderVoltage, N));  // 1
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CellUnderVoltage, N));  // 2
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CellOverTemp, N));      // reset -> 1
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CellOverTemp, N));      // 2
+    TEST_ASSERT_TRUE (db.update(ams::safety::FaultReason::CellOverTemp, N));      // 3 -> confirm
+}
+
+// A non-cell reason is never debounced -- update() returns false and the
+// caller applies its own immediate-fault decision.
+extern "C" void test_cell_debounce_ignores_non_cell(void) {
+    ams::safety::CellFaultDebounce db;
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CurrentOverLimit, 3));
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::VcuStale, 3));
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::ForceError, 3));
+}

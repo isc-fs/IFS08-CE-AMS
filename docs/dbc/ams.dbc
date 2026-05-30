@@ -952,7 +952,7 @@ CM_ SG_ 1728 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=E
 CM_ SG_ 1728 mode_locked "0=Undecided, 1=Car, 2=Charger";
 CM_ SG_ 1728 pec_err_total "Sum of g_ltc_pec_err_count[10]; saturates at 0xFFFF";
 CM_ SG_ 1728 fault_reason "Predicate branch that latched ERROR (#276). 0=None, 1=ForceError, 2=BmsModuleOffline, 3=BmsStale, 4=CellUnderVoltage, 5=CellOverVoltage, 6=CellUnderTemp, 7=CellOverTemp, 8=CurrentSensorFault, 9=CurrentStale, 10=CurrentOverLimit, 11=VcuStale, 12=FsmError (FSM-driven Error path).";
-CM_ SG_ 1728 fault_detail "Per-branch detail. BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index. BmsModuleOffline: live module_online_mask. Otherwise 0.";
+CM_ SG_ 1728 fault_detail "Per-branch detail. BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index 0..4, or 0xFF = none matched (inconsistent / torn snapshot). BmsModuleOffline: live module_online_mask. Otherwise 0.";
 CM_ BO_ 1729 "V-poll cadence + last temp-sweep failure mask.";
 CM_ SG_ 1729 temp_sweep_last_mask "1 bit per NTC channel that failed the last sweep";
 CM_ BO_ 1730 "Balance DCC bits for cell indices 0..63. Bit b of byte i represents cell (8*i + b). Cell -> module/cell: module = idx // 19, cell = idx % 19.";

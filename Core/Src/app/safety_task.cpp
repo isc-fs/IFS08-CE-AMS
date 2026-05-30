@@ -166,7 +166,25 @@ void SafetyTask::run() noexcept {
             now,
         };
         const auto fault_res = safety::evaluate_fault_detail(pred_in);
-        const bool fault     = error_latched_ || fault_res.faulted();
+
+        // Debounce the cell V/T range predicates (#279). A single
+        // transient sub-threshold sample -- a torn read of the lock-free
+        // BmsState snapshot, or an unsettled first poll / emulator-default
+        // value at boot -- must not latch the sticky ERROR. The cell V/T
+        // checks fault only after CellFaultConfirmTicks (~300 ms, > one
+        // 250 ms voltage poll) consecutive evaluations report the SAME
+        // reason; a transient that clears on the next poll never reaches
+        // the count. Immediate-danger predicates (force-error, BMS
+        // offline/stale, current-over-limit, VCU-stale) are NOT debounced
+        // -- they latch on the first tick exactly as before.
+        const bool cell_confirmed =
+            cell_debounce_.update(fault_res.reason, config::CellFaultConfirmTicks);
+        const bool predicate_fault =
+            safety::is_cell_range_reason(fault_res.reason)
+                ? cell_confirmed
+                : fault_res.faulted();
+
+        const bool fault = error_latched_ || predicate_fault;
 
         if (fault) {
             if (!error_latched_) {

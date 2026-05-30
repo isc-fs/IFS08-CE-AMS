@@ -71,15 +71,22 @@ struct FaultResult {
 }
 
 // First module whose per-module aggregate is below / above a limit, for
-// the 0x6C0[7] fault-detail byte (#279). Returns 0 if none match (the
-// summary already crossed the threshold, so this is belt-and-braces).
+// the 0x6C0[7] fault-detail byte (#279). Returns NoOffendingModule
+// (0xFF) if NONE match -- which, when the summary min/max already
+// crossed the threshold, means min_cell_mV / max_* disagrees with the
+// per-module aggregates: the fingerprint of a torn lock-free snapshot
+// read (the two were copied from different poll cycles). Distinct from a
+// real module index 0..4 so the bench can tell "module N is genuinely
+// low" from "inconsistent snapshot".
+inline constexpr std::uint8_t NoOffendingModule = 0xFFu;
+
 [[nodiscard]] inline std::uint8_t
 module_below(const std::uint16_t (&per_module)[config::BmsModuleCount],
              std::uint16_t limit) noexcept {
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         if (per_module[m] < limit) return m;
     }
-    return 0u;
+    return NoOffendingModule;
 }
 [[nodiscard]] inline std::uint8_t
 module_above_u16(const std::uint16_t (&per_module)[config::BmsModuleCount],
@@ -87,7 +94,7 @@ module_above_u16(const std::uint16_t (&per_module)[config::BmsModuleCount],
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         if (per_module[m] > limit) return m;
     }
-    return 0u;
+    return NoOffendingModule;
 }
 [[nodiscard]] inline std::uint8_t
 module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
@@ -95,7 +102,7 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         if (per_module[m] > limit) return m;
     }
-    return 0u;
+    return NoOffendingModule;
 }
 
 [[nodiscard]] inline FaultResult evaluate_fault_detail(const Inputs& in) noexcept {
@@ -181,5 +188,47 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
 [[nodiscard]] inline bool evaluate_fault(const Inputs& in) noexcept {
     return evaluate_fault_detail(in).faulted();
 }
+
+// The cell voltage / temperature RANGE reasons -- the slow-by-nature
+// faults that get debounced (#279). A cell cannot leave its valid
+// window for a single 10 ms tick and return, so a transient one is a
+// glitch (torn snapshot read / unsettled poll), not a real condition.
+[[nodiscard]] inline bool is_cell_range_reason(FaultReason r) noexcept {
+    return r == FaultReason::CellUnderVoltage ||
+           r == FaultReason::CellOverVoltage  ||
+           r == FaultReason::CellUnderTemp    ||
+           r == FaultReason::CellOverTemp;
+}
+
+// Debounce for the cell V/T range predicates. Pure + host-testable so
+// the latch timing is unit-covered, not just live on the bench (#279).
+// Call once per SafetyTask evaluation with the predicate's reason;
+// returns true only once a cell-range reason has persisted for
+// `confirm_ticks` consecutive calls. Any non-cell reason (including
+// None) resets the streak -- immediate faults are handled by the caller
+// and are never debounced.
+struct CellFaultDebounce {
+    std::uint16_t streak = 0;
+    std::uint8_t  reason = 0;   // raw FaultReason of the current streak
+
+    // Returns true iff a cell-range fault is now CONFIRMED (should
+    // latch). For non-cell reasons it resets and returns false; the
+    // caller applies its own immediate-fault decision in that case.
+    [[nodiscard]] bool update(FaultReason r, std::uint16_t confirm_ticks) noexcept {
+        if (!is_cell_range_reason(r)) {
+            streak = 0;
+            reason = 0;
+            return false;
+        }
+        const auto ru = static_cast<std::uint8_t>(r);
+        if (ru == reason) {
+            if (streak < confirm_ticks) ++streak;
+        } else {
+            reason = ru;
+            streak = 1;
+        }
+        return streak >= confirm_ticks;
+    }
+};
 
 }  // namespace ams::safety

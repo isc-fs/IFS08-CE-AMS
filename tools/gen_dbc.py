@@ -368,8 +368,9 @@ def pit_fsm_status_6c0() -> Message:
                unit="raw",
                comment=("Per-branch detail. BmsStale / CellUnderVoltage / "
                         "CellOverVoltage / CellOverTemp: offending module "
-                        "index. BmsModuleOffline: live module_online_mask. "
-                        "Otherwise 0.")),
+                        "index 0..4, or 0xFF = none matched (inconsistent / "
+                        "torn snapshot). BmsModuleOffline: live "
+                        "module_online_mask. Otherwise 0.")),
     ]
     return m
 

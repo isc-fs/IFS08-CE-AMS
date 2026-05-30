@@ -92,6 +92,12 @@ void test_predicates_reason_vcu_stale(void);
 void test_predicates_undervoltage_suppressed_before_first_poll(void);
 void test_predicates_undervoltage_armed_reports_module(void);
 void test_predicates_offline_module_trips_regardless_of_gate(void);
+void test_module_below_sentinel_when_none(void);
+void test_is_cell_range_reason(void);
+void test_cell_debounce_confirms_after_n(void);
+void test_cell_debounce_transient_never_confirms(void);
+void test_cell_debounce_reason_change_resets(void);
+void test_cell_debounce_ignores_non_cell(void);
 
 // test_state_machine.cpp
 void test_fsm_start_waits_without_tsms_or_dash_chg(void);
@@ -276,6 +282,12 @@ int main(void) {
     RUN_TEST(test_predicates_undervoltage_suppressed_before_first_poll);
     RUN_TEST(test_predicates_undervoltage_armed_reports_module);
     RUN_TEST(test_predicates_offline_module_trips_regardless_of_gate);
+    RUN_TEST(test_module_below_sentinel_when_none);
+    RUN_TEST(test_is_cell_range_reason);
+    RUN_TEST(test_cell_debounce_confirms_after_n);
+    RUN_TEST(test_cell_debounce_transient_never_confirms);
+    RUN_TEST(test_cell_debounce_reason_change_resets);
+    RUN_TEST(test_cell_debounce_ignores_non_cell);
 
     RUN_TEST(test_fsm_start_waits_without_tsms_or_dash_chg);
     RUN_TEST(test_fsm_start_waits_with_tsms_only);
