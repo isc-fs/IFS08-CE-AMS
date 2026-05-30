@@ -189,6 +189,18 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     return evaluate_fault_detail(in).faulted();
 }
 
+// Whether the AMS should assert AMS_OK (PB4), its leg of the shutdown
+// circuit (#299). Active-high: HIGH = "AMS healthy, not blocking the
+// SDC". Asserted ONLY when (a) the boot grace has passed -- during grace
+// the data-presence predicates are suppressed, so we must NOT enable the
+// SDC against possibly-unverified inputs -- and (b) no ERROR is latched.
+// SafetyTask calls this every 10 ms tick and drives the pin, so AMS_OK
+// tracks the live latch state and deasserts the instant a fault latches.
+[[nodiscard]] inline bool ams_ok_asserted(std::uint32_t now_tick,
+                                          bool error_latched) noexcept {
+    return (now_tick >= config::SafetyBootGraceMs) && !error_latched;
+}
+
 // The cell voltage / temperature RANGE reasons -- the slow-by-nature
 // faults that get debounced (#279). A cell cannot leave its valid
 // window for a single 10 ms tick and return, so a transient one is a

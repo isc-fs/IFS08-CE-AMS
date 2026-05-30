@@ -66,6 +66,14 @@ void Relays::open_precharge() noexcept {
     write_pin(RELAY_PRECHARGE_GPIO_Port, RELAY_PRECHARGE_Pin, false);
 }
 
+void Relays::set_ams_ok(bool enable) noexcept {
+    // Active-high SDC enable. HAL_GPIO_WritePin -> BSRR, so the write is
+    // atomic and interrupt-safe. enable==false drives AMS_OK LOW, which
+    // opens the AMS's leg of the shutdown circuit (#299).
+    HAL_GPIO_WritePin(AMS_OK_GPIO_Port, AMS_OK_Pin,
+                      enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
+}
+
 bool Relays::is_air_negative_closed() noexcept {
     return read_pin(RELAY_AIR_N_GPIO_Port, RELAY_AIR_N_Pin);
 }

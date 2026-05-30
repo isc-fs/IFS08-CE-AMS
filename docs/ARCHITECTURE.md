@@ -60,10 +60,15 @@ Everything else exists to enforce these:
    and the inline comment on `SafetyBootGraceMs` in
    [`ams_config.hpp`](../Core/Inc/app/ams_config.hpp).
 8. **The AMS does not sense the SDC line.** It IS part of the SDC
-   via the ``AMS_OK`` output (PB4) — opening that output opens the
-   SDC. The legacy ``DIGITAL1`` (PE9) input was retired in PR #117
-   because the v1.2 daughterboard doesn't route it; the
-   ``sdc_closed`` predicate is gone.
+   via the ``AMS_OK`` output (PB4, active-high) — driving that output
+   LOW opens the SDC. SafetyTask drives it every 10 ms tick (#299):
+   HIGH only once the boot grace has passed AND no ERROR is latched;
+   LOW during grace (predicates are suppressed, so the SDC must not be
+   enabled against unverified inputs) and the instant a fault latches.
+   The decision is the pure ``safety::ams_ok_asserted(now, latched)``.
+   The legacy ``DIGITAL1`` (PE9) input was retired in PR #117 because
+   the v1.2 daughterboard doesn't route it; the ``sdc_closed``
+   predicate is gone.
 
 > The HIL bench rig drives a real LTC6820/LTC6811 chain via the Pi
 > Pico emulator (IFS08_HIL `feat/pico-ltc-emulator`, on MLC2 J8), so

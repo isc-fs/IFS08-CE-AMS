@@ -379,3 +379,28 @@ extern "C" void test_cell_debounce_ignores_non_cell(void) {
     TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::VcuStale, 3));
     TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::ForceError, 3));
 }
+
+// ---------------------------------------------------------------------------
+// #299: AMS_OK (SDC enable) drive decision. HIGH only past boot grace
+// with no ERROR latched; LOW during grace and whenever latched.
+// ---------------------------------------------------------------------------
+extern "C" void test_ams_ok_low_during_grace(void) {
+    // Mid-grace, no latch: still LOW (predicates suppressed, don't enable SDC).
+    TEST_ASSERT_FALSE(ams::safety::ams_ok_asserted(
+        ams::config::SafetyBootGraceMs - 1u, /*error_latched=*/false));
+    TEST_ASSERT_FALSE(ams::safety::ams_ok_asserted(0u, false));
+}
+
+extern "C" void test_ams_ok_high_when_healthy_post_grace(void) {
+    TEST_ASSERT_TRUE(ams::safety::ams_ok_asserted(
+        ams::config::SafetyBootGraceMs, /*error_latched=*/false));
+    TEST_ASSERT_TRUE(ams::safety::ams_ok_asserted(
+        ams::config::SafetyBootGraceMs + 100000u, false));
+}
+
+extern "C" void test_ams_ok_low_when_latched(void) {
+    // Latched ERROR forces LOW regardless of time (before or after grace).
+    TEST_ASSERT_FALSE(ams::safety::ams_ok_asserted(
+        ams::config::SafetyBootGraceMs + 100000u, /*error_latched=*/true));
+    TEST_ASSERT_FALSE(ams::safety::ams_ok_asserted(0u, true));
+}
