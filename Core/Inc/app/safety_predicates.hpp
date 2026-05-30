@@ -24,6 +24,11 @@ struct Inputs {
     const CurrentState& current;
     const VehicleState& vehicle;
     bool                force_error_set; // safety_events ForceError pending
+    // The VCU heartbeat is required only once committed to Car mode
+    // (mode_locked == Car). In Charger mode -- and the pre-lock Start /
+    // Undecided window -- the VCU is expected to be absent (the car
+    // isn't running), so its staleness must NOT be a fault (#302).
+    bool                vcu_required;
     std::uint32_t       now_tick;
 };
 
@@ -175,8 +180,14 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     }
     if (std::abs(in.current.filtered_mA) > config::CurrentMaxMa) return { FaultReason::CurrentOverLimit, 0 };
 
-    // VCU DC bus heartbeat.
-    if (tick_age(in.now_tick, in.vehicle.last_dc_bus_tick) > config::VcuStaleMs) {
+    // VCU DC bus heartbeat -- a fault ONLY once committed to Car mode.
+    // In Charger mode the VCU is absent by definition (the car isn't
+    // running), and in the pre-lock Undecided window the AIRs are still
+    // open. Gating on vcu_required is what makes Charger mode reachable:
+    // the lock needs the VCU stale > VcuFreshMs (1000 ms), but an
+    // un-gated VcuStale (200 ms) would always latch ERROR first (#302).
+    if (in.vcu_required &&
+        tick_age(in.now_tick, in.vehicle.last_dc_bus_tick) > config::VcuStaleMs) {
         return { FaultReason::VcuStale, 0 };
     }
 
