@@ -98,6 +98,9 @@ void test_cell_debounce_confirms_after_n(void);
 void test_cell_debounce_transient_never_confirms(void);
 void test_cell_debounce_reason_change_resets(void);
 void test_cell_debounce_ignores_non_cell(void);
+void test_ams_ok_low_during_grace(void);
+void test_ams_ok_high_when_healthy_post_grace(void);
+void test_ams_ok_low_when_latched(void);
 
 // test_state_machine.cpp
 void test_fsm_start_waits_without_tsms_or_dash_chg(void);
@@ -288,6 +291,9 @@ int main(void) {
     RUN_TEST(test_cell_debounce_transient_never_confirms);
     RUN_TEST(test_cell_debounce_reason_change_resets);
     RUN_TEST(test_cell_debounce_ignores_non_cell);
+    RUN_TEST(test_ams_ok_low_during_grace);
+    RUN_TEST(test_ams_ok_high_when_healthy_post_grace);
+    RUN_TEST(test_ams_ok_low_when_latched);
 
     RUN_TEST(test_fsm_start_waits_without_tsms_or_dash_chg);
     RUN_TEST(test_fsm_start_waits_with_tsms_only);

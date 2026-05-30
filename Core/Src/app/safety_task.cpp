@@ -8,9 +8,8 @@
 //   * FSM step every 20 ms (StatePeriodMs)
 //   * Telemetry emit every 500 ms (TelemetryPeriodMs)
 //   * IWDG refresh on every iteration (gated by the fault path)
-//   * Fan PWM duty update on state transitions
-//   * AMS_OK GPIO drive (in latched state we leave it where the FSM put
-//     it; the FSM clears it via Run/Charge/Start logic on relay drive)
+//   * AMS_OK / SDC-enable GPIO drive (PB4) every iteration: HIGH only
+//     past boot grace with no ERROR latched, LOW otherwise (#299)
 //
 // The CubeMX-generated thread is still called "SafetyTask" in main.c +
 // AMS.ioc. That cosmetic rename ships in a later phase to keep this
@@ -75,6 +74,7 @@ SafetyTask& SafetyTask::instance() noexcept {
 
 void SafetyTask::latch_error_() noexcept {
     Relays::open_all();
+    Relays::set_ams_ok(false);   // drop the SDC enable with the AIRs (#299)
     ErrorLatch::set();
     error_latched_ = true;
 }
@@ -125,6 +125,7 @@ void SafetyTask::run() noexcept {
     const bool boot_in_error = ErrorLatch::is_set();
     if (boot_in_error) {
         Relays::open_all();
+        Relays::set_ams_ok(false);   // keep the SDC open at boot (#299)
         error_latched_ = true;
     }
 
@@ -267,6 +268,16 @@ void SafetyTask::run() noexcept {
             }
             Watchdog::refresh();
         }
+
+        // ---------------- AMS_OK / SDC enable (every 10 ms) (#299) ----------------
+        // Drive PB4 to track the live safety state: HIGH only once the
+        // boot grace has passed AND no ERROR is latched; LOW during grace
+        // (predicates suppressed) and LOW the moment a fault latches. The
+        // firmware previously never drove this pin, so the SDC enable was
+        // never asserted in a healthy state and never deasserted on a
+        // fault -- it just decayed from its boot-default level. error_latched_
+        // already reflects this tick's fault/FSM decision above.
+        Relays::set_ams_ok(safety::ams_ok_asserted(now, error_latched_));
 
         // ---------------- Telemetry (every 500 ms, regardless of state) ----------------
         if (now - last_telemetry_tick >= config::TelemetryPeriodMs) {

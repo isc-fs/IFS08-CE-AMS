@@ -40,6 +40,15 @@ public:
     static void close_precharge()    noexcept;
     static void open_precharge()     noexcept;
 
+    // AMS_OK (PB4): the AMS's contribution to the shutdown circuit
+    // (SDC). Active-high -- HIGH = "AMS healthy, not blocking the SDC";
+    // LOW opens the SDC. Driven exclusively by SafetyTask, which asserts
+    // it only once the boot grace has passed and no ERROR is latched,
+    // and clears it the instant a fault latches (#299). Not an AIR/
+    // contactor, but it shares the same SDC-output ownership, so it
+    // lives here next to open_all().
+    static void set_ams_ok(bool enable) noexcept;
+
     // Read-back helpers for sanity checks (the GPIO ODR drives the
     // relay coil; an MCU-side read says nothing about the contactor
     // *actually* closing, but it does confirm we didn't get our own
