@@ -120,7 +120,7 @@ sequenceDiagram
     end
     init->>init: osThreadExit (TCB → heap)
   and
-    ST->>ST: ErrorLatch::init; boot in Error if ErrorLatch::is_set
+    ST->>ST: ErrorLatch::init, boot in Error if ErrorLatch::is_set
     Note over ST: while t < 2000 ms (SafetyBootGraceMs):<br/>data-presence predicates suppressed
     loop every 10 ms (osDelayUntil)
       ST->>ST: snapshot bms/current/vehicle
@@ -130,7 +130,7 @@ sequenceDiagram
         ST->>HW: IWDG refresh (stay alive for diag)
       else clean path
         ST->>ST: every 20 ms: lock Mode at Start→Precharge · fsm::step
-        ST->>HW: apply_relay_actions(out.safety_flags); IWDG refresh
+        ST->>HW: apply_relay_actions(out.safety_flags) · IWDG refresh
       end
       ST->>HW: every 10 ms: drive AMS_OK (PB4) = ams_ok_asserted(now, latched)
       ST->>HW: every 500 ms: emit 0x4A0/0x4A1/0x4A2

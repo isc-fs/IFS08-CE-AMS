@@ -506,7 +506,7 @@ sequenceDiagram
 
   HW->>main: Reset_Handler then SystemInit
   main->>main: HAL_Init, SystemClock_Config
-  main->>HW: MX_GPIO_Init (relays driven low; PB4-7)
+  main->>HW: MX_GPIO_Init (relays driven low, PB4-7)
   main->>HW: MX_ADC1/3, MX_FDCAN1/2, MX_TIM17, MX_USART2, MX_SPI1
   main->>HW: MX_IWDG1_Init (IWDG alive pre-scheduler)
   main->>main: osKernelInitialize + create queues, tasks
