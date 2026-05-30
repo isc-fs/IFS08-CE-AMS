@@ -25,7 +25,9 @@ struct Harness {
     ams::CurrentState cur{};
     ams::VehicleState veh{};
     bool              tsms             = false;
-    bool              dash_chg          = false;
+    // DASH_CHG is a momentary press (#305): set dash_chg_edge=true for the
+    // step where the operator presses; step() consumes it (one-shot).
+    bool              dash_chg_edge    = false;
     ams::fsm::Mode    mode_locked      = ams::fsm::Mode::Undecided;
     // Start past SafetyBootGraceMs (2000) so the safety predicates
     // are active. Scenarios that need the grace itself live in
@@ -71,11 +73,12 @@ struct Harness {
         const bool predicate_fault = ams::safety::evaluate_fault(pred);
         const ams::fsm::Inputs in = {
             state, bms, cur, veh,
-            tsms, dash_chg, mode_locked,
+            tsms, dash_chg_edge, mode_locked,
             predicate_fault,
             now, state_entry_tick,
         };
         const auto out = ams::fsm::step(in);
+        dash_chg_edge = false;   // one-shot press, consumed by the step
         if (out.next != state) {
             state            = out.next;
             state_entry_tick = now;
@@ -100,7 +103,7 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
     // Assert TSMS + DASH_CHG and lock car mode (VCU heartbeat fresh per
     // Harness ctor).
     h.tsms        = true;
-    h.dash_chg     = true;
+    h.dash_chg_edge = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
@@ -135,7 +138,7 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
 extern "C" void test_sil_bms_dropout_in_run(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
-    h.tsms = true; h.dash_chg = true;
+    h.tsms = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
 
@@ -147,30 +150,65 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4: charger path -- same TSMS+DASH_CHG gate as car, but mode_locked
-// captured as Charger (no VCU heartbeat) routes Transition -> Charge.
+// Scenario 4: charger path -- ONE DASH_CHG press (#305). The charger auto-
+// emits 0x101 the moment it is connected, so a still-fresh charge request is
+// the "charger up, proceed" signal: the single press enters Precharge, then
+// 0x101 freshness closes AIR+ -> Transition -> Charge. If 0x101 goes stale
+// the precharge holds (then times out) instead of proceeding.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_charger_path(void) {
     Harness h;
-    h.tsms = true; h.dash_chg = true;
-    h.mode_locked = ams::fsm::Mode::Charger;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;   // SafetyTask would lock this
+    h.veh.last_charge_req_tick = h.now;        // charger's auto 0x101, fresh
 
-    // Start -> Precharge
+    // Single press: Start -> Precharge.
+    h.dash_chg_edge = true;
     auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
-    // Precharge -> Transition once bus catches up
+    // 0x101 stays fresh (charger still connected) -> proceed next step.
     h.advance(20);
-    h.veh.dc_bus_V = 350;
+    h.veh.last_charge_req_tick = h.now;
     out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
 
-    // Hold elapses -> Charge (not Run)
-    for (int i = 0; i < 5; ++i) { h.advance(20); h.step(); }
+    // Transition is a one-step passthrough -> Charge (not Run).
     h.advance(20);
+    h.veh.last_charge_req_tick = h.now;
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4b: charger connected, single press enters Precharge, then 0x101
+// goes STALE (charger unplugged) before the proceed -> precharge holds, then
+// the PrechargeMaxMs timeout latches Error. Closing AIR+ into a disconnected
+// charger is exactly what the freshness gate prevents (#305).
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_charger_stale_request_times_out(void) {
+    Harness h;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;   // SafetyTask locked this earlier
+    // 0x101 already stale at the press (charger disconnected right after the
+    // mode lock). advance() never re-stamps last_charge_req_tick, so it stays
+    // stale -> the charger proceed gate never fires.
+    h.veh.last_charge_req_tick = h.now - ams::config::ChargeReqFreshMs - 1;
+
+    h.dash_chg_edge = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+
+    // Hold (0x101 stale) until > PrechargeMaxMs -> Error.
+    const std::uint32_t deadline = h.now + ams::config::PrechargeMaxMs;
+    ams::fsm::State last = ams::fsm::State::Precharge;
+    while (h.now <= deadline + 40) {
+        h.advance(20);
+        last = h.step().next;
+        if (last == ams::fsm::State::Error) break;
+    }
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, last);
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +217,7 @@ extern "C" void test_sil_charger_path(void) {
 extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
-    h.tsms = true; h.dash_chg = true;
+    h.tsms = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);

@@ -36,7 +36,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
     veh.last_dc_bus_tick = 9950;
     veh.dc_bus_V         = 350;
     return { current, bms, cur, veh,
-             /*tsms*/false, /*dash_chg*/false,
+             /*tsms*/false, /*dash_chg_edge*/false,
              /*mode_locked*/ams::fsm::Mode::Undecided,
              /*predicate_fault*/false,
              /*now*/10000, /*entry*/9800 };
@@ -64,7 +64,7 @@ extern "C" void test_fsm_start_waits_with_tsms_only(void) {
 extern "C" void test_fsm_start_waits_with_dash_chg_only(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
-    in.dash_chg = true;
+    in.dash_chg_edge = true;
     TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
 }
 
@@ -72,7 +72,7 @@ extern "C" void test_fsm_start_to_precharge_on_both_inputs(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
     in.tsms    = true;
-    in.dash_chg = true;
+    in.dash_chg_edge = true;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
@@ -85,7 +85,7 @@ extern "C" void test_fsm_start_to_precharge_on_both_inputs(void) {
 extern "C" void test_fsm_precharge_reaches_target(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     veh.dc_bus_V = 340;  // > 0.95 * 356
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
@@ -96,7 +96,7 @@ extern "C" void test_fsm_precharge_reaches_target(void) {
 extern "C" void test_fsm_precharge_stays_below_target(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     veh.dc_bus_V = 100;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
@@ -110,7 +110,7 @@ extern "C" void test_fsm_precharge_stays_below_target(void) {
 extern "C" void test_fsm_transition_commits_to_run_in_car_mode(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     in.mode_locked = ams::fsm::Mode::Car;
     // Bus still at target (precharge_target_reached==true with default
     // make_inputs values -- veh.dc_bus_V >= 95% of bms.pack_voltage_mV).
@@ -120,7 +120,7 @@ extern "C" void test_fsm_transition_commits_to_run_in_car_mode(void) {
 extern "C" void test_fsm_transition_commits_to_charge_in_charger_mode(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     in.mode_locked = ams::fsm::Mode::Charger;
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
 }
@@ -131,7 +131,7 @@ extern "C" void test_fsm_transition_undecided_mode_forces_error(void) {
     // The FSM treats this as a fault.
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     in.mode_locked = ams::fsm::Mode::Undecided;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
@@ -141,7 +141,7 @@ extern "C" void test_fsm_transition_undecided_mode_forces_error(void) {
 extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     veh.dc_bus_V = 100;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
@@ -155,7 +155,7 @@ extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
 extern "C" void test_fsm_run_stays_while_tsms_and_dash_chg_high(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     in.mode_locked = ams::fsm::Mode::Car;
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
 }
@@ -163,7 +163,7 @@ extern "C" void test_fsm_run_stays_while_tsms_and_dash_chg_high(void) {
 extern "C" void test_fsm_run_to_error_on_tsms_drop(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
-    in.tsms = false; in.dash_chg = true;
+    in.tsms = false; in.dash_chg_edge = true;
     in.mode_locked = ams::fsm::Mode::Car;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
@@ -172,22 +172,58 @@ extern "C" void test_fsm_run_to_error_on_tsms_drop(void) {
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
 }
 
-extern "C" void test_fsm_run_to_error_on_dash_chg_drop(void) {
+extern "C" void test_fsm_run_stays_on_dash_chg_release(void) {
+    // DASH_CHG is a momentary press -- low in Run is normal and must NOT
+    // fault. Run is sustained by TSMS alone (#305).
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
-    in.tsms = true; in.dash_chg = false;
+    in.tsms = true; in.dash_chg_edge = false;  // TSMS held, no press
     in.mode_locked = ams::fsm::Mode::Car;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
+}
+
+extern "C" void test_fsm_charge_to_error_on_tsms_drop(void) {
+    // Charge ends on a TSMS drop only (DASH_CHG momentary, not checked).
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Charge, bms, cur, veh);
+    in.tsms = false;
+    in.mode_locked = ams::fsm::Mode::Charger;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
 }
 
-extern "C" void test_fsm_charge_to_error_on_tsms_or_dash_chg_drop(void) {
+extern "C" void test_fsm_charge_stays_on_dash_chg_release(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Charge, bms, cur, veh);
-    in.tsms = false; in.dash_chg = false;
+    in.tsms = true; in.dash_chg_edge = false;
     in.mode_locked = ams::fsm::Mode::Charger;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
+}
+
+// Charger precharge proceeds on a STILL-FRESH 0x101 charge request (#305) --
+// the charger auto-emits it while connected -- not on dc_bus_V and not on a
+// second DASH_CHG press. Without a fresh 0x101 it holds (-> PrechargeMaxMs).
+extern "C" void test_fsm_precharge_charger_proceeds_on_fresh_request(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 0;                        // no VCU during charge
+    veh.last_charge_req_tick = in.now_tick;  // charger's auto 0x101, fresh
     auto out = ams::fsm::step(in);
-    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
+}
+
+extern "C" void test_fsm_precharge_charger_holds_without_fresh_request(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 0;
+    // 0x101 stale (charger disconnected): older than ChargeReqFreshMs.
+    veh.last_charge_req_tick =
+        in.now_tick - ams::config::ChargeReqFreshMs - 1;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
 
 // ---------------------------------------------------------------------------
@@ -196,7 +232,7 @@ extern "C" void test_fsm_charge_to_error_on_tsms_or_dash_chg_drop(void) {
 extern "C" void test_fsm_any_state_to_error_on_fault(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     in.predicate_fault = true;   // SafetyTask's debounced decision (#279)
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
@@ -208,7 +244,7 @@ extern "C" void test_fsm_any_state_to_error_on_fault(void) {
 extern "C" void test_fsm_error_is_sticky(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Error, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;  // even with both inputs high
+    in.tsms = true; in.dash_chg_edge = true;  // even with both inputs high
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, ams::fsm::step(in).next);
 }
 
@@ -220,7 +256,7 @@ extern "C" void test_fsm_error_is_sticky(void) {
 extern "C" void test_fsm_precharge_times_out_to_error(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     veh.dc_bus_V = 0;   // bus never confirmed (no VCU 0x100) -> never completes
     in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs + 1;
     auto out = ams::fsm::step(in);
@@ -233,7 +269,7 @@ extern "C" void test_fsm_precharge_times_out_to_error(void) {
 extern "C" void test_fsm_precharge_holds_within_deadline(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
-    in.tsms = true; in.dash_chg = true;
+    in.tsms = true; in.dash_chg_edge = true;
     veh.dc_bus_V = 0;   // not reached yet, but still within the deadline
     in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs - 1;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);

@@ -139,6 +139,15 @@ void SafetyTask::run() noexcept {
     std::uint32_t last_telemetry_tick = last_wake;
     std::uint8_t  heartbeat           = 0;
 
+    // DASH_CHG (PF10) is a MOMENTARY press button -- edge-detect it
+    // (#305). Track the previous level at the 10 ms cadence and latch a
+    // rising edge until the 20 ms FSM step consumes it, so a press that
+    // lands between FSM steps is never lost. Seed prev from the live
+    // level so a button held at boot doesn't fire a spurious edge.
+    bool prev_dash_chg =
+        (HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET);
+    bool dash_chg_edge_pending = false;
+
     for (;;) {
         // ---------------- Wake at fixed 10 ms cadence ----------------
         last_wake += config::SafetyPeriodMs;
@@ -158,6 +167,12 @@ void SafetyTask::run() noexcept {
         // the latest reading.
         const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
+
+        // DASH_CHG rising-edge detect + latch (#305). dash_chg stays the
+        // live level for telemetry (0x4A2[5] / 0x6C0[2]); the FSM consumes
+        // the latched one-shot edge below and clears it after stepping.
+        if (dash_chg && !prev_dash_chg) dash_chg_edge_pending = true;
+        prev_dash_chg = dash_chg;
 
         // ---------------- Safety predicate (every 10 ms) ----------------
         constexpr bool force_error_set = false;  // no live setter
@@ -227,7 +242,7 @@ void SafetyTask::run() noexcept {
                 // freshness via the snapshot already taken this tick.
                 if (state == fsm::State::Start &&
                     mode_locked == fsm::Mode::Undecided &&
-                    tsms && dash_chg) {
+                    tsms && dash_chg_edge_pending) {
                     const bool vcu_fresh =
                         veh_snap.last_dc_bus_tick != 0u &&
                         (now - veh_snap.last_dc_bus_tick) <=
@@ -249,7 +264,7 @@ void SafetyTask::run() noexcept {
 
                 const fsm::Inputs fsm_in = {
                     state, bms_snap, cur_snap, veh_snap,
-                    tsms, dash_chg, mode_locked,
+                    tsms, dash_chg_edge_pending, mode_locked,
                     // Pass the already-debounced fault decision (#279);
                     // the FSM no longer re-evaluates the predicate. This
                     // is false here (step() only runs on a no-fault
@@ -258,6 +273,11 @@ void SafetyTask::run() noexcept {
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);
+
+                // The DASH_CHG edge is one-shot: consume it now that the
+                // FSM (and the mode lock above) have seen it, so a single
+                // press drives at most one transition (#305).
+                dash_chg_edge_pending = false;
 
                 apply_relay_actions(out.safety_flags);
 
