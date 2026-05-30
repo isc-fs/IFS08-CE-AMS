@@ -121,8 +121,11 @@ void test_fsm_precharge_times_out_to_error(void);
 void test_fsm_precharge_holds_within_deadline(void);
 void test_fsm_run_stays_while_tsms_and_dash_chg_high(void);
 void test_fsm_run_to_error_on_tsms_drop(void);
-void test_fsm_run_to_error_on_dash_chg_drop(void);
-void test_fsm_charge_to_error_on_tsms_or_dash_chg_drop(void);
+void test_fsm_run_stays_on_dash_chg_release(void);
+void test_fsm_charge_to_error_on_tsms_drop(void);
+void test_fsm_charge_stays_on_dash_chg_release(void);
+void test_fsm_precharge_charger_proceeds_on_dash_chg_press(void);
+void test_fsm_precharge_charger_holds_without_press(void);
 void test_fsm_any_state_to_error_on_fault(void);
 void test_fsm_error_is_sticky(void);
 
@@ -319,8 +322,11 @@ int main(void) {
     RUN_TEST(test_fsm_precharge_holds_within_deadline);
     RUN_TEST(test_fsm_run_stays_while_tsms_and_dash_chg_high);
     RUN_TEST(test_fsm_run_to_error_on_tsms_drop);
-    RUN_TEST(test_fsm_run_to_error_on_dash_chg_drop);
-    RUN_TEST(test_fsm_charge_to_error_on_tsms_or_dash_chg_drop);
+    RUN_TEST(test_fsm_run_stays_on_dash_chg_release);
+    RUN_TEST(test_fsm_charge_to_error_on_tsms_drop);
+    RUN_TEST(test_fsm_charge_stays_on_dash_chg_release);
+    RUN_TEST(test_fsm_precharge_charger_proceeds_on_dash_chg_press);
+    RUN_TEST(test_fsm_precharge_charger_holds_without_press);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
     RUN_TEST(test_fsm_error_is_sticky);
 

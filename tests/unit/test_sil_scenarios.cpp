@@ -25,7 +25,9 @@ struct Harness {
     ams::CurrentState cur{};
     ams::VehicleState veh{};
     bool              tsms             = false;
-    bool              dash_chg          = false;
+    // DASH_CHG is a momentary press (#305): set dash_chg_edge=true for the
+    // step where the operator presses; step() consumes it (one-shot).
+    bool              dash_chg_edge    = false;
     ams::fsm::Mode    mode_locked      = ams::fsm::Mode::Undecided;
     // Start past SafetyBootGraceMs (2000) so the safety predicates
     // are active. Scenarios that need the grace itself live in
@@ -71,11 +73,12 @@ struct Harness {
         const bool predicate_fault = ams::safety::evaluate_fault(pred);
         const ams::fsm::Inputs in = {
             state, bms, cur, veh,
-            tsms, dash_chg, mode_locked,
+            tsms, dash_chg_edge, mode_locked,
             predicate_fault,
             now, state_entry_tick,
         };
         const auto out = ams::fsm::step(in);
+        dash_chg_edge = false;   // one-shot press, consumed by the step
         if (out.next != state) {
             state            = out.next;
             state_entry_tick = now;
@@ -100,7 +103,7 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
     // Assert TSMS + DASH_CHG and lock car mode (VCU heartbeat fresh per
     // Harness ctor).
     h.tsms        = true;
-    h.dash_chg     = true;
+    h.dash_chg_edge = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
@@ -135,7 +138,7 @@ extern "C" void test_sil_nominal_startup_to_run(void) {
 extern "C" void test_sil_bms_dropout_in_run(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
-    h.tsms = true; h.dash_chg = true;
+    h.tsms = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
 
@@ -147,28 +150,33 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4: charger path -- same TSMS+DASH_CHG gate as car, but mode_locked
-// captured as Charger (no VCU heartbeat) routes Transition -> Charge.
+// Scenario 4: charger path -- TWO DASH_CHG presses (#305). Press 1 enters
+// Precharge; the AMS holds (no VCU dc_bus_V during a charge); press 2 is
+// the operator's "charger is up, proceed" -> Transition -> Charge.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_charger_path(void) {
     Harness h;
-    h.tsms = true; h.dash_chg = true;
-    h.mode_locked = ams::fsm::Mode::Charger;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;   // SafetyTask would lock this
 
-    // Start -> Precharge
+    // Press 1: Start -> Precharge.
+    h.dash_chg_edge = true;
     auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
-    // Precharge -> Transition once bus catches up
+    // No press, no dc_bus_V -> holds in Precharge.
     h.advance(20);
-    h.veh.dc_bus_V = 350;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+
+    // Press 2: operator proceeds -> Transition (no dc_bus_V needed).
+    h.advance(20);
+    h.dash_chg_edge = true;
     out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
 
-    // Hold elapses -> Charge (not Run)
-    for (int i = 0; i < 5; ++i) { h.advance(20); h.step(); }
+    // Transition is a one-step passthrough -> Charge (not Run).
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
 }
@@ -179,7 +187,7 @@ extern "C" void test_sil_charger_path(void) {
 extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
-    h.tsms = true; h.dash_chg = true;
+    h.tsms = true;
     h.mode_locked = ams::fsm::Mode::Car;
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);

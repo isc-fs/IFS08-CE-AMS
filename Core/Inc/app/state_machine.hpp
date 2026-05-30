@@ -42,8 +42,13 @@ struct Inputs {
     const BmsState&     bms;
     const CurrentState& current_sensor;
     const VehicleState& vehicle;
-    bool                tsms;             // PF9 readback (active-high)
-    bool                dash_chg;          // PF10 readback (active-high)
+    bool                tsms;             // PF9 readback, LEVEL (held master switch)
+    // PF10 is a MOMENTARY press button -- SafetyTask edge-detects it and
+    // passes a one-shot RISING-EDGE flag here, latched until the FSM
+    // consumes it. A press drives Start->Precharge (with TSMS) and, in
+    // Charger mode, the Precharge->Transition proceed. Run/Charge do NOT
+    // look at it -- they are sustained by TSMS alone.
+    bool                dash_chg_edge;
     Mode                mode_locked;      // set by SafetyTask at Start->Precharge
     // The safety supervisor's ALREADY-DEBOUNCED fault decision (#279).
     // SafetyTask is the single fault authority: it runs the predicate
@@ -102,14 +107,14 @@ struct Output {
 
     switch (in.current) {
     case State::Start: {
-        // Wait for both inputs: TSMS (side-of-car external switch) = 1
-        // AND DASH_CHG (cockpit dashboard / charger button) = 1,
-        // level-polled at the 20 ms FSM cadence. Same gate for both
-        // car and charger -- SafetyTask decides which one it is by
-        // looking at the VCU 0x100 freshness at this exact moment and
-        // captures the result into in.mode_locked, which we'll consume
-        // on the way out of Transition.
-        if (in.tsms && in.dash_chg) {
+        // Leave Start on a DASH_CHG press (rising edge) while TSMS (the
+        // held master switch) is on. Same gate for both car and charger;
+        // SafetyTask decides which by looking at the VCU 0x100 freshness
+        // + the operator charge request (0x101) at this exact moment and
+        // captures it into in.mode_locked, consumed on the way out of
+        // Transition. The press is edge-detected so the operator must
+        // deliberately press -- not merely hold a level -- to energise.
+        if (in.tsms && in.dash_chg_edge) {
             return { State::Precharge,
                      events::safety::CloseAirN |
                      events::safety::ClosePrecharge };
@@ -135,7 +140,21 @@ struct Output {
                      events::safety::OpenAirN | events::safety::OpenAirP |
                      events::safety::OpenPrecharge };
         }
-        if (precharge_target_reached(in.bms, in.vehicle)) {
+        // Precharge-complete criterion is mode-specific (#305):
+        //  - Car: confirm the inverter DC-link reached the target via
+        //    dc_bus_V (VCU-measured) before closing AIR+.
+        //  - Charger: the inverter isn't in the charge loop, the charger
+        //    has no comms with the AMS, and dc_bus_V is VCU-only (absent
+        //    during a charge). The operator proceeds with a SECOND
+        //    DASH_CHG press -- a deliberate "the charger is up, close
+        //    AIR+" confirmation. The charger soft-starts its own output.
+        //    If the operator never presses, precharge holds then hits the
+        //    PrechargeMaxMs timeout above.
+        const bool precharge_done =
+            (in.mode_locked == Mode::Charger)
+                ? in.dash_chg_edge
+                : precharge_target_reached(in.bms, in.vehicle);
+        if (precharge_done) {
             return { State::Transition,
                      events::safety::CloseAirP |
                      events::safety::OpenPrecharge };
@@ -150,8 +169,11 @@ struct Output {
         // Run/Charge on this step. The bus-still-up guard remains so a
         // failed contactor swap (bus slumps the moment the precharge
         // contactor opens) lands in Error rather than energising the
-        // tractive system on a degraded bus.
-        if (!precharge_target_reached(in.bms, in.vehicle)) {
+        // tractive system on a degraded bus. Car-only: it relies on the
+        // VCU-measured dc_bus_V, absent during a charge (#305), so
+        // Charger commits to Charge directly.
+        if (in.mode_locked == Mode::Car &&
+            !precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |
@@ -173,12 +195,13 @@ struct Output {
     }
 
     case State::Run: {
-        // Any drop of TSMS or DASH_CHG while in Run latches Error and
-        // opens all relays. Operator wanted conservative semantics:
-        // every AIR-open event is a sticky fault requiring power
-        // cycle (matches existing ErrorLatch backup-register design;
-        // see error_latch.cpp).
-        if (!in.tsms || !in.dash_chg) {
+        // Sustained while TSMS (the held master switch) is on; its drop
+        // latches Error and opens all relays (sticky, power-cycle to
+        // clear -- matches the ErrorLatch backup-register design). DASH_CHG
+        // is NOT checked here: it is a momentary press, so it is low most
+        // of the time -- checking its level would fault Run instantly
+        // (#305 / the edge-detect rework). TSMS is the run interlock.
+        if (!in.tsms) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |
@@ -188,8 +211,10 @@ struct Output {
     }
 
     case State::Charge: {
-        // Same exit semantics as Run -- TSMS/RST drop latches Error.
-        if (!in.tsms || !in.dash_chg) {
+        // Same exit semantics as Run -- sustained while TSMS is held; its
+        // drop latches Error. DASH_CHG is a momentary press, not checked
+        // here (#305).
+        if (!in.tsms) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |

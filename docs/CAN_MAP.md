@@ -500,6 +500,13 @@ locks **Car** mode and faults on VcuStale rather than silently charging.
 The magic gate prevents bus noise / a stray frame from flipping the AMS
 into a HV charge mode. Handled in `vehicle_service.cpp`.
 
+Full charge bring-up: with `0x101` fresh and the VCU absent, the operator
+presses **DASH_CHG** (PF10, a momentary edge-detected button) to leave
+Start→Precharge, then presses it **again** as the deliberate "charger is
+up, close AIR+" confirmation (Charger has no `dc_bus_V` to voltage-gate
+on, so the proceed is the second press; the charger soft-starts its own
+output). See `state_machine.hpp` / `safety_task.cpp`.
+
 ### `0x600` — start button **[RETIRED — fix/48]**
 
 Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The
