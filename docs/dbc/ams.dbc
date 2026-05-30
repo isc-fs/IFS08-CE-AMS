@@ -975,7 +975,7 @@ CM_ SG_ 1733 watermark_low_byte "Saturates at 0xFF";
 CM_ SG_ 1733 task_addr_lo "Low 32 bits of failing task's xTaskHandle";
 CM_ SG_ 1733 malloc_failed_count "Saturates at 0xFFFF";
 CM_ BO_ 1734 "Firmware identification (post-#252). Populated from VERSION file + git rev-parse at configure time.";
-CM_ SG_ 1734 bl_node_id "From firmware_info.reserved[0]; pit-tool checks against the BL";
+CM_ SG_ 1734 bl_node_id "From firmware_info.reserved[0]; MingoCAN checks against the BL";
 CM_ BO_ 1735 "Per-IC PEC error count for chain indices 0..7 (#258). Saturating uint8 per IC. Chain index 2m = upper LTC of module m (cells 0..9); 2m+1 = lower (cells 10..18). 0xFF means '>= 255 failures' -- for diagnostic localisation the chip-identity matters, not the precise count past saturation.";
 CM_ SG_ 1735 pec_err_ic_0_count "IC 0 = module 0 upper LTC6811. Saturates at 0xFF.";
 CM_ SG_ 1735 pec_err_ic_1_count "IC 1 = module 0 lower LTC6811. Saturates at 0xFF.";

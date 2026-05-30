@@ -1,6 +1,6 @@
 # AMS DBC files
 
-CAN database describing every frame the AMS firmware emits or consumes on FDCAN1. Loaded by the pit-debug tool ([`isc-fs/can-flasher`](https://github.com/isc-fs/can-flasher)) to decode the live stream — both the flight telemetry and the runtime-toggleable pit-diag firehose.
+CAN database describing every frame the AMS firmware emits or consumes on FDCAN1. Loaded by MingoCAN ([`isc-fs/can-flasher`](https://github.com/isc-fs/can-flasher)) to decode the live stream — both the flight telemetry and the runtime-toggleable pit-diag firehose.
 
 ## Files
 
@@ -58,7 +58,7 @@ If you bump the cell or NTC count, edit the constants at the top of `tools/gen_d
 
 The DBC file's identity (frame layouts, signal names, scaling factors) is part of the AMS wire contract. Any change here is a coordination point with:
 
-- The pit-debug tool (`isc-fs/can-flasher#252`)
+- MingoCAN (`isc-fs/can-flasher#252`)
 - The VCU team (consumes `0x4A0..0x4A2` + the ECU TX matrix)
 - Bench tools / loggers that depend on signal names
 

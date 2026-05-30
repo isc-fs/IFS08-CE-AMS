@@ -135,7 +135,7 @@ using Frame = std::array<std::uint8_t, 8>;
 }
 
 // ---------------------------------------------------------------------------
-// Poll-timing frame (0x6C1). The pit tool can graph these to spot SPI
+// Poll-timing frame (0x6C1). MingoCAN can graph these to spot SPI
 // jitter / mux degradation purely from the CAN stream.
 //
 //   bytes 0..1  bms_volt_poll_ms       BE u16 (last cycle ms; clip at 0xFFFF)
@@ -203,7 +203,7 @@ using Frame = std::array<std::uint8_t, 8>;
 //          [byte 4..5] = balance_cycles_total LE u16 (mod 65536)
 //          [byte 6..7] = balance_cycles_active LE u16 (mod 65536)
 //
-// The pit tool reconstructs by walking 95 bits and mapping bit b ->
+// MingoCAN reconstructs by walking 95 bits and mapping bit b ->
 // (module = b / 19, cell = b % 19).
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_balance_mask_a(const volatile std::uint32_t (&dcc_bits)[config::BmsModuleCount]) noexcept {
@@ -241,7 +241,7 @@ using Frame = std::array<std::uint8_t, 8>;
 }
 
 // ---------------------------------------------------------------------------
-// Boot diag -- "why did we boot, how did init go". Lets the pit tool
+// Boot diag -- "why did we boot, how did init go". Lets MingoCAN
 // distinguish a clean cold boot from a watchdog reset or a CAN-trigger
 // BL jump from CAN alone.
 //
@@ -305,7 +305,7 @@ using Frame = std::array<std::uint8_t, 8>;
 }
 
 // ---------------------------------------------------------------------------
-// Firmware identification frame. Lets the pit tool answer "what's
+// Firmware identification frame. Lets MingoCAN answer "what's
 // flashed?" purely over CAN (no separate readout path needed).
 //
 //   byte 0      fw_version_major

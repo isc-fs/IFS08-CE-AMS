@@ -317,7 +317,7 @@ inline constexpr std::uint32_t BlBootReqMagic  = 0xB00710ADu;
 // On FDCAN1 (accumulator bus) since v1.2.0 (#73) -- BmsRxTask was
 // retired with the FDCAN2 BMS path, and AcuCanTask is the only RX
 // consumer now. The bootloader itself still drives FDCAN2 after
-// reset, but the in-band trigger lives on the same bus the pit-tool
+// reset, but the in-band trigger lives on the same bus MingoCAN
 // already uses for VCU telemetry.
 //
 // 4-byte payload magic exists so a stray same-ID frame can't
@@ -339,14 +339,14 @@ inline constexpr std::uint32_t BkpJumpReasonReg = 2;
 
 enum class JumpReason : std::uint32_t {
     None           = 0x00000000u,
-    CanTrigger     = 0x4A554D50u,  // 'JUMP' -- pit-tool sent the boot frame
+    CanTrigger     = 0x4A554D50u,  // 'JUMP' -- MingoCAN sent the boot frame
     FaultLatch     = 0x46415554u,  // 'FAUT' -- safety supervisor forced it
     ManualRequest  = 0x4D414E55u,  // 'MANU' -- operator-issued, no fault
 };
 
 // AMS node ID on the stm32-can-bootloader multi-node bus. Must match
 // the value the BL was compiled with (-DBL_NODE_ID=<n>). Embedded in
-// the firmware_info `reserved[0]` slot so the pit-tool can verify at
+// the firmware_info `reserved[0]` slot so MingoCAN can verify at
 // flash time that the app it's writing matches the BL it's talking
 // to. Changing this requires re-building both halves.
 //

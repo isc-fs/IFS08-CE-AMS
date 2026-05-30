@@ -32,7 +32,7 @@ Top-to-bottom walk of the AMS codebase as it actually exists on `dev`. This is o
 flowchart LR
     VCU([VCU]) -- "FDCAN1 0x100 std (DC bus)" --> AMS
     OP([Operator charger<br/>0x101 CHRG]) -- "FDCAN1 0x101 magic-gated" --> AMS
-    BENCH([Pit-tool]) -- "0x002 boot trigger<br/>0x7F0 pit-diag cmd" --> AMS
+    BENCH([MingoCAN]) -- "0x002 boot trigger<br/>0x7F0 pit-diag cmd" --> AMS
     TSMS([TSMS switch<br/>side of car]) -- "PF9 GPIO + pulldown (held)" --> AMS
     DASH([DASH_CHG<br/>cockpit button]) -- "PF10 GPIO + pulldown (momentary)" --> AMS
 
@@ -346,7 +346,7 @@ return {};
 | `watchdog.cpp` | `HAL_IWDG_Refresh(&hiwdg1)` | Reload 100 / prescaler 32 → ~100 ms at LSI 32 kHz. Refreshed on every clean iteration *and* the latched-fault path. |
 | `error_latch.cpp` | RTC_BKP_DR1 magic `0xA115EE51` | Sticky across resets. Cleared only by VBAT loss in flight, or by `App_InitTask::clear()` under `AMS_BMS_HIL_STUB` OR `AMS_HIL_CLEAR_ERROR_LATCH`. |
 | `bootloader.cpp` | `matches_trigger()`, `request_reboot(reason)` | Trigger: 0x002 std, DLC 4, `{0xB0,0x07,0xAD,0x11}`. Reboot writes magic to BKP0R + reason ASCII to BKP2R + `NVIC_SystemReset`. |
-| `firmware_info.cpp` | `firmware_info` struct at fixed offset | Populated from CMake — semver (`VERSION`) + git hash + `AmsNodeId = 0x01` baked at build time; the pit-tool reads it. |
+| `firmware_info.cpp` | `firmware_info` struct at fixed offset | Populated from CMake — semver (`VERSION`) + git hash + `AmsNodeId = 0x01` baked at build time; MingoCAN reads it. |
 | `can_isr.cpp` | `HAL_FDCAN_RxFifo0Callback` | Reads `rxh.DataLength & 0xF` directly; std-only filter keeps the ISR off extended junk. |
 
 ### AMS_OK / SDC enable (#301)
@@ -511,7 +511,7 @@ bit 0    DASH_CHG readback (PF10, live level)
 
 ## 11. Pit-diag CAN stream
 
-A gateable diagnostic stream surfacing the entire pack state on FDCAN1 — used by the pit-debug tool to show real-time cell-V / cell-T / FSM / balance / boot context. Disabled by default; the pit-tool enables it with a magic payload.
+A gateable diagnostic stream surfacing the entire pack state on FDCAN1 — used by MingoCAN to show real-time cell-V / cell-T / FSM / balance / boot context. Disabled by default; MingoCAN enables it with a magic payload.
 
 ### Control protocol
 
@@ -536,7 +536,7 @@ A gateable diagnostic stream surfacing the entire pack state on FDCAN1 — used 
 | `0x6C7` | 1 | **Per-IC PEC (A):** ICs 0..7, saturating u8 |
 | `0x6C8` | 1 | **Per-IC PEC (B):** ICs 8..9, bytes 2..7 reserved |
 
-> **Burst pacing.** `AcuCanTask` yields between batches so the 16-deep FDCAN1 TX FIFO can drain; without it a 50+ frame burst would overflow and drop trailing diag frames. The pit-tool shows all 95 cell voltages, 200 NTC temps, boot context, per-IC PEC, and the balance DCC mask live on a stock CAN interface.
+> **Burst pacing.** `AcuCanTask` yields between batches so the 16-deep FDCAN1 TX FIFO can drain; without it a 50+ frame burst would overflow and drop trailing diag frames. MingoCAN shows all 95 cell voltages, 200 NTC temps, boot context, per-IC PEC, and the balance DCC mask live on a stock CAN interface.
 
 ---
 
