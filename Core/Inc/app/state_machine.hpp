@@ -118,12 +118,23 @@ struct Output {
     }
 
     case State::Precharge: {
-        // No deadline -- sit in Precharge until V_dc_bus reaches
-        // V_precharge_target. The supervisor's other failsafes still
-        // apply: a stuck contactor or low pack-V eventually trips
-        // through a freshness predicate (BmsStaleMs / VcuStaleMs /
-        // IStaleMs) or a range predicate (cell U/V, T) and the FSM
-        // hops to Error via the safety::evaluate_fault path above.
+        // Bounded precharge (#302 follow-up). If the bus doesn't reach
+        // the target within PrechargeMaxMs, latch Error and open every
+        // contactor. This caps how long the precharge contactor +
+        // resistor are held closed -- protecting the resistor (transient
+        // duty only) for ANY stuck-precharge cause. The case that drove
+        // this: a car with a dead VCU locks Charger mode (VCU-absence is
+        // ambiguous) and, since dc_bus_V comes only from the VCU's 0x100,
+        // precharge_target_reached can never become true, so it would
+        // otherwise sit here forever. now_tick >= state_entry_tick always
+        // (both owned by SafetyTask, which sets entry = now on the edge),
+        // so the subtraction can't underflow.
+        if (in.now_tick - in.state_entry_tick > config::PrechargeMaxMs) {
+            return { State::Error,
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
+        }
         if (precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Transition,
                      events::safety::CloseAirP |

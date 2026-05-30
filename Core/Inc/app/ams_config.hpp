@@ -36,11 +36,19 @@ inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // bring-up shouldn't be misclassified as charger. Mode is locked at
 // the moment of transition and never re-evaluated.
 inline constexpr std::uint32_t VcuFreshMs     = 1000;
-// Note: PrechargeMaxMs / TransitionHoldMs intentionally removed.
-// FSM is now timeout-free except for the safety predicate's freshness
-// checks (BmsStaleMs / VcuStaleMs / IStaleMs). Precharge holds until
-// V_dc_bus reaches V_precharge_target (or a predicate trips); Transition
-// commits to Run/Charge on the first FSM step after the contactor swap.
+
+// Precharge deadline (#302 follow-up). If the bus doesn't reach the
+// precharge target within this window the FSM latches Error and opens
+// every contactor, bounding how long the precharge contactor + resistor
+// can be held closed. This protects the precharge resistor (rated for
+// transient duty, not steady-state) for ANY stuck-precharge cause:
+// a stuck contactor, no charger, a bus fault, or -- the case that
+// reopened this -- a car with a dead VCU that locks Charger mode and
+// would otherwise sit in Precharge forever, since `dc_bus_V` (the
+// precharge-complete input) comes only from the VCU's 0x100. A normal
+// precharge completes well under 1 s; this is the failsafe ceiling.
+// TransitionHoldMs stays removed (Transition is a one-step passthrough).
+inline constexpr std::uint32_t PrechargeMaxMs = 5000;  // COMMISSION (resistor thermal limit)
 
 inline constexpr std::uint8_t  AllModulesMask = 0x1F;  // 5 modules present
 
