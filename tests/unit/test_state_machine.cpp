@@ -38,7 +38,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
     return { current, bms, cur, veh,
              /*tsms*/false, /*dash_chg*/false,
              /*mode_locked*/ams::fsm::Mode::Undecided,
-             /*force*/false,
+             /*predicate_fault*/false,
              /*now*/10000, /*entry*/9800 };
 }
 
@@ -197,7 +197,7 @@ extern "C" void test_fsm_any_state_to_error_on_fault(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
     in.tsms = true; in.dash_chg = true;
-    in.force_error_set = true;
+    in.predicate_fault = true;   // SafetyTask's debounced decision (#279)
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);

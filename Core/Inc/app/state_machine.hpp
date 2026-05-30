@@ -12,7 +12,6 @@
 #include "ams_events.hpp"
 #include "bms_service.hpp"
 #include "current_service.hpp"
-#include "safety_predicates.hpp"
 #include "vehicle_service.hpp"
 
 #include <cstdint>
@@ -46,7 +45,15 @@ struct Inputs {
     bool                tsms;             // PF9 readback (active-high)
     bool                dash_chg;          // PF10 readback (active-high)
     Mode                mode_locked;      // set by SafetyTask at Start->Precharge
-    bool                force_error_set;
+    // The safety supervisor's ALREADY-DEBOUNCED fault decision (#279).
+    // SafetyTask is the single fault authority: it runs the predicate
+    // set, debounces the cell V/T range checks, and passes the result
+    // here. The FSM must NOT re-evaluate the predicate itself -- doing
+    // so bypassed the debounce and let a transient cell < 2800 mV latch
+    // FsmError at the boot-grace edge. SafetyTask only calls step() on a
+    // no-fault tick, so this is false in normal operation; the
+    // any-state-to-Error branch below is a kept backstop.
+    bool                predicate_fault;
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;
 };
@@ -82,11 +89,11 @@ struct Output {
     }
 
     // Any fault from the predicate set forces ERROR + opens AIRs.
-    const safety::Inputs pred = {
-        in.bms, in.current_sensor, in.vehicle,
-        in.force_error_set, in.now_tick,
-    };
-    if (safety::evaluate_fault(pred)) {
+    // Sourced from SafetyTask's already-debounced decision (#279) --
+    // the FSM does not re-run the predicate (that bypassed the cell
+    // V/T debounce). Backstop: in normal operation SafetyTask handles
+    // the fault before ever calling step(), so this is false here.
+    if (in.predicate_fault) {
         return { State::Error,
                  events::safety::ForceError |
                  events::safety::OpenAirN | events::safety::OpenAirP |
