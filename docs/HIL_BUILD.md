@@ -99,6 +99,7 @@ frames (`0x6C0..0x6C8`). See [`CAN_MAP.md`](CAN_MAP.md).
   used to provide.
 - [`docs/BMS_LTC6811.md`](BMS_LTC6811.md) §7 — chain-length discovery on
   boot (runs on every build).
-- [`docs/HIL_TESTS.md`](HIL_TESTS.md) — bench tests.
+- HIL acceptance plan — [issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)
+  (the living bench-test matrix, blocks A–G, that gates a `dev → main` release).
 - IFS08_HIL [`feat/pico-ltc-emulator`](https://github.com/isc-fs/IFS08_HIL/tree/feat/pico-ltc-emulator) —
   the Pi Pico LTC6820/LTC6811 emulator that replaced the data stub.

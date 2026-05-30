@@ -9,14 +9,18 @@ conventions that go beyond "open a feat branch and PR to dev".
 
 | Question | File |
 |---|---|
+| I'm brand new — where do I start? | [`docs/ONBOARDING.md`](docs/ONBOARDING.md) |
+| What does this term mean? | [`docs/GLOSSARY.md`](docs/GLOSSARY.md) |
 | What is the architecture? | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
+| How does the safety FSM work? | [`docs/FSM_OVERVIEW.md`](docs/FSM_OVERVIEW.md) |
+| Full codebase walkthrough | [`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md) |
 | What CAN frames does the AMS speak? | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) |
 | How does the LTC6811 / isoSPI BMS path work? | [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) |
 | What is `AMS_HIL_CLEAR_ERROR_LATCH`? When do I use it? | [`docs/HIL_BUILD.md`](docs/HIL_BUILD.md) |
 | What is the current phase plan? | [`ROADMAP.md`](ROADMAP.md) (auto-generated) |
 | Source of truth for the roadmap | [`.github/roadmap.yaml`](.github/roadmap.yaml) |
 | Day-to-day Git flow | [`README.md`](README.md) |
-| Bench acceptance criteria for a release | [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) |
+| Bench acceptance criteria for a release | HIL plan — [issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317) |
 
 ---
 
@@ -57,7 +61,7 @@ Required for merge:
 
 1. **`Closes #N` line in the body**, referencing the tracking issue. The
    `close-on-dev-merge.yml` workflow needs it to auto-close on merge.
-2. **CI green** — build, unit tests, SIL tests (once they exist).
+2. **CI green** — firmware cross-compile, 182 host unit + SIL tests, and the "DBC matches generator" check.
 3. **One approving review** from another team member.
 4. **`safety-critical` label** if the PR touches `MainTask`
    (the consolidated safety + FSM + telemetry task in
@@ -84,8 +88,9 @@ Required for merge:
 
 1. Add the `constexpr` ID, DLC, and any related thresholds to
    `Core/Inc/app/ams_config.hpp`.
-2. Add encode/decode free functions in `Core/Src/app/can_frames.cpp`
-   (or the per-service file).
+2. Add encode/decode free functions in the relevant encoder header
+   (`telemetry_encoders.hpp`, `acu_tx_encoders.hpp`) or the per-service
+   file that owns the frame (e.g. `vehicle_service.cpp` for an RX frame).
 3. Add a unit test in `tests/unit/` covering encode/decode round-trip and
    edge cases.
 4. Update `docs/CAN_MAP.md` with the new entry.
@@ -153,8 +158,11 @@ This is the only file in the repo with a hard review bar.
   behind the boot-grace gate (`now_tick < kSafetyBootGraceMs`) so
   the chip doesn't latch ERROR at t = 0 (invariant 7 in
   [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1).
-- New predicates that are immediate (`force_error_set`) must stay
-  outside the grace gate so they trip on the first iteration.
+- New predicates that are **immediate-danger** (current over-limit,
+  BMS module offline) must stay outside the grace gate so they trip on
+  the first iteration. Note the cell V/T **range** predicates are the
+  exception — they debounce over `CellFaultConfirmTicks` (~300 ms, #296)
+  so a torn snapshot read can't latch a spurious ERROR.
 - Two approving reviews from team members familiar with FS safety rules,
   not one.
 - A captured FSM-transition trace from SIL is attached as evidence.
@@ -171,7 +179,7 @@ Full rules in `docs/ARCHITECTURE.md` § 11. Highlights:
 - One service per file pair, singleton via `instance()`.
 - `enum class` for FSM states, `constexpr` for every constant.
 - Single-writer / many-reader shared state — no mutexes in app
-  code (refactor/19 phase 1).
+  code (the per-service mutexes were retired in refactor/19 phase 1).
 - Task entry points are `extern "C"`.
 
 ---
