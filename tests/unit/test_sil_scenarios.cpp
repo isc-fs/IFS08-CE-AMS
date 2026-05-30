@@ -161,15 +161,14 @@ extern "C" void test_sil_charger_path(void) {
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
-    // Precharge -> Transition is TIME-BASED in charger mode (#305): the
-    // inverter isn't in the charge loop and dc_bus_V is VCU-only / absent,
-    // so it dwells PrechargeDwellMs rather than voltage-gating. Leave
-    // dc_bus_V at 0 to prove the charge path doesn't depend on the VCU.
-    h.advance(ams::config::PrechargeDwellMs);
+    // Precharge -> Transition once bus catches up
+    h.advance(20);
+    h.veh.dc_bus_V = 350;
     out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
 
-    // Transition is a one-step passthrough -> Charge (not Run).
+    // Hold elapses -> Charge (not Run)
+    for (int i = 0; i < 5; ++i) { h.advance(20); h.step(); }
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
 }

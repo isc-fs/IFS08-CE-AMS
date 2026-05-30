@@ -119,8 +119,6 @@ void test_fsm_transition_undecided_mode_forces_error(void);
 void test_fsm_transition_drops_voltage_to_error(void);
 void test_fsm_precharge_times_out_to_error(void);
 void test_fsm_precharge_holds_within_deadline(void);
-void test_fsm_precharge_charger_commits_after_dwell(void);
-void test_fsm_precharge_charger_holds_before_dwell(void);
 void test_fsm_run_stays_while_tsms_and_dash_chg_high(void);
 void test_fsm_run_to_error_on_tsms_drop(void);
 void test_fsm_run_to_error_on_dash_chg_drop(void);
@@ -319,8 +317,6 @@ int main(void) {
     RUN_TEST(test_fsm_transition_drops_voltage_to_error);
     RUN_TEST(test_fsm_precharge_times_out_to_error);
     RUN_TEST(test_fsm_precharge_holds_within_deadline);
-    RUN_TEST(test_fsm_precharge_charger_commits_after_dwell);
-    RUN_TEST(test_fsm_precharge_charger_holds_before_dwell);
     RUN_TEST(test_fsm_run_stays_while_tsms_and_dash_chg_high);
     RUN_TEST(test_fsm_run_to_error_on_tsms_drop);
     RUN_TEST(test_fsm_run_to_error_on_dash_chg_drop);
