@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generator for docs/dbc/ams.dbc -- single source of truth for the CAN
-database the pit tool (and any external decoder) needs.
+database MingoCAN (and any external decoder) needs.
 
 Why generated:
   - 95 cell signals + 200 NTC signals + per-module aggregates = ~310
@@ -408,7 +408,7 @@ def pit_balance_a_6c2() -> Message:
                 comment=("Balance DCC bits for cell indices 0..63. Bit b of "
                          "byte i represents cell (8*i + b). Cell -> module/cell: "
                          "module = idx // 19, cell = idx % 19."))
-    # Just dump the 8 bytes as an opaque uint64 — pit tool unpacks bits.
+    # Just dump the 8 bytes as an opaque uint64 — MingoCAN unpacks bits.
     m.signals = [
         Signal("dcc_bits_lo64", le_start_bit_for_byte(0), 64, "1", "+",
                unit="bitmask"),
@@ -525,7 +525,7 @@ def pit_fw_id_6c6() -> Message:
                unit="byte"),
         Signal("bl_node_id", le_start_bit_for_byte(7), 8, "1", "+",
                unit="id",
-               comment="From firmware_info.reserved[0]; pit-tool checks against the BL"),
+               comment="From firmware_info.reserved[0]; MingoCAN checks against the BL"),
     ]
     return m
 

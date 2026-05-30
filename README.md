@@ -28,7 +28,7 @@ arms either with the **TSMS** master switch (PF9, held) and a momentary
 ```mermaid
 flowchart LR
     VCU([VCU<br/>+ charger]) -- FDCAN1 --> AMS
-    BENCH([Pit-tool<br/>boot trigger]) -- FDCAN1 --> AMS
+    BENCH([MingoCAN<br/>boot trigger]) -- FDCAN1 --> AMS
 
     subgraph AMS[AMS STM32H733]
         SPI[SPI1 + LTC6820 master]

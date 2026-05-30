@@ -553,7 +553,7 @@ update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-boo
 > Moved from FDCAN2 to FDCAN1 in v1.2.0 (#73). FDCAN2 stays the
 > bootloader's working bus after reset, but the in-band reboot
 > trigger now rides on the accumulator/vehicle bus alongside
-> everything the pit-tool already sends.
+> everything MingoCAN already sends.
 
 ### `0x002` — request reboot into bootloader
 
