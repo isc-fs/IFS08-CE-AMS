@@ -181,9 +181,23 @@ to dispatch now rides on FDCAN1 and is handled inside `AcuCanTask`.
 `MainTask` is the only Realtime-priority task in the system. Its
 period of 10 ms is the hard contract: worst-case latency from
 "sensor reads out of range" to "AIRs open" is bounded by
-`producer_period + 10 ms + GPIO_write < 15 ms`. The producer tasks
+`producer_period + 10 ms + GPIO_write < 15 ms` for the
+immediate-danger predicates (force-error, current over-limit, BMS
+module offline / stale, VCU stale). The producer tasks
 (`BmsPollTask`, `CurrentSensorTask`, `AcuCanTask`) all run at
 strictly lower priority, so they cannot preempt MainTask.
+
+The cell voltage / temperature **range** predicates are the one
+exception: they are debounced by `CellFaultConfirmTicks` (~300 ms,
+spanning more than one 250 ms voltage poll) before latching ERROR
+(#279). A cell cannot leave its valid window for a single 10 ms tick
+and return, so a transient one is a glitch — a torn read of the
+lock-free `BmsState` snapshot, or an unsettled first poll at boot —
+not a real condition, and must not latch the sticky ERROR. Cell
+under/over-voltage and over-temperature are slow-developing faults
+(seconds), so the ~300 ms confirmation is well within their response
+budget; the fast immediate-danger predicates above keep the < 15 ms
+bound.
 
 ---
 

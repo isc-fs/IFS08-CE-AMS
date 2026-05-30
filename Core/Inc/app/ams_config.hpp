@@ -65,6 +65,22 @@ inline constexpr std::uint32_t SafetyPeriodMs    =  10;
 // 2000 ms gives generous margin for all of the above and slow CAN
 // startup; tune down if a faster boot becomes critical.
 inline constexpr std::uint32_t SafetyBootGraceMs = 2000;
+
+// Cell V/T range debounce (#279). The cell-voltage / temperature range
+// predicates must persist for this many consecutive SafetyTask
+// evaluations (× SafetyPeriodMs = 10 ms) before they latch the sticky
+// ERROR. A single sub-threshold sample -- a torn lock-free snapshot
+// read, or an unsettled first poll / emulator-default value at boot --
+// must not permanently fault the chip. Sized to span MORE than one
+// BmsPollVoltMs (250 ms = 25 ticks) cycle: a transient that clears on
+// the next voltage poll never reaches the count, while a sustained
+// real under/over condition does. Cell V/T are slow-by-nature faults
+// (a cell cannot leave its valid window for one tick and return), so
+// the ~300 ms confirmation is well within their response budget. Only
+// the cell V/T branches are debounced -- force-error, BMS offline/stale,
+// current-over-limit, and VCU-stale still latch on the first tick.
+inline constexpr std::uint16_t CellFaultConfirmTicks = 30;  // ~300 ms
+
 inline constexpr std::uint32_t StatePeriodMs     =  20;
 inline constexpr std::uint32_t CurrentPeriodMs   =  50;
 inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
