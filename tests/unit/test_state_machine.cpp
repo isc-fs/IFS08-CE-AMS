@@ -200,26 +200,29 @@ extern "C" void test_fsm_charge_stays_on_dash_chg_release(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
 }
 
-// Charger precharge proceeds on a SECOND DASH_CHG press (#305), not on
-// dc_bus_V. Without the press it holds (-> eventual PrechargeMaxMs timeout).
-extern "C" void test_fsm_precharge_charger_proceeds_on_dash_chg_press(void) {
+// Charger precharge proceeds on a STILL-FRESH 0x101 charge request (#305) --
+// the charger auto-emits it while connected -- not on dc_bus_V and not on a
+// second DASH_CHG press. Without a fresh 0x101 it holds (-> PrechargeMaxMs).
+extern "C" void test_fsm_precharge_charger_proceeds_on_fresh_request(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
     in.tsms = true; in.mode_locked = ams::fsm::Mode::Charger;
-    veh.dc_bus_V = 0;            // no VCU during charge
-    in.dash_chg_edge = true;     // operator's proceed press
+    veh.dc_bus_V = 0;                        // no VCU during charge
+    veh.last_charge_req_tick = in.now_tick;  // charger's auto 0x101, fresh
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
 }
 
-extern "C" void test_fsm_precharge_charger_holds_without_press(void) {
+extern "C" void test_fsm_precharge_charger_holds_without_fresh_request(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
     in.tsms = true; in.mode_locked = ams::fsm::Mode::Charger;
     veh.dc_bus_V = 0;
-    in.dash_chg_edge = false;    // no proceed press yet
+    // 0x101 stale (charger disconnected): older than ChargeReqFreshMs.
+    veh.last_charge_req_tick =
+        in.now_tick - ams::config::ChargeReqFreshMs - 1;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
 

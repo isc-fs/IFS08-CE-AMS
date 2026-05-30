@@ -150,35 +150,65 @@ extern "C" void test_sil_bms_dropout_in_run(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4: charger path -- TWO DASH_CHG presses (#305). Press 1 enters
-// Precharge; the AMS holds (no VCU dc_bus_V during a charge); press 2 is
-// the operator's "charger is up, proceed" -> Transition -> Charge.
+// Scenario 4: charger path -- ONE DASH_CHG press (#305). The charger auto-
+// emits 0x101 the moment it is connected, so a still-fresh charge request is
+// the "charger up, proceed" signal: the single press enters Precharge, then
+// 0x101 freshness closes AIR+ -> Transition -> Charge. If 0x101 goes stale
+// the precharge holds (then times out) instead of proceeding.
 // ---------------------------------------------------------------------------
 extern "C" void test_sil_charger_path(void) {
     Harness h;
     h.tsms = true;
     h.mode_locked = ams::fsm::Mode::Charger;   // SafetyTask would lock this
+    h.veh.last_charge_req_tick = h.now;        // charger's auto 0x101, fresh
 
-    // Press 1: Start -> Precharge.
+    // Single press: Start -> Precharge.
     h.dash_chg_edge = true;
     auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
-    // No press, no dc_bus_V -> holds in Precharge.
+    // 0x101 stays fresh (charger still connected) -> proceed next step.
     h.advance(20);
-    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
-
-    // Press 2: operator proceeds -> Transition (no dc_bus_V needed).
-    h.advance(20);
-    h.dash_chg_edge = true;
+    h.veh.last_charge_req_tick = h.now;
     out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
 
     // Transition is a one-step passthrough -> Charge (not Run).
     h.advance(20);
+    h.veh.last_charge_req_tick = h.now;
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4b: charger connected, single press enters Precharge, then 0x101
+// goes STALE (charger unplugged) before the proceed -> precharge holds, then
+// the PrechargeMaxMs timeout latches Error. Closing AIR+ into a disconnected
+// charger is exactly what the freshness gate prevents (#305).
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_charger_stale_request_times_out(void) {
+    Harness h;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;   // SafetyTask locked this earlier
+    // 0x101 already stale at the press (charger disconnected right after the
+    // mode lock). advance() never re-stamps last_charge_req_tick, so it stays
+    // stale -> the charger proceed gate never fires.
+    h.veh.last_charge_req_tick = h.now - ams::config::ChargeReqFreshMs - 1;
+
+    h.dash_chg_edge = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+
+    // Hold (0x101 stale) until > PrechargeMaxMs -> Error.
+    const std::uint32_t deadline = h.now + ams::config::PrechargeMaxMs;
+    ams::fsm::State last = ams::fsm::State::Precharge;
+    while (h.now <= deadline + 40) {
+        h.advance(20);
+        last = h.step().next;
+        if (last == ams::fsm::State::Error) break;
+    }
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, last);
 }
 
 // ---------------------------------------------------------------------------

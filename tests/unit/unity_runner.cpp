@@ -124,8 +124,8 @@ void test_fsm_run_to_error_on_tsms_drop(void);
 void test_fsm_run_stays_on_dash_chg_release(void);
 void test_fsm_charge_to_error_on_tsms_drop(void);
 void test_fsm_charge_stays_on_dash_chg_release(void);
-void test_fsm_precharge_charger_proceeds_on_dash_chg_press(void);
-void test_fsm_precharge_charger_holds_without_press(void);
+void test_fsm_precharge_charger_proceeds_on_fresh_request(void);
+void test_fsm_precharge_charger_holds_without_fresh_request(void);
 void test_fsm_any_state_to_error_on_fault(void);
 void test_fsm_error_is_sticky(void);
 
@@ -209,6 +209,7 @@ void test_balance_threshold_strict_inequality(void);
 void test_sil_nominal_startup_to_run(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
+void test_sil_charger_stale_request_times_out(void);
 void test_sil_tsms_drop_in_run_latches_error(void);
 
 int main(void) {
@@ -325,8 +326,8 @@ int main(void) {
     RUN_TEST(test_fsm_run_stays_on_dash_chg_release);
     RUN_TEST(test_fsm_charge_to_error_on_tsms_drop);
     RUN_TEST(test_fsm_charge_stays_on_dash_chg_release);
-    RUN_TEST(test_fsm_precharge_charger_proceeds_on_dash_chg_press);
-    RUN_TEST(test_fsm_precharge_charger_holds_without_press);
+    RUN_TEST(test_fsm_precharge_charger_proceeds_on_fresh_request);
+    RUN_TEST(test_fsm_precharge_charger_holds_without_fresh_request);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
     RUN_TEST(test_fsm_error_is_sticky);
 
@@ -405,6 +406,7 @@ int main(void) {
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
+    RUN_TEST(test_sil_charger_stale_request_times_out);
     RUN_TEST(test_sil_tsms_drop_in_run_latches_error);
 
     return UNITY_END();

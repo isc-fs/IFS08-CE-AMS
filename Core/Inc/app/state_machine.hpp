@@ -45,9 +45,11 @@ struct Inputs {
     bool                tsms;             // PF9 readback, LEVEL (held master switch)
     // PF10 is a MOMENTARY press button -- SafetyTask edge-detects it and
     // passes a one-shot RISING-EDGE flag here, latched until the FSM
-    // consumes it. A press drives Start->Precharge (with TSMS) and, in
-    // Charger mode, the Precharge->Transition proceed. Run/Charge do NOT
-    // look at it -- they are sustained by TSMS alone.
+    // consumes it. A single press drives Start->Precharge (with TSMS), in
+    // BOTH car and charger. The charger's Precharge->Transition proceed is
+    // gated on 0x101 freshness (the auto-emitted charge request), NOT a
+    // second press. Run/Charge do NOT look at it -- they are sustained by
+    // TSMS alone.
     bool                dash_chg_edge;
     Mode                mode_locked;      // set by SafetyTask at Start->Precharge
     // The safety supervisor's ALREADY-DEBOUNCED fault decision (#279).
@@ -143,16 +145,21 @@ struct Output {
         // Precharge-complete criterion is mode-specific (#305):
         //  - Car: confirm the inverter DC-link reached the target via
         //    dc_bus_V (VCU-measured) before closing AIR+.
-        //  - Charger: the inverter isn't in the charge loop, the charger
-        //    has no comms with the AMS, and dc_bus_V is VCU-only (absent
-        //    during a charge). The operator proceeds with a SECOND
-        //    DASH_CHG press -- a deliberate "the charger is up, close
-        //    AIR+" confirmation. The charger soft-starts its own output.
-        //    If the operator never presses, precharge holds then hits the
-        //    PrechargeMaxMs timeout above.
+        //  - Charger: the inverter isn't in the charge loop and dc_bus_V
+        //    is VCU-only (absent during a charge), so there is nothing to
+        //    voltage-gate on; the charger soft-starts its own output. The
+        //    charger now auto-emits the 0x101 charge-mode request the
+        //    moment it is connected (>=2 Hz), so a STILL-FRESH 0x101 is the
+        //    "charger is connected and ready" proceed signal -- the single
+        //    DASH_CHG press that entered Precharge is the human "go", and
+        //    0x101 freshness authorises closing AIR+. If 0x101 goes stale
+        //    before we proceed (charger unplugged / aborted), precharge
+        //    holds and hits the PrechargeMaxMs timeout above -> Error,
+        //    rather than closing AIR+ into a disconnected charger.
         const bool precharge_done =
             (in.mode_locked == Mode::Charger)
-                ? in.dash_chg_edge
+                ? VehicleService::charge_requested(in.now_tick,
+                                                   in.vehicle.last_charge_req_tick)
                 : precharge_target_reached(in.bms, in.vehicle);
         if (precharge_done) {
             return { State::Transition,

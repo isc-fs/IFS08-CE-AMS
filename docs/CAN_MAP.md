@@ -491,27 +491,34 @@ voltage during precharge is a real fault.
 | Bus | FDCAN1 (standard 11-bit) |
 | DLC | ≥ 4 |
 | Payload | bytes `[0..3]` must equal the magic `43 48 52 47` ("CHRG"); other bytes ignored |
-| Use | Declares "we are on the charger." The AMS enters **Charger** mode only if a fresh request (within `ChargeReqFreshMs` = 1000 ms) is present **and** the VCU is absent, at the Start→Precharge mode lock. |
-| Cadence | operator tool should send periodically (e.g. ≥ 2 Hz) while on the charger so it is fresh at the lock |
+| Use | Declares "we are on the charger." The AMS enters **Charger** mode only if a fresh request (within `ChargeReqFreshMs` = 1000 ms) is present **and** the VCU is absent, at the Start→Precharge mode lock. A still-fresh `0x101` later also gates the Charger precharge→Transition proceed (closing AIR+). |
+| Source | the charger emits it automatically the moment it is connected |
+| Cadence | sent periodically (≥ 2 Hz) while connected, so it stays fresh both at the mode lock and at the precharge proceed |
 
-The charger itself has no comms with the AMS, so this operator-asserted
-frame is the positive charge-detect. Without it, a car with a dead VCU
-locks **Car** mode and faults on VcuStale rather than silently charging.
-The magic gate prevents bus noise / a stray frame from flipping the AMS
-into a HV charge mode. Handled in `vehicle_service.cpp`.
+The charger itself has no comms with the AMS, so this auto-emitted frame
+is the positive charge-detect. Without it, a car with a dead VCU locks
+**Car** mode and faults on VcuStale rather than silently charging. The
+magic gate prevents bus noise / a stray frame from flipping the AMS into
+a HV charge mode. Handled in `vehicle_service.cpp`.
 
-Full charge bring-up: with `0x101` fresh and the VCU absent, the operator
-presses **DASH_CHG** (PF10, a momentary edge-detected button) to leave
-Start→Precharge, then presses it **again** as the deliberate "charger is
-up, close AIR+" confirmation (Charger has no `dc_bus_V` to voltage-gate
-on, so the proceed is the second press; the charger soft-starts its own
-output). See `state_machine.hpp` / `safety_task.cpp`.
+Full charge bring-up (one button): with `0x101` fresh (charger connected)
+and the VCU absent, the operator presses **DASH_CHG** (PF10, a momentary
+edge-detected button) **once** to leave Start→Precharge. The proceed to
+Transition (close AIR+) is then gated on `0x101` *still* being fresh — the
+charger's auto-emitted "I'm connected and ready" signal — since Charger
+has no `dc_bus_V` to voltage-gate on, and the charger soft-starts its own
+output. If `0x101` goes stale before the proceed (charger unplugged), the
+precharge holds and hits the `PrechargeMaxMs` timeout → Error rather than
+closing AIR+ into a disconnected charger. See `state_machine.hpp` /
+`safety_task.cpp`.
 
 ### `0x600` — start button **[RETIRED — fix/48]**
 
 Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The
-FSM Start→Precharge transition now requires both `TSMS` and `DASH_CHG`
-asserted; level-polled at the 20 ms FSM cadence in `safety_task.cpp`.
+FSM Start→Precharge transition now requires `TSMS` held **and** a
+**DASH_CHG** press: TSMS is level-polled, while DASH_CHG (PF10) is a
+momentary button edge-detected at the 10 ms cadence in `safety_task.cpp`
+(#305). Run/Charge are sustained by TSMS alone.
 
 ### `0x401 – 0x406` — accumulator temperature sensors
 
