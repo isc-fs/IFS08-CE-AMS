@@ -10,6 +10,7 @@
 // pin readback, locked-mode, and a monotonically advancing `now` tick.
 
 #include "ams_config.hpp"
+#include "safety_predicates.hpp"
 #include "state_machine.hpp"
 
 #include "unity.h"
@@ -58,10 +59,19 @@ struct Harness {
     }
 
     ams::fsm::Output step() {
+        // Replicate SafetyTask: evaluate the predicate set, then feed
+        // the decision into the FSM (which no longer self-evaluates,
+        // #279). No debounce here -- SIL exercises FSM transition logic,
+        // not the cell-fault latch timing (that's unit-tested directly
+        // via CellFaultDebounce).
+        const ams::safety::Inputs pred = {
+            bms, cur, veh, /*force_error_set=*/false, now,
+        };
+        const bool predicate_fault = ams::safety::evaluate_fault(pred);
         const ams::fsm::Inputs in = {
             state, bms, cur, veh,
             tsms, dash_chg, mode_locked,
-            /*force_error_set=*/false,
+            predicate_fault,
             now, state_entry_tick,
         };
         const auto out = ams::fsm::step(in);

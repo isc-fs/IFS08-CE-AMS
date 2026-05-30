@@ -232,7 +232,11 @@ void SafetyTask::run() noexcept {
                 const fsm::Inputs fsm_in = {
                     state, bms_snap, cur_snap, veh_snap,
                     tsms, dash_chg, mode_locked,
-                    force_error_set,
+                    // Pass the already-debounced fault decision (#279);
+                    // the FSM no longer re-evaluates the predicate. This
+                    // is false here (step() only runs on a no-fault
+                    // tick), but it keeps the FSM's Error backstop honest.
+                    predicate_fault,
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);
