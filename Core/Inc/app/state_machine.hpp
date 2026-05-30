@@ -135,7 +135,20 @@ struct Output {
                      events::safety::OpenAirN | events::safety::OpenAirP |
                      events::safety::OpenPrecharge };
         }
-        if (precharge_target_reached(in.bms, in.vehicle)) {
+        // Completion criterion is mode-specific (#305):
+        //  - Car: confirm the inverter DC-link reached the target via
+        //    dc_bus_V (VCU-measured) before closing AIR+.
+        //  - Charger: the inverter is NOT in the charge loop and dc_bus_V
+        //    is unobtainable (VCU off), so voltage-gating is impossible.
+        //    Dwell a fixed time (PrechargeDwellMs) -- long enough to
+        //    charge any charger-output capacitance through the resistor
+        //    -- then commit. Charger precharge therefore always completes
+        //    (the PrechargeMaxMs timeout above is the Car-mode backstop).
+        const bool precharge_done =
+            (in.mode_locked == Mode::Charger)
+                ? (in.now_tick - in.state_entry_tick >= config::PrechargeDwellMs)
+                : precharge_target_reached(in.bms, in.vehicle);
+        if (precharge_done) {
             return { State::Transition,
                      events::safety::CloseAirP |
                      events::safety::OpenPrecharge };
@@ -151,7 +164,15 @@ struct Output {
         // failed contactor swap (bus slumps the moment the precharge
         // contactor opens) lands in Error rather than energising the
         // tractive system on a degraded bus.
-        if (!precharge_target_reached(in.bms, in.vehicle)) {
+        // Bus-still-up guard: a failed contactor swap slumps the bus the
+        // moment the precharge contactor opens. Only checkable in Car
+        // mode -- it relies on the VCU-measured dc_bus_V, which is absent
+        // during a charge (#305). In Charger mode the inverter isn't on
+        // the bus and there's no voltage to read, so we commit to Charge
+        // directly (the time-based precharge in the Precharge state was
+        // the commitment).
+        if (in.mode_locked == Mode::Car &&
+            !precharge_target_reached(in.bms, in.vehicle)) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |
