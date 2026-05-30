@@ -53,9 +53,10 @@ Everything else exists to enforce these:
    window covers BmsPollTask's first voltage poll (250 ms),
    CurrentSensorTask's first ADC sample (50 ms), and AcuCanTask's
    first VCU 0x100 (uncontrolled but typically present).
-   **Immediate-safety predicates stay active during the grace**:
-   `force_error_set` still trips instantly. Only data-dependent
-   predicates wait. See
+   The grace suppresses only the **data-presence / freshness**
+   predicates; a sticky `ErrorLatch` from a prior boot, and the
+   reserved hard force-error hook (`force_error_set`, currently
+   `constexpr false` — no live setter), are unaffected. See
    [`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)
    and the inline comment on `SafetyBootGraceMs` in
    [`ams_config.hpp`](../Core/Inc/app/ams_config.hpp).
@@ -326,19 +327,71 @@ on its 10 ms cadence and consumes the returned relay-action bitmask
 inline (the old event-flag handoff to a separate `SafetyTask` was
 retired in PR #120).
 
-**Two mutually exclusive contexts:**
+### Operator inputs and the two run contexts
 
-- **Run** = pack is installed in the car. Entered via the
-  `Start → Precharge → Transition → Run` path on the start button.
-- **Charge** = pack is removed from the car and on the charging
-  station. Entered via `Start → Charge` on charger detection.
+The FSM is driven by **two GPIO inputs** plus the CAN-derived state.
+Both are active-high with an external pull-down on the carrier, read by
+MainTask every 10 ms:
 
-The two are decided **once per power cycle** at `Start` and cannot
-flip at runtime — a pack physically cannot move between car and
-charger while the AMS is alive. If `charger_detected` toggled in
-`Run` it would indicate an electrical fault (CAN noise, miswired
-charger); the FSM ignores it and the predicate set catches any real
-current anomaly.
+| Input | Pin | Kind | Role |
+|---|---|---|---|
+| **TSMS** | PF9 | **held level** (master switch) | Gates `Start → Precharge`; **sustains** `Run`/`Charge` — its drop is the only thing that ends them. |
+| **DASH_CHG** | PF10 | **momentary press** (rising edge) | One press = one action. With TSMS, drives `Start → Precharge`. MainTask edge-detects PF10 at 10 ms and latches the rising edge until the 20 ms FSM step consumes it (a press landing between FSM steps is never lost; a level held from boot fires no edge). |
+
+The two terminal contexts:
+
+- **Run** = pack installed in the car. Reached via
+  `Start → Precharge → Transition → Run`.
+- **Charge** = pack on the charging station. Reached via the **same**
+  `Start → Precharge → Transition → Charge` path — there is no direct
+  `Start → Charge` edge. The only difference is which branch `Transition`
+  takes, decided by the **mode locked at `Start → Precharge`**.
+
+#### Mode lock (Car vs Charger)
+
+At the exact tick `Start → Precharge` fires, MainTask captures an
+immutable `Mode` (`Undecided`/`Car`/`Charger`) from two freshness checks
+and never re-evaluates it for the rest of the boot — a pack cannot move
+between car and charger while the AMS is alive:
+
+```cpp
+mode = (charge_req_fresh && !vcu_fresh) ? Mode::Charger : Mode::Car;
+```
+
+- `vcu_fresh` — a VCU `0x100` heartbeat heard within `VcuFreshMs` (1000 ms).
+- `charge_req_fresh` — an operator `0x101` "CHRG" charge-mode request
+  (magic `43 48 52 47`) heard within `ChargeReqFreshMs` (1000 ms). On the
+  bench/charger this frame is emitted automatically while connected.
+
+So: VCU present → **Car**. VCU absent **and** a fresh charge request →
+**Charger**. VCU absent with **no** charge request → **Car** (and it then
+faults on `VcuStale`, the fail-safe for a dead-VCU car — it never silently
+charges). A stray `0x101` while the VCU is live cannot flip a running car
+into Charger. See [`CAN_MAP.md`](CAN_MAP.md) § `0x101` for the wire detail.
+
+#### Precharge completion is mode-specific
+
+`Precharge` is **bounded** by `PrechargeMaxMs` (5000 ms): if it doesn't
+complete in time, the FSM latches `Error` and opens every contactor —
+capping how long the precharge resistor is held closed for *any* stuck
+cause. What "complete" means depends on the locked mode:
+
+- **Car** — the inverter DC-link must reach the target,
+  `dc_bus_V ≥ PrechargeRatio (95%) × pack_voltage` (VCU-measured), before
+  closing AIR+.
+- **Charger** — there is no VCU `dc_bus_V` during a charge and the charger
+  soft-starts its own output, so there is nothing to voltage-gate on.
+  Instead the proceed is gated on the `0x101` charge request **still being
+  fresh** (the charger's "connected and ready" signal). A single DASH_CHG
+  press entered Precharge; the still-fresh `0x101` authorises closing AIR+.
+
+`Transition` is a **one-step passthrough**, not a dwell: the contactor
+swap (`CloseAirP | OpenPrecharge`) was already emitted on the
+`Precharge → Transition` edge, and this step commits to `Run`/`Charge`
+on the locked mode. A Car-only "bus still up" guard re-checks
+`precharge_target_reached` so a failed contactor swap lands in `Error`
+rather than energising the tractive system on a slumped bus (Charger skips
+it — no `dc_bus_V`).
 
 ```mermaid
 stateDiagram-v2
@@ -349,36 +402,36 @@ stateDiagram-v2
     boot_check --> Start : ErrorLatch clear
     boot_check --> Error : ErrorLatch set
 
-    Start --> Precharge  : start button and healthy
-    Start --> Charge     : charger detected
+    Start --> Precharge : TSMS held AND DASH_CHG press<br/>(mode locked here)
 
-    Precharge --> Transition : dc_bus reached target
-    Precharge --> Error      : precharge timeout
+    Precharge --> Transition : Car: dc_bus ≥ 95% pack<br/>Charger: 0x101 still fresh
+    Precharge --> Error      : PrechargeMaxMs timeout
 
-    Transition --> Run   : hold elapsed and steady
-    Transition --> Error : dc_bus dropped
+    state mode_split <<choice>>
+    Transition --> mode_split
+    mode_split --> Run    : mode = Car
+    mode_split --> Charge : mode = Charger
+    Transition --> Error  : Car bus slumped
 
-    Start      --> Error : safety fault
-    Precharge  --> Error : safety fault
-    Transition --> Error : safety fault
-    Run        --> Error : safety fault
-    Charge     --> Error : safety fault
+    Run    --> Error : TSMS drop
+    Charge --> Error : TSMS drop
+
+    Start      --> Error : predicate fault
+    Precharge  --> Error : predicate fault
+    Transition --> Error : predicate fault
+    Run        --> Error : predicate fault
+    Charge     --> Error : predicate fault
 
     Error --> [*] : reset only
 
     note right of Run
-        terminal context
-        until reset or fault
-    end note
-
-    note left of Charge
-        terminal context
-        until reset or fault
+        sustained by TSMS alone;
+        DASH_CHG release does NOT fault
     end note
 
     note right of Error
-        sticky within a boot
-        ErrorLatch set in backup register
+        sticky within a boot;
+        ErrorLatch set in backup register;
         next boot starts here
     end note
 
@@ -404,25 +457,35 @@ consumed inline by MainTask):
 | Transition | bits set in `Output::safety_flags` |
 |---|---|
 | Start → Precharge | `CloseAirN`, `ClosePrecharge` |
-| Start → Charge | `CloseAirN`, `CloseAirP` |
 | Precharge → Transition | `CloseAirP`, `OpenPrecharge` |
+| Transition → Run / Charge | _(none — contactor swap already done on the edge above)_ |
 | any → Error | `ForceError`, `OpenAirN`, `OpenAirP`, `OpenPrecharge` |
 
 **Key properties:**
 
-- **ERROR is sticky within a boot.** Even if the underlying fault
-  clears, the FSM stays in `Error` until reset. `ErrorLatch::set()`
-  fires on every `Error` entry so the next boot also starts in
-  `Error` until backup-domain power is cycled.
-- **Predicate-fault evaluation runs first** on every MainTask
-  iteration (10 ms cadence), so any fault from any state preempts
-  the normal transition (20 ms FSM step). MainTask skips the FSM
-  step on a fault iteration.
-- **AIR / Precharge actions are driven inline by MainTask.** The
-  FSM's `safety_flags` bitmask is interpreted by `apply_relay_actions`
-  in the same iteration the FSM ran. No event-flag indirection, no
-  cross-task race window. The faulted path skips relay actions but
-  the relays are already open from `latch_error_()`.
+- **`Run`/`Charge` are sustained by TSMS alone.** DASH_CHG is a momentary
+  press — low for most of `Run`/`Charge` — so it is **not** level-checked
+  there; only a TSMS drop latches `Error`. (Level-checking DASH_CHG in
+  `Run` would fault instantly the moment the operator released it.)
+- **ERROR is sticky within a boot.** Even if the underlying fault clears,
+  the FSM stays in `Error` until reset. `ErrorLatch::set()` fires on every
+  `Error` entry so the next boot also starts in `Error` until
+  backup-domain power is cycled.
+- **The FSM consumes an already-debounced fault decision.** MainTask is the
+  single fault authority: it evaluates the predicate set (debouncing the
+  cell V/T range checks, § 3) and passes the result into `fsm::step()` as
+  `predicate_fault`. The FSM does **not** re-run the predicates — doing so
+  once bypassed the debounce (#279). On a fault tick MainTask latches and
+  skips the FSM step; the any-state→`Error` branch in the FSM is a kept
+  backstop.
+- **AIR / Precharge actions are driven inline by MainTask.** The FSM's
+  `safety_flags` bitmask is interpreted by `apply_relay_actions` in the
+  same iteration the FSM ran — no event-flag indirection, no cross-task
+  race window. The faulted path skips relay actions but the relays are
+  already open from `latch_error_()`.
+- **`AMS_OK` (PB4) tracks the live safety state**, driven separately every
+  10 ms (§ 1, invariant 8): LOW during boot grace, HIGH once past grace
+  with no `Error` latched, LOW the instant a fault latches.
 
 ---
 
@@ -461,7 +524,7 @@ sequenceDiagram
   and
     Main->>Main: ErrorLatch::init + Fan::init
     Main->>Main: boot in Error if ErrorLatch::is_set
-    Note over Main: For t < SafetyBootGraceMs (2 s)<br/>data-presence predicates are suppressed.<br/>force_error_set still trips instantly.
+    Note over Main: For t < SafetyBootGraceMs (2 s)<br/>data-presence/freshness predicates suppressed.<br/>A sticky ErrorLatch still boots into Error.
     loop every 10 ms (osDelayUntil)
       Main->>Main: snapshot bms/current/vehicle
       alt fault detected
@@ -621,10 +684,10 @@ separate harness):
 
 | Layer | Files | Coverage |
 |---|---|---|
-| Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine`, `test_bootloader`, `test_ltc6811_decode`, `test_telemetry_encoders`, `test_balance_controller` | ~95 tests: LTC6811 PEC15 + register decoders + chain-length walker, ADG731 channel packing, balancing policy, BMS / current / vehicle service decode + freshness, ADC scaling, each safety predicate in isolation, each FSM transition, telemetry encoders, boot-trigger frame matcher |
-| SIL (multi-step) | `test_sil_scenarios` | 5 scenarios: nominal startup, precharge timeout, BMS dropout, charger path, SDC sticky |
+| Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine`, `test_bootloader`, `test_ltc6811_decode`, `test_telemetry_encoders`, `test_balance_controller`, `test_acu_tx_encoders`, `test_pit_diag_emitter` | LTC6811 PEC15 + register decoders + chain-length walker, ADG731 channel packing, balancing policy, BMS / current / vehicle service decode + freshness (incl. the `0x101` charge-request magic gate), ADC scaling, each safety predicate in isolation (incl. the cell V/T debounce and VcuStale Car-only gate), every FSM transition (incl. DASH_CHG momentary edge, Charger `0x101`-fresh proceed, `PrechargeMaxMs` timeout), telemetry + pit-diag encoders, boot-trigger frame matcher |
+| SIL (multi-step) | `test_sil_scenarios` | nominal Car startup → Run, BMS dropout → Error, charger path (one press + fresh `0x101`) → Charge, stale-`0x101` mid-precharge → timeout → Error, TSMS-drop sticky Error |
 
-**~95 / ~95 PASS on every push** via
+**182 / 182 PASS on every push** via
 `.github/workflows/build-tests.yml`, which also cross-compiles the
 firmware with `arm-none-eabi-gcc` and reports flash/RAM sizes in
 the run summary.
@@ -711,17 +774,22 @@ IFS08-CE-AMS/
 │   ├── starm-clang.cmake
 │   └── stm32cubemx/CMakeLists.txt    # regenerated by CubeMX
 ├── docs/
-│   ├── ARCHITECTURE.md               # this file
+│   ├── ONBOARDING.md                 # START HERE — Day-1 guide + reading order
+│   ├── GLOSSARY.md                   # domain terms (AIR, SDC, TSMS, isoSPI, PEC, …)
+│   ├── ARCHITECTURE.md               # this file — as-built reference
+│   ├── DEEP_DIVE.md                  # end-to-end codebase walkthrough
+│   ├── FSM_OVERVIEW.md               # gate-by-gate safety FSM reference
 │   ├── BMS_LTC6811.md                # isoSPI BMS wire protocol
 │   ├── CAN_MAP.md                    # vehicle / ACU CAN protocol
 │   ├── COMMISSIONING.md              # bench / on-vehicle calibration
 │   ├── HIL_BUILD.md                  # AMS_HIL_CLEAR_ERROR_LATCH build flag (bench only)
-│   └── HIL_TESTS.md                  # bench acceptance plan
+│   ├── AMS_2025_VS_2026.html         # season-over-season rewrite narrative
+│   └── dbc/                          # generated CAN database (ams.dbc) + gen notes
 ├── tests/
 │   └── unit/
 │       ├── CMakeLists.txt            # host CMake (FetchContent Unity)
 │       ├── mocks/                    # cmsis_os2 stub for host
-│       ├── test_*.cpp                # 44 tests
+│       ├── test_*.cpp                # 182 host tests (Unity)
 │       └── unity_runner.cpp
 └── .github/
     ├── roadmap.yaml                  # phase plan

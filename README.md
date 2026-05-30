@@ -18,6 +18,13 @@ monitors). One single-timeline MainTask runs safety + FSM + telemetry
 on tick-gated cadences; three auxiliary tasks own the BMS poll, the
 current sensor ADC, and the FDCAN RX queue.
 
+The same firmware runs in **two contexts**, chosen at start-up: **Car**
+(pack in the vehicle, VCU present) and **Charger** (pack on the charging
+station, VCU absent + an operator `0x101` charge request). The operator
+arms either with the **TSMS** master switch (PF9, held) and a momentary
+**DASH_CHG** press (PF10). New here? Start with
+[`docs/ONBOARDING.md`](docs/ONBOARDING.md).
+
 ```mermaid
 flowchart LR
     VCU([VCU<br/>+ charger]) -- FDCAN1 --> AMS
@@ -25,7 +32,7 @@ flowchart LR
 
     subgraph AMS[AMS STM32H733]
         SPI[SPI1 + LTC6820 master]
-        ADC[ADC1 ch2<br/>pack current]
+        ADC[ADC3 ch3 PF7<br/>pack current]
         Relays[AIR-, AIR+, Precharge<br/>PB5/PB6/PB7]
         AmsOk[AMS_OK PB4]
     end
@@ -59,16 +66,21 @@ at **500 ms** (inside MainTask), and the watchdog timeout is **~100 ms**.
 
 ## Documentation
 
-Read in this order:
+New to the project? Read [`docs/ONBOARDING.md`](docs/ONBOARDING.md)
+first — it sequences everything below. The full set:
 
 | Document | What it covers | When to read |
 |---|---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Safety invariants, task layout, data-flow + FSM mermaid diagrams, boot sequence, memory budget, file layout. | First. Everything else assumes you've read §1 (safety invariants) and §3 (task table). |
+| [`docs/ONBOARDING.md`](docs/ONBOARDING.md) | Day-1 guide: what the AMS is, toolchain setup, a guided reading order, and where everything lives. | **Start here.** |
+| [`docs/GLOSSARY.md`](docs/GLOSSARY.md) | Every domain term in one place — AIR, SDC, TSMS, DASH_CHG, precharge, isoSPI, PEC, ACU, VCU, MLC2, pit-diag, … | Keep open while reading anything else. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The as-built reference: safety invariants, task layout, data-flow + FSM mermaid diagrams, boot sequence, memory budget, file layout. | First deep read. Everything assumes §1 (safety invariants) and §3 (task table). |
+| [`docs/FSM_OVERVIEW.md`](docs/FSM_OVERVIEW.md) | Gate-by-gate safety FSM: states, the Car/Charger mode lock, TSMS/DASH_CHG inputs, per-state transitions, on-wire byte values. | Before changing the FSM or writing bench tests for it. |
+| [`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md) | End-to-end codebase walkthrough — every task, service, and subsystem mapped to source. | When you want the whole picture in one pass. |
 | [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) | LTC6811 / LTC6820 / ADG731 wire protocol, register groups, cell + NTC slot maps, PEC15, balancing CFGR layout. | Before touching anything under `Core/{Inc,Src}/app/{ltc6811,ltc6820,bms_*,balance_*}.{h,hpp,cpp}`. |
 | [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Vehicle / charger / boot-trigger CAN wire protocol on FDCAN1 (FDCAN2 is bootloader-only since v1.2.0). | Before touching anything CAN-side. |
 | [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | Bench + on-vehicle calibration of every `COMMISSION`-tagged constant in `ams_config.hpp`. | Before flashing the first time, and any time you adjust a threshold. |
-| [`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) | Hardware-in-the-loop test plan. 60+ tests in 6 blocks. Defines the v1.1.0-bootloader and v1.2.0-ltc6811 acceptance gates. | Before signing off a release tag. |
 | [`docs/HIL_BUILD.md`](docs/HIL_BUILD.md) | The `AMS_HIL_CLEAR_ERROR_LATCH` build flag — what it does (auto-wipes the sticky ErrorLatch on boot), why, and why it must never reach a flight build. | When setting up the HIL bench rig. |
+| HIL acceptance plan ([issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)) | The living hardware-in-the-loop test matrix (blocks A–G) that gates a `dev → main` release. Lives as a GitHub issue because it evolves every release. | Before signing off a release tag. |
 | [`ROADMAP.md`](ROADMAP.md) | Auto-generated phase plan + branch status badges. | When you want to know what's next or what shipped. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch / PR / label conventions, "how to add a CAN frame" / "how to add a new task" recipes, C++ rules. | Before you open your first PR. |
 
@@ -82,9 +94,9 @@ host-side unit-test binary. CI exercises both on every push.
 # Firmware (cross-compile)
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 cmake --build build
-# Output: build/AMS.elf — flash via stm32-can-bootloader or ST-Link SWD.
+# Output: build/AMS.elf — flash via the stm32-can-bootloader (CAN) flow.
 
-# Host unit tests (~95 tests, ~0.5 s)
+# Host unit tests (182 tests, ~0.5 s)
 cmake -B build-tests -S tests/unit
 cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
@@ -118,9 +130,10 @@ for the bootloader; the script catches any image that lands there).
 3. Clone this repository to your machine:
    - SSH: `git@github.com:isc-fs/IFS08-CE-AMS.git`
    - HTTPS: `https://github.com/isc-fs/IFS08-CE-AMS.git`
-4. Install the cross-compiler (`arm-none-eabi-gcc 14.x`) and CMake ≥ 3.22.
-5. Run the host unit-test build (`cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-dir build-tests`). If that passes you have a working toolchain.
-6. Read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1 (safety invariants) and §3 (task table) before changing any firmware code.
+4. A fresh clone leaves you on **`main`** (the production branch). Switch to the integration branch before doing anything: `git checkout dev`. All work branches off `dev` — see [How we work](#how-we-work-with-this-repository).
+5. Install the cross-compiler (`arm-none-eabi-gcc 14.x`) and CMake ≥ 3.22.
+6. Run the host unit-test build (`cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-dir build-tests`). If that passes you have a working toolchain.
+7. Read [`docs/ONBOARDING.md`](docs/ONBOARDING.md), then [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §1 (safety invariants) and §3 (task table) before changing any firmware code.
 
 ---
 
@@ -301,9 +314,9 @@ permanent record.
 
 When `dev` holds a set of validated changes that are ready for the
 car, a responsible team member opens a Pull Request from `dev` into
-`main`. This only happens after full firmware validation
-([`docs/HIL_TESTS.md`](docs/HIL_TESTS.md) acceptance gate green on
-the same firmware SHA).
+`main`. This only happens after full firmware validation (the HIL
+acceptance gate — [issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)
+— green on the same firmware SHA).
 
 ---
 

@@ -99,30 +99,49 @@ Both are tracked as v1.5 follow-ups.
 
 ## 3. Precharge target and timing
 
-`PrechargeRatio` defaults to 0.95 (DC bus must reach 95 % of pack
-voltage before AIR+ closes). Real cars typically end up at 0.95–0.98.
+Two constants govern precharge, both tagged `COMMISSION`:
 
-### 3.1 Verify on the bench
+- **`PrechargeRatio`** (default 0.95) — in **Car** mode, AIR+ closes once
+  `dc_bus_V ≥ 95 % × pack_voltage`. Real cars typically end up at
+  0.95–0.98. (Charger mode has no `dc_bus_V`; it proceeds on a still-fresh
+  `0x101` charge request — see § 3.3.)
+- **`PrechargeMaxMs`** (default 5000 ms) — the hard ceiling on how long
+  Precharge may run before the FSM latches `Error` and opens every
+  contactor. This protects the precharge resistor (transient-duty rated)
+  for **any** stuck cause, including a dead-VCU car that mislocks Charger
+  and could otherwise sit in Precharge forever.
 
-1. Force AMS into `Precharge` via debugger (set `state = Precharge`,
-   set `state_entry_tick = now`).
-2. Log `bms.pack_voltage_mV` and `veh.dc_bus_V` every 100 ms while the
-   precharge resistor charges the bus capacitors.
-3. Confirm `dc_bus_V` reaches `0.95 * pack_V`. Typical: 200–800 ms.
-4. If the bus never reaches target, the precharge resistor is too
-   large (slow ramp) or the DC bus has an unexpected leak. The FSM
-   no longer has a hard deadline here (it sits in Precharge until the
-   target is reached or a safety predicate trips); investigate the
-   ramp itself rather than waiting for a timeout.
+### 3.1 Verify the Car precharge ramp
 
-### 3.2 Transition
+1. Force AMS into `Precharge` (Car mode): VCU `0x100` fresh, then assert
+   TSMS + a DASH_CHG press.
+2. Log `bms.pack_voltage_mV` and `veh.dc_bus_V` every 100 ms (the pit-diag
+   stream carries both) while the precharge resistor charges the bus
+   capacitors.
+3. Confirm `dc_bus_V` reaches `0.95 × pack_V`. Typical: 200–800 ms.
+4. If the bus never reaches target, the precharge resistor is too large
+   (slow ramp) or the DC bus has an unexpected leak — investigate the ramp.
+
+### 3.2 Commission `PrechargeMaxMs`
+
+Measure the **worst-case** healthy precharge time on the real pack +
+resistor (cold resistor, full pack voltage, coldest expected bus caps),
+then set `PrechargeMaxMs` comfortably **above** it (so a healthy ramp
+never trips) but **below** the resistor's transient thermal limit from its
+datasheet (so a genuinely stuck precharge opens before the resistor is
+damaged). The 5000 ms default is a placeholder — confirm it against the
+measured ramp and the resistor's pulse-energy rating.
+
+### 3.3 Transition
 
 Transition is a single FSM-step passthrough: the AIR+ close +
-precharge-contactor open is emitted on the `Precharge → Transition`
-edge, and the next FSM step commits to `Run` (Car mode) or `Charge`
-(Charger mode). The bus-still-at-target guard remains, so a failed
-contactor swap (bus slumps the moment the precharge contactor opens)
-lands in Error rather than energising on a degraded bus.
+precharge-contactor open is emitted on the `Precharge → Transition` edge,
+and the next FSM step commits to `Run` (Car mode) or `Charge` (Charger
+mode). A **Car-only** bus-still-at-target guard remains, so a failed
+contactor swap (bus slumps the moment the precharge contactor opens) lands
+in Error rather than energising on a degraded bus. Charger mode skips the
+guard — there is no VCU `dc_bus_V` during a charge, and the charger
+soft-starts its own output.
 
 ---
 

@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: proprietary
 //
-// Low-level relay driver. Wraps the three GPIO pins controlling the
-// accumulator contactors:
+// Low-level relay driver. Wraps the contactor GPIO pins plus the
+// AMS_OK / SDC-enable output (all on GPIOB, v1.2 daughterboard):
 //
-//   PD3 RELAY_AIR_N         (negative AIR)
-//   PD4 RELAY_AIR_P         (positive AIR)
-//   PD5 RELAY_PRECHARGE     (precharge contactor)
+//   PB6 RELAY_AIR_N         (negative AIR)
+//   PB5 RELAY_AIR_P         (positive AIR)
+//   PB7 RELAY_PRECHARGE     (precharge contactor)
+//   PB4 AMS_OK              (SDC enable; HIGH = AMS healthy, drive LOW
+//                            to open the shutdown circuit -- #299/#301)
 //
-// All pins are active-high (drive HIGH to energise the relay coil).
-// CubeMX-generated MX_GPIO_Init drives all three to PIN_RESET (open)
-// BEFORE configuring them as outputs, so the pack is electrically
-// isolated for the entire window between reset and the first task
-// running.  See docs/ARCHITECTURE.md §1 invariant 2 / §9 power-up.
+// (Pre-#117 the contactors lived on GPIOD as PD3/4/5; the daughterboard
+// re-route moved them to GPIOB -- see relay_driver.cpp for the history.)
+// All pins are active-high (drive HIGH to energise / assert).
+// CubeMX-generated MX_GPIO_Init drives them to PIN_RESET (open / SDC
+// disabled) BEFORE configuring them as outputs, so the pack is
+// electrically isolated for the entire window between reset and the
+// first task running.  See docs/ARCHITECTURE.md §1 invariant 2 / §9.
 //
 // API is intentionally minimal and stateless. The only "policy" lives
 // in SafetyTask -- this is just the bit-banging primitive. Per
-// ARCHITECTURE.md §6, ONLY SafetyTask (and App_InitTask during boot)
-// may call the close_* helpers; everyone else must request transitions
-// via the safety_events event group.
+// ARCHITECTURE.md §5, ONLY SafetyTask (and App_InitTask during boot)
+// may call the close_* helpers; the FSM's relay-action bitmask is
+// applied inline by SafetyTask in the same iteration it ran.
 
 #pragma once
 
