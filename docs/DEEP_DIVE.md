@@ -4,7 +4,7 @@
 
 Top-to-bottom walk of the AMS codebase as it actually exists on `dev`. This is onboarding reference material for a new firmware engineer: precise, source-anchored, and kept current with the merged FSM / safety / mode-gating work.
 
-**Target:** STM32H733ZGTx Cortex-M7 @ 264 MHz · FreeRTOS via CMSIS-RTOS v2 · C++17 app · CubeMX-generated CMake. Formula Student EV accumulator / battery-management firmware. `VERSION` = `1.5.0` (v1.6.0 planned).
+**Target:** STM32H733ZGTx Cortex-M7 @ 264 MHz · FreeRTOS via CMSIS-RTOS v2 · C++17 app · CubeMX-generated CMake. Formula Student EV accumulator / battery-management firmware. `VERSION` = `1.6.0`.
 
 ## Sections
 
