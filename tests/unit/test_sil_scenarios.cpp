@@ -65,7 +65,8 @@ struct Harness {
         // not the cell-fault latch timing (that's unit-tested directly
         // via CellFaultDebounce).
         const ams::safety::Inputs pred = {
-            bms, cur, veh, /*force_error_set=*/false, now,
+            bms, cur, veh, /*force_error_set=*/false,
+            /*vcu_required=*/(mode_locked == ams::fsm::Mode::Car), now,
         };
         const bool predicate_fault = ams::safety::evaluate_fault(pred);
         const ams::fsm::Inputs in = {

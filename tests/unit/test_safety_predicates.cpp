@@ -47,6 +47,7 @@ ams::safety::Inputs make_nominal(ams::BmsState& bms,
 
     return { bms, cur, veh,
              /*force_error_set=*/false,
+             /*vcu_required=*/true,   // Car-mode nominal (VCU required)
              now };
 }
 
@@ -149,6 +150,7 @@ extern "C" void test_predicates_boot_grace_suppresses_data_predicates(void) {
     const ams::safety::Inputs in = {
         bms, cur, veh,
         /*force_error_set=*/false,
+        /*vcu_required=*/true,
         /*now_tick=*/500u,  // half a second in -- well inside grace
     };
     TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
@@ -162,6 +164,7 @@ extern "C" void test_predicates_boot_grace_does_not_suppress_force_error(void) {
     const ams::safety::Inputs in = {
         bms, cur, veh,
         /*force_error_set=*/true,
+        /*vcu_required=*/true,
         /*now_tick=*/100u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -177,6 +180,7 @@ extern "C" void test_predicates_after_grace_zero_ticks_faults(void) {
     const ams::safety::Inputs in = {
         bms, cur, veh,
         /*force_error_set=*/false,
+        /*vcu_required=*/true,
         /*now_tick=*/ams::config::SafetyBootGraceMs + 1u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -403,4 +407,24 @@ extern "C" void test_ams_ok_low_when_latched(void) {
     TEST_ASSERT_FALSE(ams::safety::ams_ok_asserted(
         ams::config::SafetyBootGraceMs + 100000u, /*error_latched=*/true));
     TEST_ASSERT_FALSE(ams::safety::ams_ok_asserted(0u, true));
+}
+
+// ---------------------------------------------------------------------------
+// #302: VcuStale must be exempt when not committed to Car mode, or the
+// 200 ms VcuStaleMs predicate pre-empts the 1000 ms charger-mode lock and
+// Charger mode is unreachable. Car-mode (vcu_required=true) still faults.
+// ---------------------------------------------------------------------------
+extern "C" void test_predicates_vcu_stale_exempt_when_not_car(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    veh.last_dc_bus_tick = 10000 - ams::config::VcuStaleMs - 10;  // VCU stale
+    in.vcu_required = false;  // Charger / pre-lock Undecided
+    // Everything else healthy -> no fault despite the stale VCU.
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+    // And confirm the same input WOULD fault in Car mode (regression
+    // guard that we only relaxed the charger path).
+    in.vcu_required = true;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ams::safety::FaultReason::VcuStale),
+        static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
 }

@@ -161,9 +161,17 @@ void SafetyTask::run() noexcept {
 
         // ---------------- Safety predicate (every 10 ms) ----------------
         constexpr bool force_error_set = false;  // no live setter
+        // VCU staleness is only a fault once committed to Car mode; in
+        // Charger mode (and pre-lock Undecided) the VCU is expected
+        // absent, so its absence must not latch ERROR (#302). mode_locked
+        // holds the previous tick's value -- the FSM lock below updates
+        // it, so VcuStale arms one tick after the Car lock, which is
+        // fine (the VCU is fresh at the moment of a Car lock anyway).
+        const bool vcu_required = (mode_locked == fsm::Mode::Car);
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
             force_error_set,
+            vcu_required,
             now,
         };
         const auto fault_res = safety::evaluate_fault_detail(pred_in);
