@@ -140,6 +140,19 @@ inline constexpr std::uint8_t  TempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 // car/charger mode lock at Start->Precharge consumes its freshness.
 inline constexpr std::uint32_t AcuRxDcBusId     = 0x100;   // standard; VCU DC bus heartbeat
 
+// Operator charge-mode request (#305). The charger has NO comms with the
+// AMS, so an external operator tool asserts this frame to declare "we are
+// on the charger". Charger mode requires BOTH a fresh request AND VCU
+// absence (see the mode lock in safety_task.cpp). That removes the
+// dead-VCU-car ambiguity: a car with a dead VCU does NOT send this, so it
+// stays Car mode and faults on VcuStale instead of silently charging.
+// Magic payload so bus noise / a stray frame can't trigger a HV-mode
+// change; freshness-checked so only an actively-asserted request counts.
+inline constexpr std::uint32_t ChargeModeReqId      = 0x101u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
+inline constexpr std::uint8_t  ChargeModeReqDlc     = 4u;
+inline constexpr std::uint8_t  ChargeModeReqMagic[4] = { 0x43u, 0x48u, 0x52u, 0x47u };  // "CHRG"
+inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this recent at the mode lock
+
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time
 // telemetry. All standard 11-bit IDs, big-endian payloads.

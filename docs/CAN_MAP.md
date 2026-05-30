@@ -483,6 +483,23 @@ Source: `CPU_MOD::parse()` `class_cpu.cpp:65–68`,
 **Refactor decision:** enforce a 200 ms freshness on `DC_BUS`. Stale
 voltage during precharge is a real fault.
 
+### `0x101` — operator charge-mode request (#305)
+
+| Field | Value |
+|---|---|
+| Direction | RX (operator tool → AMS) |
+| Bus | FDCAN1 (standard 11-bit) |
+| DLC | ≥ 4 |
+| Payload | bytes `[0..3]` must equal the magic `43 48 52 47` ("CHRG"); other bytes ignored |
+| Use | Declares "we are on the charger." The AMS enters **Charger** mode only if a fresh request (within `ChargeReqFreshMs` = 1000 ms) is present **and** the VCU is absent, at the Start→Precharge mode lock. |
+| Cadence | operator tool should send periodically (e.g. ≥ 2 Hz) while on the charger so it is fresh at the lock |
+
+The charger itself has no comms with the AMS, so this operator-asserted
+frame is the positive charge-detect. Without it, a car with a dead VCU
+locks **Car** mode and faults on VcuStale rather than silently charging.
+The magic gate prevents bus noise / a stray frame from flipping the AMS
+into a HV charge mode. Handled in `vehicle_service.cpp`.
+
 ### `0x600` — start button **[RETIRED — fix/48]**
 
 Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The

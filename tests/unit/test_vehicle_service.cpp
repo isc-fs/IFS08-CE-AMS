@@ -68,3 +68,44 @@ extern "C" void test_acu_unknown_id_rejected(void) {
 
     TEST_ASSERT_FALSE(ams::VehicleService::instance().update_from_frame(f));
 }
+
+// ---------------------------------------------------------------------------
+// #305: operator charge-mode request. Magic-gated; advances the freshness
+// tick. A wrong-magic / wrong-id frame must not.
+// ---------------------------------------------------------------------------
+extern "C" void test_charge_req_magic_frame_sets_tick(void) {
+    const std::uint8_t data[8] = { 0x43, 0x48, 0x52, 0x47, 0, 0, 0, 0 };  // "CHRG"
+    auto f = make_acu_frame(ams::config::ChargeModeReqId,
+                            ams::config::ChargeModeReqDlc, data);
+    f.timestamp_ms = 4242;
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    TEST_ASSERT_EQUAL_UINT32(
+        4242, ams::VehicleService::instance().snapshot().last_charge_req_tick);
+}
+
+extern "C" void test_charge_req_wrong_magic_ignored(void) {
+    // Seed a known-good tick, then a bad-magic frame must NOT advance it.
+    const std::uint8_t good[8] = { 0x43, 0x48, 0x52, 0x47, 0, 0, 0, 0 };
+    auto g = make_acu_frame(ams::config::ChargeModeReqId,
+                            ams::config::ChargeModeReqDlc, good);
+    g.timestamp_ms = 1000;
+    (void)ams::VehicleService::instance().update_from_frame(g);
+
+    const std::uint8_t bad[8] = { 0xDE, 0xAD, 0xBE, 0xEF, 0, 0, 0, 0 };
+    auto b = make_acu_frame(ams::config::ChargeModeReqId,
+                            ams::config::ChargeModeReqDlc, bad);
+    b.timestamp_ms = 2000;
+    TEST_ASSERT_FALSE(ams::VehicleService::instance().update_from_frame(b));
+    TEST_ASSERT_EQUAL_UINT32(
+        1000, ams::VehicleService::instance().snapshot().last_charge_req_tick);
+}
+
+// charge_requested: fresh / stale / never / future-tick.
+extern "C" void test_charge_requested_freshness(void) {
+    TEST_ASSERT_FALSE(ams::VehicleService::charge_requested(10000, 0u));        // never
+    TEST_ASSERT_TRUE (ams::VehicleService::charge_requested(
+        10000, 10000 - ams::config::ChargeReqFreshMs));                         // exactly fresh
+    TEST_ASSERT_FALSE(ams::VehicleService::charge_requested(
+        10000, 10000 - ams::config::ChargeReqFreshMs - 1));                     // just stale
+    TEST_ASSERT_TRUE (ams::VehicleService::charge_requested(10000, 10005));     // future -> fresh
+}

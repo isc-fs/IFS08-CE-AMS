@@ -60,6 +60,9 @@ void test_decode_dc_bus_little_endian(void);
 void test_update_dc_bus_frame(void);
 void test_acu_frame_on_wrong_bus_rejected(void);
 void test_acu_unknown_id_rejected(void);
+void test_charge_req_magic_frame_sets_tick(void);
+void test_charge_req_wrong_magic_ignored(void);
+void test_charge_requested_freshness(void);
 
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
@@ -259,6 +262,9 @@ int main(void) {
     RUN_TEST(test_decode_dc_bus_little_endian);
     RUN_TEST(test_update_dc_bus_frame);
     RUN_TEST(test_acu_frame_on_wrong_bus_rejected);
+    RUN_TEST(test_charge_req_magic_frame_sets_tick);
+    RUN_TEST(test_charge_req_wrong_magic_ignored);
+    RUN_TEST(test_charge_requested_freshness);
     RUN_TEST(test_acu_unknown_id_rejected);
 
     RUN_TEST(test_bootloader_trigger_exact_match);
