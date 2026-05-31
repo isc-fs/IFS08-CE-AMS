@@ -65,7 +65,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
 
 # ---------------------------------------------------------------------------
 # Firmware identification (#118). Populates the bl_fwinfo_t record in
-# firmware_info.cpp from build-system metadata so the BL / pit-tool can
+# firmware_info.cpp from build-system metadata so the BL / MingoCAN can
 # tell which commit a flashed image came from.
 # ---------------------------------------------------------------------------
 
@@ -81,28 +81,42 @@ set(AMS_FW_VERSION_MINOR ${CMAKE_MATCH_2})
 set(AMS_FW_VERSION_PATCH ${CMAKE_MATCH_3})
 message(STATUS "AMS firmware version: ${AMS_FW_VERSION_MAJOR}.${AMS_FW_VERSION_MINOR}.${AMS_FW_VERSION_PATCH}")
 
-# Git short hash. Captured at configure time -- builds in a non-git
-# checkout (release tarball, etc.) get zeros. The first 8 hex chars
-# pack into bl_fwinfo_t::git_hash[0..3].
-execute_process(
-    COMMAND git rev-parse --short=8 HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE   AMS_GIT_HASH_HEX
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-    RESULT_VARIABLE   AMS_GIT_HASH_RC
-)
-if(NOT AMS_GIT_HASH_RC EQUAL 0 OR NOT AMS_GIT_HASH_HEX MATCHES "^[0-9a-f]+$")
-    set(AMS_GIT_HASH_HEX "00000000")
-    message(STATUS "AMS git hash: <none> (not a git checkout)")
+# Git short hash, packed into bl_fwinfo_t::git_hash[0..3] (first 8 hex).
+# A caller may pass it explicitly via -DGIT_HASH=<hex> -- this is the
+# path for builds with no .git tree (Docker/CI image, release tarball,
+# the HIL bench rsync copy) that still want real build provenance in
+# 0x6C6. Without an override it's captured from `git rev-parse` at
+# configure time; a non-git checkout with no override gets zeros.
+if(DEFINED GIT_HASH AND NOT GIT_HASH STREQUAL "")
+    string(TOLOWER "${GIT_HASH}" AMS_GIT_HASH_HEX)
+    if(NOT AMS_GIT_HASH_HEX MATCHES "^[0-9a-f]+$")
+        message(FATAL_ERROR "GIT_HASH must be hexadecimal, got '${GIT_HASH}'")
+    endif()
+    message(STATUS "AMS git hash: ${AMS_GIT_HASH_HEX} (from -DGIT_HASH)")
 else()
-    string(LENGTH "${AMS_GIT_HASH_HEX}" _ams_hash_len)
-    while(_ams_hash_len LESS 8)
-        string(APPEND AMS_GIT_HASH_HEX "0")
-        math(EXPR _ams_hash_len "${_ams_hash_len}+1")
-    endwhile()
-    message(STATUS "AMS git hash: ${AMS_GIT_HASH_HEX}")
+    execute_process(
+        COMMAND git rev-parse --short=8 HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE   AMS_GIT_HASH_HEX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE   AMS_GIT_HASH_RC
+    )
+    if(NOT AMS_GIT_HASH_RC EQUAL 0 OR NOT AMS_GIT_HASH_HEX MATCHES "^[0-9a-f]+$")
+        set(AMS_GIT_HASH_HEX "00000000")
+        message(STATUS "AMS git hash: <none> (not a git checkout, no -DGIT_HASH)")
+    else()
+        message(STATUS "AMS git hash: ${AMS_GIT_HASH_HEX}")
+    endif()
 endif()
+# Normalise to at least 8 hex chars (a short override gets right-padded;
+# a long one is truncated to the first 8 by the SUBSTRING calls below,
+# matching `git rev-parse --short=8`).
+string(LENGTH "${AMS_GIT_HASH_HEX}" _ams_hash_len)
+while(_ams_hash_len LESS 8)
+    string(APPEND AMS_GIT_HASH_HEX "0")
+    math(EXPR _ams_hash_len "${_ams_hash_len}+1")
+endwhile()
 string(SUBSTRING "${AMS_GIT_HASH_HEX}" 0 2 AMS_GIT_HASH_0_HEX)
 string(SUBSTRING "${AMS_GIT_HASH_HEX}" 2 2 AMS_GIT_HASH_1_HEX)
 string(SUBSTRING "${AMS_GIT_HASH_HEX}" 4 2 AMS_GIT_HASH_2_HEX)

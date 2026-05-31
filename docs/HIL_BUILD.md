@@ -72,6 +72,26 @@ construction, a flight (latch-sticky) build. Use a distinct build
 directory per flavour (`build/` for flight, `build-hil/` for the bench)
 so binaries don't get confused.
 
+### Build provenance in `0x6C6` (`-DGIT_HASH`)
+
+`firmware_info` (pit-diag `0x6C6`) carries the build's git short hash so
+the bench / MingoCAN can confirm exactly which commit is flashed. It's
+captured from `git rev-parse` at configure time — but a build with **no
+`.git` tree** (a Docker/CI image, a release tarball, the HIL bench's
+rsync copy) can't derive it and falls back to zeros. Pass it in
+explicitly so `0x6C6[3..6]` reflects the real commit:
+
+```bash
+cmake -B build-hil \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+      -DAMS_HIL_CLEAR_ERROR_LATCH=ON \
+      -DGIT_HASH=$(git -C <repo-with-.git> rev-parse --short=8 HEAD)
+```
+
+`GIT_HASH` must be hexadecimal; the first 8 chars are used (matching
+`--short=8`). This lets the A-013 / G-096 / F-075 provenance assertions
+verify the hash instead of treating it as log-only.
+
 ---
 
 ## History
