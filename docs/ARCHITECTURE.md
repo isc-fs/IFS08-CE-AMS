@@ -32,7 +32,14 @@ Everything else exists to enforce these:
    the latched-fault path; see invariant 5). A stuck supervisor →
    IWDG timeout (≈100 ms) → hardware reset → relays default open.
 5. **ERROR is latched across resets** via `RTC->BKP1R` (magic
-   `0xA115EE51`). Cleared only by full backup-domain power loss.
+   `0xA115EE51`). It survives every **warm** reset (software /
+   `NVIC_SystemReset`, IWDG, reset pin) — so a fault that watchdog-resets
+   the chip comes back up in `Error`. This carrier has **no VBAT** (#324),
+   so the backup domain is powered only from VDD: a full LV **power-cycle**
+   (or a brown-out collapsing VDD) clears the latch. That is **accepted by
+   design** — a deliberate power-cycle is the manual reset, and a
+   *persistent* fault re-latches on the next post-grace evaluation. The
+   latch is **not** flash-backed; do not rely on it surviving a power-off.
    `BKP0R` is reserved for the bootloader's boot-request handshake
    (`0xB00710AD`), `BKP2R` is reserved for the jump-reason ASCII
    tag; no two registers share a word. Once latched, MainTask keeps
