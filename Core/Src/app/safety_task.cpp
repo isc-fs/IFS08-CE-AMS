@@ -288,18 +288,27 @@ void SafetyTask::run() noexcept {
 
                     // Persist ERROR across resets even when the FSM
                     // got there without a predicate fault (e.g.
-                    // precharge timeout, or TSMS/DASH_CHG dropped
-                    // mid-Run).
+                    // precharge timeout, or DASH_CHG dropped mid-Run).
                     if (state == fsm::State::Error) {
                         ErrorLatch::set();
                         error_latched_ = true;
                         // Distinguish FSM-driven Error (precharge
-                        // timeout / TSMS / DASH_CHG drop) from a
-                        // predicate fault on pit-diag 0x6C0[6] (#276).
-                        // 12 == FsmError (reserved past FaultReason).
+                        // timeout / fault) from a predicate fault on
+                        // pit-diag 0x6C0[6] (#276). 12 == FsmError
+                        // (reserved past FaultReason).
                         if (g_fault_reason_telemetry == 0u) {
                             g_fault_reason_telemetry = 12u;
                         }
+                    }
+
+                    // Fell back to idle -- a TSMS drop de-energised us
+                    // without latching (#327), or any other return to
+                    // Start. Clear the mode lock so the re-arm re-locks
+                    // Car/Charger and re-runs precharge from scratch.
+                    if (state == fsm::State::Start) {
+                        mode_locked = fsm::Mode::Undecided;
+                        g_mode_locked_telemetry =
+                            static_cast<std::uint8_t>(mode_locked);
                     }
                 }
             }

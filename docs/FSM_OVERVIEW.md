@@ -20,7 +20,7 @@ Sources: `Core/Inc/app/state_machine.hpp`, `Core/Inc/app/safety_predicates.hpp`,
 3. [The Mode enum — locked once per boot](#3-the-mode-enum--locked-once-per-boot)
 4. [Inputs struct — what the FSM consumes](#4-inputs-struct--what-the-fsm-consumes)
 5. [Output — next state + relay-action bitmask](#5-output--next-state--relay-action-bitmask)
-6. [Two guards before the state switch](#6-two-guards-before-the-state-switch)
+6. [Three guards before the state switch](#6-three-guards-before-the-state-switch)
 7. [Per-state transition logic](#7-per-state-transition-logic)
 8. [Full state diagram](#8-full-state-diagram)
 9. [Boot-time entry into the FSM](#9-boot-time-entry-into-the-fsm)
@@ -206,7 +206,7 @@ code is structured so no transition emits both.
 
 ---
 
-## 6. Two guards before the state switch
+## 6. Three guards before the state switch
 
 ### Guard 1 — sticky Error
 
@@ -233,6 +233,23 @@ Any predicate fault preempts the normal transition logic, from any state. Note
 the FSM **consumes** SafetyTask's already-debounced `predicate_fault` flag — it
 does **not** re-run the predicate. In normal operation `SafetyTask` latches the
 fault and never calls `step()` on that tick, so this branch is a backstop.
+
+### Guard 3 — TSMS held (non-latching de-energise, #327)
+
+```cpp
+if (in.current != State::Start && in.current != State::Error && !in.tsms) {
+    return { State::Start, OpenAirN | OpenAirP | OpenPrecharge };
+}
+```
+
+TSMS (PF9) is the held master enable for **every energised state**
+(`Precharge`/`Transition`/`Run`/`Charge`). Its drop opens all contactors and
+falls back to `Start` — **not** `Error`, and it never sets `ErrorLatch` or drops
+`AMS_OK`. It sits *below* the predicate trap, so a genuine pack fault on the same
+tick still wins and latches. This is the FS "driver must be able to stop and
+restart the TS from the cockpit, unaided" rule: `AMS_OK` is the AMS's own SDC
+relay upstream of TSMS, so coupling it to TSMS would make the loop unrecloseable
+without a reset — instead AMS_OK is health-only and a TSMS drop just disarms.
 
 ### The predicate set (see `safety_predicates.hpp`)
 
@@ -371,15 +388,18 @@ return { State::Error, ForceError | OpenAirN | OpenAirP | OpenPrecharge };
 ### Run / Charge — sustained by TSMS alone
 
 ```cpp
-// Run (Charge is identical):
-if (!in.tsms) {
-    return { State::Error, ForceError | OpenAirN | OpenAirP | OpenPrecharge };
-}
+// Run (Charge is identical). A TSMS drop is already handled by the
+// non-latching guard ABOVE the switch (-> Start, no Error, #327), so
+// here the body is just:
 return { State::Run /* or Charge */, 0u };
 ```
 
-- **Only a TSMS drop exits Run/Charge.** TSMS is the held run interlock. Its drop
-  latches a sticky Error and opens all relays (survives the power cycle).
+- **A TSMS drop de-energises Run/Charge to Start, non-latching (#327).** TSMS is
+  the held run interlock; its drop opens all contactors and returns to `Start`
+  **without** latching `Error` or touching `AMS_OK`, so the TS can be re-armed
+  from the cockpit (DASH_CHG) with no reset/power-cycle. It is a normal operator
+  action, not a fault — handled by the shared TSMS guard before the state switch
+  (covers every energised state), so Run/Charge themselves have no TSMS check.
 - **DASH_CHG is NOT checked here.** It is a *momentary press* — low most of the
   time — so level-checking it would fault Run/Charge instantly. Releasing the
   DASH_CHG button does **not** fault.
@@ -417,8 +437,8 @@ stateDiagram-v2
     Transition --> Charge : mode == Charger (one-step passthrough)
     Transition --> Error : Car bus dropped, or mode == Undecided
 
-    Run --> Error : NOT tsms (TSMS drop only)
-    Charge --> Error : NOT tsms (TSMS drop only)
+    Run --> Start : NOT tsms (non-latching de-energise)
+    Charge --> Start : NOT tsms (non-latching de-energise)
 
     Start --> Error : predicate fault
     Precharge --> Error : predicate fault
@@ -524,7 +544,7 @@ There are **two paths into Error**, both of which set the latch:
 - **Predicate fault** — `SafetyTask` latches via `latch_error_()`, recording
   `g_fault_reason_telemetry` (the offending `FaultReason`) and
   `g_fault_detail_telemetry`.
-- **FSM-driven Error** — precharge timeout or TSMS drop. When the FSM returns
+- **FSM-driven Error** — precharge timeout or a Transition guard. When the FSM returns
   `Error`, `SafetyTask` sets the latch and, if no predicate reason was recorded,
   stamps `g_fault_reason_telemetry = 12` (`FsmError`).
 
@@ -582,7 +602,7 @@ When the AMS latches Error, the branch is surfaced on pit-diag `0x6C0`:
   | 4 | CellUnderVoltage | 10 | CurrentOverLimit |
   | 5 | CellOverVoltage | 11 | VcuStale |
 
-  **`12` = `FsmError`** — reserved for FSM-driven Error (precharge timeout / TSMS
+  **`12` = `FsmError`** — reserved for FSM-driven Error (precharge timeout / Transition
   drop), stamped by `SafetyTask`, not by the predicate.
 
 - `0x6C0[7]` = detail byte (e.g. offending module index for BMS/cell faults,
@@ -622,7 +642,7 @@ Covers the pure `fsm::step` transitions:
 - **Transition:** commits to Run in Car mode, Charge in Charger mode; `Undecided`
   → Error (defensive); Car bus-drop → Error.
 - **Run / Charge (TSMS-only interlock):**
-  `test_fsm_run_to_error_on_tsms_drop`, `test_fsm_charge_to_error_on_tsms_drop`,
+  `test_fsm_run_to_start_on_tsms_drop`, `test_fsm_charge_to_start_on_tsms_drop`,
   and the release-tolerance tests `test_fsm_run_stays_on_dash_chg_release` /
   `test_fsm_charge_stays_on_dash_chg_release` (proving DASH_CHG release does NOT
   fault).
@@ -639,7 +659,7 @@ End-to-end scenario harness driving multi-step runs:
   `0x101`.
 - `test_sil_charger_stale_request_times_out` — Charger precharge with a stale
   request hits `PrechargeMaxMs` → Error.
-- `test_sil_tsms_drop_in_run_latches_error` — TSMS drop in Run latches Error with
+- `test_sil_tsms_drop_in_run_rearms` — TSMS drop in Run de-energises to Start, then re-arms, with
   all `Open*` bits.
 
 (The predicate, debounce, AMS_OK, and ErrorLatch logic are additionally covered
@@ -653,7 +673,7 @@ by their own dedicated unit-test files in `tests/unit/`.)
    (rising edge of PF10) while TSMS is held. The edge is latched by `SafetyTask`
    between FSM steps and cleared after one step, so a single press drives at most
    one transition. Run/Charge ignore it entirely — releasing it does not fault.
-2. **TSMS alone sustains Run/Charge.** Only a TSMS *level* drop exits Run/Charge.
+2. **TSMS alone sustains Run/Charge.** A TSMS *level* drop de-energises to Start (non-latching, #327).
    This is the run interlock; DASH_CHG is not level-checked in those states.
 3. **Precharge has a deadline again.** `PrechargeMaxMs = 5000` (#307) caps the
    precharge-contactor hold time for any stuck cause. The Transition hold timer
@@ -682,5 +702,5 @@ by their own dedicated unit-test files in `tests/unit/`.)
     updates both in the same iteration, so the FSM always sees a self-consistent
     pair — which the `PrechargeMaxMs` subtraction relies on (no underflow).
 12. **`fault_reason = 12` (`FsmError`) flags FSM-driven Error** (precharge
-    timeout / TSMS drop) on pit-diag `0x6C0[6]`, distinct from predicate faults
+    timeout / Transition guard) on pit-diag `0x6C0[6]`, distinct from predicate faults
     `0..11`.

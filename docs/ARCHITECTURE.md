@@ -335,7 +335,7 @@ MainTask every 10 ms:
 
 | Input | Pin | Kind | Role |
 |---|---|---|---|
-| **TSMS** | PF9 | **held level** (master switch) | Gates `Start → Precharge`; **sustains** `Run`/`Charge` — its drop is the only thing that ends them. |
+| **TSMS** | PF9 | **held level** (master switch) | Gates `Start → Precharge`; **sustains** `Run`/`Charge`. Its drop is a **non-latching** de-energise → back to `Start` (#327), so the TS can be re-armed from the cockpit without a reset. |
 | **DASH_CHG** | PF10 | **momentary press** (rising edge) | One press = one action. With TSMS, drives `Start → Precharge`. MainTask edge-detects PF10 at 10 ms and latches the rising edge until the 20 ms FSM step consumes it (a press landing between FSM steps is never lost; a level held from boot fires no edge). |
 
 The two terminal contexts:
@@ -413,8 +413,8 @@ stateDiagram-v2
     mode_split --> Charge : mode = Charger
     Transition --> Error  : Car bus slumped
 
-    Run    --> Error : TSMS drop
-    Charge --> Error : TSMS drop
+    Run    --> Start : TSMS drop (non-latching)
+    Charge --> Start : TSMS drop (non-latching)
 
     Start      --> Error : predicate fault
     Precharge  --> Error : predicate fault
@@ -465,7 +465,7 @@ consumed inline by MainTask):
 
 - **`Run`/`Charge` are sustained by TSMS alone.** DASH_CHG is a momentary
   press — low for most of `Run`/`Charge` — so it is **not** level-checked
-  there; only a TSMS drop latches `Error`. (Level-checking DASH_CHG in
+  there. A TSMS drop is a **non-latching** de-energise to `Start` (#327), **not** a fault — it never latches `Error` and never touches `AMS_OK`, so the driver can re-arm from the cockpit unaided. (Level-checking DASH_CHG in
   `Run` would fault instantly the moment the operator released it.)
 - **ERROR is sticky within a boot.** Even if the underlying fault clears,
   the FSM stays in `Error` until reset. `ErrorLatch::set()` fires on every
@@ -685,7 +685,7 @@ separate harness):
 | Layer | Files | Coverage |
 |---|---|---|
 | Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine`, `test_bootloader`, `test_ltc6811_decode`, `test_telemetry_encoders`, `test_balance_controller`, `test_acu_tx_encoders`, `test_pit_diag_emitter` | LTC6811 PEC15 + register decoders + chain-length walker, ADG731 channel packing, balancing policy, BMS / current / vehicle service decode + freshness (incl. the `0x101` charge-request magic gate), ADC scaling, each safety predicate in isolation (incl. the cell V/T debounce and VcuStale Car-only gate), every FSM transition (incl. DASH_CHG momentary edge, Charger `0x101`-fresh proceed, `PrechargeMaxMs` timeout), telemetry + pit-diag encoders, boot-trigger frame matcher |
-| SIL (multi-step) | `test_sil_scenarios` | nominal Car startup → Run, BMS dropout → Error, charger path (one press + fresh `0x101`) → Charge, stale-`0x101` mid-precharge → timeout → Error, TSMS-drop sticky Error |
+| SIL (multi-step) | `test_sil_scenarios` | nominal Car startup → Run, BMS dropout → Error, charger path (one press + fresh `0x101`) → Charge, stale-`0x101` mid-precharge → timeout → Error, TSMS-drop → Start → re-arm (non-latching) |
 
 **182 / 182 PASS on every push** via
 `.github/workflows/build-tests.yml`, which also cross-compiles the

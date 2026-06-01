@@ -150,7 +150,8 @@ extern "C" void test_fsm_transition_drops_voltage_to_error(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Run / Charge: TSMS or DASH_CHG drop latches Error; otherwise stays.
+// Run / Charge: a TSMS drop de-energises to Start WITHOUT latching (#327);
+// DASH_CHG release is ignored; otherwise stays.
 // ---------------------------------------------------------------------------
 extern "C" void test_fsm_run_stays_while_tsms_and_dash_chg_high(void) {
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
@@ -160,16 +161,20 @@ extern "C" void test_fsm_run_stays_while_tsms_and_dash_chg_high(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
 }
 
-extern "C" void test_fsm_run_to_error_on_tsms_drop(void) {
+extern "C" void test_fsm_run_to_start_on_tsms_drop(void) {
+    // A TSMS drop is a normal operator de-energise, NOT a fault: open all
+    // contactors and fall back to Start, with NO ForceError / no latch, so
+    // the TS can be re-armed from the cockpit without a reset (#327).
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
-    in.tsms = false; in.dash_chg_edge = true;
+    in.tsms = false; in.dash_chg_edge = false;
     in.mode_locked = ams::fsm::Mode::Car;
     auto out = ams::fsm::step(in);
-    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
 }
 
 extern "C" void test_fsm_run_stays_on_dash_chg_release(void) {
@@ -182,14 +187,41 @@ extern "C" void test_fsm_run_stays_on_dash_chg_release(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
 }
 
-extern "C" void test_fsm_charge_to_error_on_tsms_drop(void) {
-    // Charge ends on a TSMS drop only (DASH_CHG momentary, not checked).
+extern "C" void test_fsm_charge_to_start_on_tsms_drop(void) {
+    // Charge de-energises to Start on a TSMS drop, non-latching (#327).
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Charge, bms, cur, veh);
     in.tsms = false;
     in.mode_locked = ams::fsm::Mode::Charger;
     auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+}
+
+extern "C" void test_fsm_precharge_to_start_on_tsms_drop(void) {
+    // The non-latching TSMS guard covers every energised state, including
+    // Precharge -- a TSMS drop mid-precharge opens up and returns to Start
+    // rather than waiting for the PrechargeMaxMs timeout to latch (#327).
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = false; in.mode_locked = ams::fsm::Mode::Car;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+}
+
+extern "C" void test_fsm_tsms_drop_still_yields_to_predicate_fault(void) {
+    // A genuine pack fault takes priority over a TSMS drop: if both are
+    // present, the predicate fault still latches Error (#327 guard sits
+    // below the predicate-fault guard).
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
+    in.tsms = false; in.predicate_fault = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
 }
 
 extern "C" void test_fsm_charge_stays_on_dash_chg_release(void) {

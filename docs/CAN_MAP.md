@@ -390,7 +390,7 @@ survive a predicate trip.
 | `0x6C7` | 1 per-IC PEC count (ICs 0..7) | 8 bytes, one saturating uint8 per chain index. Maps chain index → module: IC `2m`=upper / `2m+1`=lower of module `m`. (#258) | 1 Hz |
 | `0x6C8` | 1 per-IC PEC count (ICs 8..9 + reserved) | `[0]` IC 8, `[1]` IC 9, `[2..7]` reserved 0 | 1 Hz |
 
-`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / TSMS / DASH_CHG drop). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
+`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / Transition guard; note a TSMS drop is non-latching since #327, not an Error). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
 
 Encoders are pure-logic in
 [`Core/Inc/app/pit_diag_emitter.hpp`](../Core/Inc/app/pit_diag_emitter.hpp);

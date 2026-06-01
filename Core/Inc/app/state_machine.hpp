@@ -107,6 +107,26 @@ struct Output {
                  events::safety::OpenPrecharge };
     }
 
+    // TSMS (PF9) is the held master enable for every energised state.
+    // Its drop is a NORMAL operator de-energise, NOT a fault: open all
+    // contactors and fall back to Start WITHOUT latching Error. This is
+    // load-bearing for the FS "driver must be able to stop + restart the
+    // tractive system from the cockpit, unaided" rule. AMS_OK is the
+    // AMS's own SDC relay and sits UPSTREAM of TSMS in the loop; if a
+    // TSMS drop latched Error it would drop AMS_OK, opening that upstream
+    // relay, and reclosing TSMS could no longer restore the loop without
+    // a reset/power-cycle. So AMS_OK stays health-only (driven by the
+    // predicate set, never by TSMS), and a TSMS drop just returns us to
+    // Start -- the driver re-arms with a DASH_CHG press, which re-runs
+    // precharge. Genuine pack faults still latch via predicate_fault
+    // above; this branch is reached only on a no-fault tick. (#327)
+    if (in.current != State::Start && in.current != State::Error &&
+        !in.tsms) {
+        return { State::Start,
+                 events::safety::OpenAirN | events::safety::OpenAirP |
+                 events::safety::OpenPrecharge };
+    }
+
     switch (in.current) {
     case State::Start: {
         // Leave Start on a DASH_CHG press (rising edge) while TSMS (the
@@ -202,31 +222,18 @@ struct Output {
     }
 
     case State::Run: {
-        // Sustained while TSMS (the held master switch) is on; its drop
-        // latches Error and opens all relays (sticky, power-cycle to
-        // clear -- matches the ErrorLatch backup-register design). DASH_CHG
-        // is NOT checked here: it is a momentary press, so it is low most
-        // of the time -- checking its level would fault Run instantly
-        // (#305 / the edge-detect rework). TSMS is the run interlock.
-        if (!in.tsms) {
-            return { State::Error,
-                     events::safety::ForceError |
-                     events::safety::OpenAirN | events::safety::OpenAirP |
-                     events::safety::OpenPrecharge };
-        }
+        // Sustained while TSMS (the held master switch) is on. Its drop is
+        // handled by the non-latching TSMS guard above (-> Start, no Error,
+        // #327), so by the time we're here TSMS is held. DASH_CHG is NOT
+        // checked here: it is a momentary press, low most of the time --
+        // checking its level would fault Run instantly (#305).
         return { State::Run, 0u };
     }
 
     case State::Charge: {
-        // Same exit semantics as Run -- sustained while TSMS is held; its
-        // drop latches Error. DASH_CHG is a momentary press, not checked
-        // here (#305).
-        if (!in.tsms) {
-            return { State::Error,
-                     events::safety::ForceError |
-                     events::safety::OpenAirN | events::safety::OpenAirP |
-                     events::safety::OpenPrecharge };
-        }
+        // Same as Run -- TSMS-held is guaranteed by the guard above; a
+        // TSMS drop de-energises to Start without latching (#327). DASH_CHG
+        // is a momentary press, not checked here (#305).
         return { State::Charge, 0u };
     }
 
