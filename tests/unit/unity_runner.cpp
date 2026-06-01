@@ -126,6 +126,9 @@ void test_fsm_charge_to_start_on_tsms_drop(void);
 void test_fsm_precharge_to_start_on_tsms_drop(void);
 void test_fsm_tsms_drop_still_yields_to_predicate_fault(void);
 void test_fsm_charge_stays_on_dash_chg_release(void);
+void test_fsm_run_to_start_on_bus_collapse(void);
+void test_fsm_run_stays_when_bus_healthy(void);
+void test_bus_below_collapse_thresholds(void);
 void test_fsm_precharge_charger_proceeds_on_fresh_request(void);
 void test_fsm_precharge_charger_holds_without_fresh_request(void);
 void test_fsm_any_state_to_error_on_fault(void);
@@ -213,6 +216,7 @@ void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
 void test_sil_charger_stale_request_times_out(void);
 void test_sil_tsms_drop_in_run_rearms(void);
+void test_sil_bus_collapse_in_run_rearms(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -330,6 +334,9 @@ int main(void) {
     RUN_TEST(test_fsm_precharge_to_start_on_tsms_drop);
     RUN_TEST(test_fsm_tsms_drop_still_yields_to_predicate_fault);
     RUN_TEST(test_fsm_charge_stays_on_dash_chg_release);
+    RUN_TEST(test_fsm_run_to_start_on_bus_collapse);
+    RUN_TEST(test_fsm_run_stays_when_bus_healthy);
+    RUN_TEST(test_bus_below_collapse_thresholds);
     RUN_TEST(test_fsm_precharge_charger_proceeds_on_fresh_request);
     RUN_TEST(test_fsm_precharge_charger_holds_without_fresh_request);
     RUN_TEST(test_fsm_any_state_to_error_on_fault);
@@ -412,6 +419,7 @@ int main(void) {
     RUN_TEST(test_sil_charger_path);
     RUN_TEST(test_sil_charger_stale_request_times_out);
     RUN_TEST(test_sil_tsms_drop_in_run_rearms);
+    RUN_TEST(test_sil_bus_collapse_in_run_rearms);
 
     return UNITY_END();
 }

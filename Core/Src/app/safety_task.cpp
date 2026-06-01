@@ -148,6 +148,12 @@ void SafetyTask::run() noexcept {
         (HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET);
     bool dash_chg_edge_pending = false;
 
+    // DC-bus collapse debounce (#330). Counts consecutive 10 ms ticks where
+    // we are in Run (Car) and the VCU bus has collapsed below pack -- the
+    // signature of the AIRs being opened externally (cockpit SDC shutdown
+    // the AMS can't sense). When it confirms, the FSM de-energises to Start.
+    std::uint16_t bus_collapse_count = 0;
+
     for (;;) {
         // ---------------- Wake at fixed 10 ms cadence ----------------
         last_wake += config::SafetyPeriodMs;
@@ -231,6 +237,26 @@ void SafetyTask::run() noexcept {
             // #107 for the loop-bug this avoids.
             Watchdog::refresh();
         } else {
+            // ---------- DC-bus collapse debounce (#330, every 10 ms) ----------
+            // Only meaningful in Run (Car mode): the bus tracks the pack
+            // there, so a sustained collapse means the AIRs opened externally
+            // (a cockpit SDC shutdown the AMS can't sense). Count consecutive
+            // collapsed ticks; the FSM consumes the confirmed flag and falls
+            // back to Start so a re-arm re-runs precharge. Any non-qualifying
+            // tick resets the count.
+            bool bus_collapsed = false;
+            if (state == fsm::State::Run &&
+                mode_locked == fsm::Mode::Car &&
+                fsm::bus_below_collapse(bms_snap, veh_snap)) {
+                if (bus_collapse_count < config::BusCollapseConfirmTicks) {
+                    ++bus_collapse_count;
+                }
+                bus_collapsed =
+                    (bus_collapse_count >= config::BusCollapseConfirmTicks);
+            } else {
+                bus_collapse_count = 0;
+            }
+
             // ---------------- FSM step (every 20 ms) ----------------
             if (now - last_state_tick >= config::StatePeriodMs) {
                 last_state_tick = now;
@@ -270,6 +296,7 @@ void SafetyTask::run() noexcept {
                     // is false here (step() only runs on a no-fault
                     // tick), but it keeps the FSM's Error backstop honest.
                     predicate_fault,
+                    bus_collapsed,   // debounced bus-collapse decision (#330)
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);

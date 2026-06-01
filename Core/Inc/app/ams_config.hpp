@@ -222,6 +222,21 @@ inline constexpr std::int16_t  DcdcTempStubValue     = -32768;
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         PrechargeRatio   = 0.95f;
 
+// DC-bus collapse detector (#330). In Run (Car mode) the bus equals the
+// pack voltage; if the AIRs open externally -- e.g. a cockpit SDC shutdown
+// the AMS can't sense -- the VCU-reported dc_bus_V collapses. When it
+// falls below BusCollapsePercent of the pack (cell-sum) for
+// BusCollapseConfirmTicks consecutive 10 ms safety ticks, the FSM treats
+// the contactors as opened externally and de-energises to Start, so a
+// re-arm re-runs precharge instead of reclosing AIR+ onto a discharged
+// DC-link. COMMISSION both against the real pack/inverter: the percent
+// trades false-trip immunity (must sit below worst-case loaded sag of
+// dc_bus_V vs the cell-sum) against inrush protection (higher = trips
+// earlier, before the link discharges enough to make a no-precharge
+// reclose damaging); the debounce rejects a single anomalous 0x100 frame.
+inline constexpr std::uint32_t BusCollapsePercent     = 50;  // COMMISSION (% of pack)
+inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~200 ms @ 10 ms)
+
 // Current sensor calibration. Pack current measured via a Bourns
 // SSA-2-250A shunt sensor (datasheet: pcbs/ssa-2.pdf). The sensor's
 // raw differential output OUTP/OUTN is bipolar at +/- 5 mV/A (250 A

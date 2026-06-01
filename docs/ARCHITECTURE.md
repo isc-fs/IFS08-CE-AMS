@@ -421,6 +421,7 @@ stateDiagram-v2
     Transition --> Error  : Car bus slumped
 
     Run    --> Start : TSMS drop (non-latching)
+    Run    --> Start : bus collapse / AIRs opened externally
     Charge --> Start : TSMS drop (non-latching)
 
     Start      --> Error : predicate fault
@@ -474,6 +475,15 @@ consumed inline by MainTask):
   press — low for most of `Run`/`Charge` — so it is **not** level-checked
   there. A TSMS drop is a **non-latching** de-energise to `Start` (#327), **not** a fault — it never latches `Error` and never touches `AMS_OK`, so the driver can re-arm from the cockpit unaided. (Level-checking DASH_CHG in
   `Run` would fault instantly the moment the operator released it.)
+- **AIRs opened externally → `Run` de-energises to `Start` (#330).** The
+  cockpit SDC shutdown opens the AIRs without the AMS sensing it; the VCU
+  keeps reporting `dc_bus_V`, so a **sustained collapse** of the bus below
+  `BusCollapsePercent` of the pack (debounced over `BusCollapseConfirmTicks`
+  in Car mode) means the contactors are physically open while the FSM still
+  thinks it's in `Run`. The FSM falls back to `Start` (non-latching, AMS_OK
+  untouched) so a re-arm re-runs precharge instead of reclosing AIR+ onto a
+  discharged DC-link when the shutdown is released. Car/`Run` only — Charge
+  has no VCU `dc_bus_V` and the charger soft-starts.
 - **ERROR is sticky within a boot.** Even if the underlying fault clears,
   the FSM stays in `Error` until reset. `ErrorLatch::set()` fires on every
   `Error` entry so the next boot also starts in `Error` until

@@ -60,21 +60,39 @@ struct Harness {
         veh.last_dc_bus_tick = now;
     }
 
+    std::uint16_t bus_collapse_count = 0;
+
     ams::fsm::Output step() {
         // Replicate SafetyTask: evaluate the predicate set, then feed
         // the decision into the FSM (which no longer self-evaluates,
-        // #279). No debounce here -- SIL exercises FSM transition logic,
-        // not the cell-fault latch timing (that's unit-tested directly
-        // via CellFaultDebounce).
+        // #279). No cell-fault debounce here -- that's unit-tested
+        // directly via CellFaultDebounce.
         const ams::safety::Inputs pred = {
             bms, cur, veh, /*force_error_set=*/false,
             /*vcu_required=*/(mode_locked == ams::fsm::Mode::Car), now,
         };
         const bool predicate_fault = ams::safety::evaluate_fault(pred);
+
+        // Replicate SafetyTask's bus-collapse debounce (#330) so SIL can
+        // drive a real dc_bus collapse through the threshold + counter.
+        bool bus_collapsed = false;
+        if (state == ams::fsm::State::Run &&
+            mode_locked == ams::fsm::Mode::Car &&
+            ams::fsm::bus_below_collapse(bms, veh)) {
+            if (bus_collapse_count < ams::config::BusCollapseConfirmTicks) {
+                ++bus_collapse_count;
+            }
+            bus_collapsed =
+                (bus_collapse_count >= ams::config::BusCollapseConfirmTicks);
+        } else {
+            bus_collapse_count = 0;
+        }
+
         const ams::fsm::Inputs in = {
             state, bms, cur, veh,
             tsms, dash_chg_edge, mode_locked,
             predicate_fault,
+            bus_collapsed,
             now, state_entry_tick,
         };
         const auto out = ams::fsm::step(in);
@@ -246,4 +264,45 @@ extern "C" void test_sil_tsms_drop_in_run_rearms(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, rearm.next);
     TEST_ASSERT_TRUE(rearm.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(rearm.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 6: AIRs opened externally in Run (#330). A cockpit SDC shutdown
+// opens the AIRs without the AMS sensing it; the VCU reports a collapsed
+// bus. After the debounce the FSM de-energises to Start (non-latching), the
+// driver re-arms, and precharge re-runs -- never reclosing AIR+ unprecharged.
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_bus_collapse_in_run_rearms(void) {
+    Harness h;
+    h.state = ams::fsm::State::Run;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Car;
+    h.veh.dc_bus_V = 350;        // healthy bus tracks the pack
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);
+
+    // Bus collapses (AIRs opened externally). A sustained collapse, NOT a
+    // single low reading, must de-energise -> debounce, then Start.
+    h.veh.dc_bus_V = 50;         // < 50% of 356 V
+    ams::fsm::Output out{};
+    bool reached_start = false;
+    for (int i = 0; i < ams::config::BusCollapseConfirmTicks + 5; ++i) {
+        h.advance(20);
+        out = h.step();
+        if (out.next == ams::fsm::State::Start) { reached_start = true; break; }
+        TEST_ASSERT_EQUAL(ams::fsm::State::Run, out.next);  // still debouncing
+    }
+    TEST_ASSERT_TRUE(reached_start);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+
+    // Idle in Start, bus still low -> stays put, no fault.
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, h.step().next);
+
+    // Re-arm (driver released the shutdown) -> Precharge re-runs from scratch.
+    h.veh.dc_bus_V = 0;
+    h.tsms = true; h.dash_chg_edge = true;
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
 }

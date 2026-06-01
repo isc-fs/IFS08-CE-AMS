@@ -39,6 +39,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
              /*tsms*/false, /*dash_chg_edge*/false,
              /*mode_locked*/ams::fsm::Mode::Undecided,
              /*predicate_fault*/false,
+             /*bus_collapsed*/false,
              /*now*/10000, /*entry*/9800 };
 }
 
@@ -230,6 +231,43 @@ extern "C" void test_fsm_charge_stays_on_dash_chg_release(void) {
     in.tsms = true; in.dash_chg_edge = false;
     in.mode_locked = ams::fsm::Mode::Charger;
     TEST_ASSERT_EQUAL(ams::fsm::State::Charge, ams::fsm::step(in).next);
+}
+
+// ---------------------------------------------------------------------------
+// #330: AIRs opened externally (cockpit SDC shutdown the AMS can't sense) ->
+// Run de-energises to Start (non-latching) so a re-arm re-runs precharge.
+// ---------------------------------------------------------------------------
+extern "C" void test_fsm_run_to_start_on_bus_collapse(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Car;
+    in.bus_collapsed = true;   // SafetyTask-debounced collapse
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
+}
+
+extern "C" void test_fsm_run_stays_when_bus_healthy(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Run, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Car;
+    in.bus_collapsed = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
+}
+
+// bus_below_collapse threshold helper (BusCollapsePercent = 50).
+extern "C" void test_bus_below_collapse_thresholds(void) {
+    ams::BmsState bms{}; ams::VehicleState veh{};
+    bms.pack_voltage_mV = 5u * 19u * 3750u;   // ~356 V cell-sum
+    veh.dc_bus_V = 350;                        // ~full pack -> not collapsed
+    TEST_ASSERT_FALSE(ams::fsm::bus_below_collapse(bms, veh));
+    veh.dc_bus_V = 170;                        // < 50% of 356 -> collapsed
+    TEST_ASSERT_TRUE(ams::fsm::bus_below_collapse(bms, veh));
+    bms.pack_voltage_mV = 0; veh.dc_bus_V = 0;  // no data -> never collapsed
+    TEST_ASSERT_FALSE(ams::fsm::bus_below_collapse(bms, veh));
 }
 
 // Charger precharge proceeds on a STILL-FRESH 0x101 charge request (#305) --
