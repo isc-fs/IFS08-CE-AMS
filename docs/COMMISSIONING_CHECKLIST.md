@@ -24,8 +24,11 @@ checklist + record.
 |---|---|---|---|---|---|
 | `CellUnderVoltageMv` | 2800 | mV | Cell datasheet min discharge cutoff (+ margin for sag). | | ☐ |
 | `CellOverVoltageMv` | 4200 | mV | Cell datasheet max charge voltage (− margin). | | ☐ |
-| `CellUnderTempC` | −10 | °C | Cell datasheet min charge/discharge temp. | | ☐ |
 | `CellOverTempC` | 60 | °C | Cell datasheet max temp (− margin); cross-check with `BalanceTempMax`. | | ☐ |
+
+> **Under-temp is not commissioned** for this pack — `CellUnderTempC` keeps
+> its default (−10 °C). The predicate still exists but isn't a measured
+> bench item.
 
 > Debounce: a breach must persist `CellFaultConfirmTicks` (30 ≈ 300 ms)
 > before latching — confirm that window is acceptable for your cell, not a
