@@ -58,16 +58,23 @@ void ams_app_init_task_run(void *argument)
     g_app_init_progress = 1u;   // post-ErrorLatch::init
 
 #if defined(AMS_HIL_CLEAR_ERROR_LATCH)
-    // HIL-only: VBAT-backed RTC_BKP_DR1 outlives long power-offs on
-    // the bench (carrier has a coin cell + bulk caps), and the bench
-    // has no external way to clear it. A stale latch from a previous
-    // session would trap the bench in Error for the entire iteration.
-    // The bench drives a real LTC6820/LTC6811 via the Pi Pico emulator
-    // (#224), so this just lets it recover from a transient discovery
-    // glitch without a power cycle.
-    // NEVER compiled into flight HW: this defeats the sticky-error
-    // contract that protects against intermittent pre-charge / SDC
-    // events surviving a brown-out.
+    // HIL-only: wipe any stale ErrorLatch on boot so a fault latched in
+    // a previous bench iteration doesn't trap the chip in Error for the
+    // whole run (the bench has no external clear path). RTC_BKP_DR1
+    // survives a WARM reset -- the 0x002 trigger -> NVIC_SystemReset, an
+    // IWDG timeout -- so a warm-reset-preserved stale latch is what this
+    // clears; it also lets the bench recover from a transient LTC
+    // chain-discovery glitch (Pi Pico emulator, #224) without a reset.
+    //
+    // NOTE: the backup domain only persists across a POWER-OFF / brown-
+    // out when the carrier has a VBAT source (coin cell / supercap). The
+    // MLC bench carrier has none, so a power-cycle wipes BKP_DR1 there
+    // regardless of this flag; flight-HW VBAT is unconfirmed -- see #324
+    // for the sticky-error-across-power-cycle gap this exposed.
+    //
+    // NEVER compiled into flight HW: clearing the latch on boot defeats
+    // the sticky-error contract -- a latched pre-charge / SDC / cell
+    // fault must NOT be wiped by a reboot.
     ams::ErrorLatch::clear();
     g_app_init_progress = 2u;   // post-ErrorLatch::clear
 #endif
