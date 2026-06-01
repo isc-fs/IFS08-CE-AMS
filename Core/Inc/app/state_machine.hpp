@@ -61,6 +61,13 @@ struct Inputs {
     // no-fault tick, so this is false in normal operation; the
     // any-state-to-Error branch below is a kept backstop.
     bool                predicate_fault;
+    // SafetyTask's DEBOUNCED "the DC bus collapsed while we think we're in
+    // Run" decision (#330). The cockpit SDC shutdown opens the AIRs without
+    // the AMS sensing it; the VCU still reports dc_bus_V, so a sustained
+    // collapse means the AIRs opened externally. Run consumes this to fall
+    // back to Start (non-latching) rather than reclosing AIR+ onto a
+    // discharged DC-link. Car/Run only; false in every other state.
+    bool                bus_collapsed;
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;
 };
@@ -85,6 +92,21 @@ struct Output {
     const std::uint64_t bus_mV  = static_cast<std::uint64_t>(veh.dc_bus_V) * 1000u;
     const std::uint64_t pack_mV = bms.pack_voltage_mV;
     return bus_mV * 100u >= pack_mV * 95u;
+}
+
+// DC-bus collapse detector (#330). True when the VCU-measured bus has
+// fallen well below the pack voltage -- i.e. the AIRs opened externally
+// (a cockpit SDC shutdown the AMS can't sense) while the FSM still thinks
+// it's in Run. Same mV comparison as precharge_target_reached, against
+// the looser BusCollapsePercent. Returns false with no pack data yet
+// (pack_voltage_mV == 0) so it can't false-fire during bring-up.
+// SafetyTask debounces this before handing the FSM `bus_collapsed`.
+[[nodiscard]] inline bool bus_below_collapse(const BmsState& bms,
+                                             const VehicleState& veh) noexcept {
+    if (bms.pack_voltage_mV == 0u) return false;
+    const std::uint64_t bus_mV  = static_cast<std::uint64_t>(veh.dc_bus_V) * 1000u;
+    const std::uint64_t pack_mV = bms.pack_voltage_mV;
+    return bus_mV * 100u < pack_mV * static_cast<std::uint64_t>(config::BusCollapsePercent);
 }
 
 [[nodiscard]] inline Output step(const Inputs& in) noexcept {
@@ -222,11 +244,23 @@ struct Output {
     }
 
     case State::Run: {
-        // Sustained while TSMS (the held master switch) is on. Its drop is
-        // handled by the non-latching TSMS guard above (-> Start, no Error,
-        // #327), so by the time we're here TSMS is held. DASH_CHG is NOT
-        // checked here: it is a momentary press, low most of the time --
-        // checking its level would fault Run instantly (#305).
+        // AIRs opened externally (#330). The cockpit SDC shutdown opens the
+        // AIRs without the AMS sensing it; the VCU keeps reporting dc_bus_V,
+        // so a sustained collapse (SafetyTask-debounced -> in.bus_collapsed)
+        // means the contactors are physically open while we still think
+        // we're in Run. De-energise to Start (non-latching, like a TSMS
+        // drop) so a re-arm re-runs precharge rather than reclosing AIR+
+        // onto a discharged DC-link when the shutdown is released.
+        if (in.bus_collapsed) {
+            return { State::Start,
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
+        }
+        // Otherwise sustained while TSMS (the held master switch) is on. A
+        // TSMS drop is handled by the non-latching TSMS guard above (-> Start,
+        // no Error, #327), so by the time we're here TSMS is held. DASH_CHG
+        // is NOT checked here: it is a momentary press, low most of the time
+        // -- checking its level would fault Run instantly (#305).
         return { State::Run, 0u };
     }
 

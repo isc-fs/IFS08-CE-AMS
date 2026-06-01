@@ -155,6 +155,7 @@ struct Inputs {
     bool                dash_chg_edge;      // PF10 one-shot RISING EDGE (momentary press)
     Mode                mode_locked;        // set by SafetyTask at Start -> Precharge
     bool                predicate_fault;    // SafetyTask's ALREADY-DEBOUNCED fault decision
+    bool                bus_collapsed;       // SafetyTask-debounced dc_bus collapse (#330, Car/Run)
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;   // tick the current state was entered
 };
@@ -388,12 +389,23 @@ return { State::Error, ForceError | OpenAirN | OpenAirP | OpenPrecharge };
 ### Run / Charge — sustained by TSMS alone
 
 ```cpp
-// Run (Charge is identical). A TSMS drop is already handled by the
-// non-latching guard ABOVE the switch (-> Start, no Error, #327), so
-// here the body is just:
-return { State::Run /* or Charge */, 0u };
+// Run. A TSMS drop is already handled by the non-latching guard ABOVE
+// the switch (-> Start, no Error, #327). The one thing Run checks is
+// bus_collapsed -- the AIRs opened externally (#330):
+if (in.bus_collapsed) {
+    return { State::Start, OpenAirN | OpenAirP | OpenPrecharge };  // non-latching
+}
+return { State::Run, 0u };
+// Charge is identical minus the bus_collapsed check (Charger has no dc_bus_V).
 ```
 
+- **AIRs opened externally → Run de-energises to Start (#330).** A cockpit SDC
+  shutdown opens the AIRs without the AMS sensing it; the VCU keeps reporting
+  `dc_bus_V`, so a sustained collapse below `BusCollapsePercent` of pack
+  (SafetyTask-debounced over `BusCollapseConfirmTicks`, Car mode) means the
+  contactors are physically open while the FSM still thinks it's in `Run`. It
+  falls back to `Start` (non-latching, AMS_OK untouched) so a re-arm re-runs
+  precharge instead of reclosing AIR+ onto a discharged DC-link. Car/`Run` only.
 - **A TSMS drop de-energises Run/Charge to Start, non-latching (#327).** TSMS is
   the held run interlock; its drop opens all contactors and returns to `Start`
   **without** latching `Error` or touching `AMS_OK`, so the TS can be re-armed
@@ -438,6 +450,7 @@ stateDiagram-v2
     Transition --> Error : Car bus dropped, or mode == Undecided
 
     Run --> Start : NOT tsms (non-latching de-energise)
+    Run --> Start : bus_collapsed (AIRs opened externally, #330)
     Charge --> Start : NOT tsms (non-latching de-energise)
 
     Start --> Error : predicate fault

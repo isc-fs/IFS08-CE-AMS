@@ -143,6 +143,34 @@ in Error rather than energising on a degraded bus. Charger mode skips the
 guard — there is no VCU `dc_bus_V` during a charge, and the charger
 soft-starts its own output.
 
+### 3.4 Bus-collapse detector (`BusCollapsePercent`, `BusCollapseConfirmTicks`)
+
+In `Run` (Car mode) the VCU `dc_bus_V` tracks the pack. A **cockpit SDC
+shutdown** opens the AIRs without the AMS sensing it (#330) — so the AMS
+watches for the bus collapsing while it still thinks it's in `Run`, and
+falls back to `Start` (non-latching) so a re-arm re-runs precharge instead
+of reclosing AIR+ onto a discharged DC-link. Two `COMMISSION` constants:
+
+- **`BusCollapsePercent`** (default 50) — `dc_bus_V` below this % of the
+  pack (cell-sum) counts as "collapsed." Pick it **above** the worst-case
+  loaded sag of `dc_bus_V` vs the cell-sum (so hard acceleration/regen
+  never false-trips) but **high enough** that it fires before the DC-link
+  discharges to a voltage where a no-precharge reclose would be damaging.
+  Measure both on the bench: log `dc_bus_V / pack_voltage_mV` under maximum
+  load (sag floor), and the link's discharge curve after an AIR-open
+  (how far it falls in `BusCollapseConfirmTicks`), then set the percent
+  comfortably between them.
+- **`BusCollapseConfirmTicks`** (default 20 ≈ 200 ms @ 10 ms) — consecutive
+  collapsed ticks before de-energising. Long enough to reject a single
+  anomalous `0x100` frame; short enough to trip before a released shutdown
+  recloses the AIRs. The DC-link discharge is gradual, so a few hundred ms
+  is safe.
+
+Verify on the bench: in `Run`, force the AIRs open (or inject a low
+`dc_bus_V` via the VCU/HIL fixture); confirm the FSM returns to `Start`
+(not Error) after the debounce, AMS_OK stays HIGH, and a DASH_CHG re-arm
+runs a full precharge.
+
 ---
 
 ## 3b. NTC thermistor calibration (LTC6811 + ADG731)
