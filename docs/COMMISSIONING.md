@@ -9,6 +9,11 @@ This procedure assumes the firmware is flashed and the AMS is
 connected to the live pack and instrumented bench (logging analyzer,
 calibrated current source, thermal chamber if available).
 
+> **Sign-off sheet:** [`COMMISSIONING_CHECKLIST.md`](COMMISSIONING_CHECKLIST.md)
+> lists every `COMMISSION` constant (current default, units, what to
+> measure) with tick-boxes and a final-value column — use it as the
+> record for the bench session; this document is the how-to behind it.
+
 ---
 
 ## 1. Cell voltage and temperature limits
