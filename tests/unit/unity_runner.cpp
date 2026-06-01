@@ -120,9 +120,11 @@ void test_fsm_transition_drops_voltage_to_error(void);
 void test_fsm_precharge_times_out_to_error(void);
 void test_fsm_precharge_holds_within_deadline(void);
 void test_fsm_run_stays_while_tsms_and_dash_chg_high(void);
-void test_fsm_run_to_error_on_tsms_drop(void);
+void test_fsm_run_to_start_on_tsms_drop(void);
 void test_fsm_run_stays_on_dash_chg_release(void);
-void test_fsm_charge_to_error_on_tsms_drop(void);
+void test_fsm_charge_to_start_on_tsms_drop(void);
+void test_fsm_precharge_to_start_on_tsms_drop(void);
+void test_fsm_tsms_drop_still_yields_to_predicate_fault(void);
 void test_fsm_charge_stays_on_dash_chg_release(void);
 void test_fsm_precharge_charger_proceeds_on_fresh_request(void);
 void test_fsm_precharge_charger_holds_without_fresh_request(void);
@@ -210,7 +212,7 @@ void test_sil_nominal_startup_to_run(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
 void test_sil_charger_stale_request_times_out(void);
-void test_sil_tsms_drop_in_run_latches_error(void);
+void test_sil_tsms_drop_in_run_rearms(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -322,9 +324,11 @@ int main(void) {
     RUN_TEST(test_fsm_precharge_times_out_to_error);
     RUN_TEST(test_fsm_precharge_holds_within_deadline);
     RUN_TEST(test_fsm_run_stays_while_tsms_and_dash_chg_high);
-    RUN_TEST(test_fsm_run_to_error_on_tsms_drop);
+    RUN_TEST(test_fsm_run_to_start_on_tsms_drop);
     RUN_TEST(test_fsm_run_stays_on_dash_chg_release);
-    RUN_TEST(test_fsm_charge_to_error_on_tsms_drop);
+    RUN_TEST(test_fsm_charge_to_start_on_tsms_drop);
+    RUN_TEST(test_fsm_precharge_to_start_on_tsms_drop);
+    RUN_TEST(test_fsm_tsms_drop_still_yields_to_predicate_fault);
     RUN_TEST(test_fsm_charge_stays_on_dash_chg_release);
     RUN_TEST(test_fsm_precharge_charger_proceeds_on_fresh_request);
     RUN_TEST(test_fsm_precharge_charger_holds_without_fresh_request);
@@ -407,7 +411,7 @@ int main(void) {
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
     RUN_TEST(test_sil_charger_stale_request_times_out);
-    RUN_TEST(test_sil_tsms_drop_in_run_latches_error);
+    RUN_TEST(test_sil_tsms_drop_in_run_rearms);
 
     return UNITY_END();
 }

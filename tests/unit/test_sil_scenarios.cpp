@@ -212,9 +212,11 @@ extern "C" void test_sil_charger_stale_request_times_out(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 5: TSMS drops mid-Run -> Error (sticky, every AIR-open latches).
+// Scenario 5: TSMS drops mid-Run -> non-latching de-energise to Start, then
+// the operator RE-ARMS without a reset (#327). A TSMS drop is not a fault;
+// the TS must be restartable from the cockpit unaided, so it must NOT latch.
 // ---------------------------------------------------------------------------
-extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
+extern "C" void test_sil_tsms_drop_in_run_rearms(void) {
     Harness h;
     h.state = ams::fsm::State::Run;
     h.tsms = true;
@@ -222,11 +224,26 @@ extern "C" void test_sil_tsms_drop_in_run_latches_error(void) {
     h.advance(20);
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, h.step().next);
 
-    // Driver turns the key off mid-run.
+    // TSMS opens mid-run -> open all contactors, fall back to Start, NO latch.
     h.tsms = false;
+    h.advance(20);
     const auto out = h.step();
-    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
+
+    // Idle in Start with TSMS still off -- stays put, no fault.
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, h.step().next);
+
+    // Re-arm: TSMS back on + a DASH_CHG press -> Precharge again (no reset).
+    h.tsms = true;
+    h.dash_chg_edge = true;
+    h.advance(20);
+    const auto rearm = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, rearm.next);
+    TEST_ASSERT_TRUE(rearm.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_TRUE(rearm.safety_flags & ams::events::safety::ClosePrecharge);
 }
