@@ -565,7 +565,7 @@ BO_ 1736 PitDiag_pec_per_ic_b: 8 AMS
  SG_ pec_err_ic_9_count : 8|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
 
 CM_ BO_ 1184 "500 ms cadence. Top-level supervisor snapshot.";
-CM_ SG_ 1184 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error";
+CM_ SG_ 1184 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error. STABLE ECU<->AMS state contract (#342): external consumers (ECU) read FSM state here, incl. while latched in Error. Do not reorder these enum values without coordinating with the ECU.";
 CM_ SG_ 1184 ams_ok "AMS_OK GPIO readback";
 CM_ SG_ 1184 module_online_mask "Bit N set iff module N's last PEC-clean response is within BmsStaleMs";
 CM_ SG_ 1184 app_init_progress_or_reserved "Reserved (=0).";

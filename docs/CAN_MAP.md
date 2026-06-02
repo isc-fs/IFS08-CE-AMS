@@ -429,12 +429,22 @@ Standard 11-bit. DLC 8. Cadence 500 ms.
 
 | Byte | Field | Notes |
 |:---:|---|---|
-| 0 | `state` | `ams::fsm::State` enum (0..5: Start, Precharge, Transition, Run, Charge, Error) |
+| 0 | `state` | `ams::fsm::State` enum (0..5: Start, Precharge, Transition, Run, Charge, Error). **ECU↔AMS state contract — see below.** |
 | 1 | `ams_ok` | GPIO PB4 read-back; 0 or 1 |
 | 2 | `module_online_mask` | Low byte of `BmsState.module_online_mask`. 0x1F = all 5 modules healthy |
 | 3 | reserved | 0 |
 | 4-5 | `min_cell_mV` | Big-endian uint16, mV |
 | 6-7 | `max_cell_mV` | Big-endian uint16, mV |
+
+> **`0x4A0[0]` is a stable cross-board contract (#342).** It is the
+> supported way for external consumers (notably the ECU) to read the AMS
+> FSM state — emitted **continuously, including while latched in `Error`**
+> (the telemetry block runs after the fault branch in `safety_task.cpp`).
+> The ECU uses it to tell **`Start`** (re-armable) apart from **`Error`**
+> (latched, reset-only) — both of which read `0x020 (ok_precharge) = 0`,
+> so `ok_precharge` alone is ambiguous. **Do not reorder the `fsm::State`
+> enum values or move byte 0 without coordinating with the ECU** — the
+> enum is the contract. (The `VAL_` table in `ams.dbc` mirrors it.)
 
 ### `0x4A1` — AMS pack
 
