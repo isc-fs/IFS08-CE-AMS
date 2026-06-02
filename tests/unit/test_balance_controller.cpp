@@ -130,6 +130,24 @@ extern "C" void test_balance_disabled_outside_charge(void) {
 }
 
 // ---------------------------------------------------------------------------
+// #336: operator override (suppressed=true) pauses balancing even when the
+// policy would discharge a hot cell in Charge -> all-zero mask. The default
+// arg (false) leaves the autonomous behaviour unchanged.
+// ---------------------------------------------------------------------------
+extern "C" void test_balance_override_suppresses_in_charge(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[2][7] = static_cast<std::uint16_t>(4100 + 80);  // would discharge
+    state.max_cell_mV   = state.cell_mV[2][7];
+
+    // Sanity: without the override that cell discharges in Charge.
+    TEST_ASSERT_TRUE(
+        balance::compute_mask(state, fsm::State::Charge, false).cell[2][7]);
+    // With the override: nothing discharges.
+    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*suppressed=*/true);
+    TEST_ASSERT_FALSE(any_set(mask));
+}
+
+// ---------------------------------------------------------------------------
 // 5. Thermal lockout: max_tempC > BalanceTempMax forces all-zero
 //    even if cells are imbalanced and FSM is in Charge.
 // ---------------------------------------------------------------------------

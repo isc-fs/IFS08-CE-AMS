@@ -238,6 +238,10 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     const std::uint8_t ams_ok =
         (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET) ? 1u : 0u;
 
+    const auto veh_snap = ams::VehicleService::instance().snapshot();
+    const bool balance_override = ams::VehicleService::balance_suppressed(
+        osKernelGetTickCount(), veh_snap.last_balance_override_tick,
+        veh_snap.balance_override_suppress);
     send_or_fail_blocking(ams::config::PitDiagFsmStatusId,
                           ams::pit_diag::encode_fsm_status(
                               g_state_telemetry,
@@ -245,7 +249,8 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               tsms, dash_chg, ams_ok,
                               pec_err_sum(),
                               g_fault_reason_telemetry,
-                              g_fault_detail_telemetry));
+                              g_fault_detail_telemetry,
+                              balance_override));
     send_or_fail_blocking(ams::config::PitDiagTimingId,
                           ams::pit_diag::encode_timing(
                               g_bms_volt_poll_ms,

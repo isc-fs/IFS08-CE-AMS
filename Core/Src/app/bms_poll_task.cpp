@@ -26,6 +26,7 @@
 #include "ltc6811.hpp"
 #include "ltc6820.hpp"
 #include "state_machine.hpp"
+#include "vehicle_service.hpp"
 
 #include "cmsis_os2.h"
 
@@ -180,7 +181,14 @@ void maybe_run_balance_update() {
     const auto       state    = BmsService::instance().snapshot();
     const fsm::State fsm_curr =
         static_cast<fsm::State>(g_state_telemetry);
-    const auto       mask     = balance::compute_mask(state, fsm_curr);
+    // Operator balance override (#336): pause autonomous balancing while a
+    // fresh "BALO" (0x103) is in effect. Reverts to auto on "BALX" or when
+    // the override goes stale.
+    const auto       veh      = VehicleService::instance().snapshot();
+    const bool       suppress = VehicleService::balance_suppressed(
+        osKernelGetTickCount(), veh.last_balance_override_tick,
+        veh.balance_override_suppress);
+    const auto       mask     = balance::compute_mask(state, fsm_curr, suppress);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;

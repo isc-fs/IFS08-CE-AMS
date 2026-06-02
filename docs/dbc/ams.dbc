@@ -99,6 +99,9 @@ BO_ 256 VCU_dc_bus_heartbeat: 2 VCU
 BO_ 257 Operator_charge_request: 4 Pit_Tool
  SG_ magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
 
+BO_ 259 Operator_balance_override: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
+
 BO_ 2 BL_boot_trigger: 4 Pit_Tool
  SG_ magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
 
@@ -507,6 +510,7 @@ BO_ 1728 PitDiag_fsm_status: 8 AMS
  SG_ mode_locked : 8|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
  SG_ tsms_readback : 16|1@1+ (1.0,0.0) [0|1] "bool" Vector__XXX
  SG_ dash_chg_readback : 17|1@1+ (1.0,0.0) [0|1] "bool" Vector__XXX
+ SG_ balance_override : 18|1@1+ (1.0,0.0) [0|1] "bool" Vector__XXX
  SG_ ams_ok : 24|8@1+ (1.0,0.0) [0|255] "bool" Vector__XXX
  SG_ pec_err_total : 39|16@0+ (1.0,0.0) [0|65535] "count" Vector__XXX
  SG_ fault_reason : 48|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
@@ -601,6 +605,8 @@ CM_ SG_ 311 temp_dcdc "DCDC temperature stub (currently 0)";
 CM_ BO_ 256 "20 Hz from VCU. AMS consumes for mode-lock + DC bus.";
 CM_ BO_ 257 "Operator declares 'on the charger' (#305). AMS enters Charger mode only if fresh (<=1000 ms) AND VCU absent at the Start->Precharge lock. Magic-gated so noise can't flip HV mode.";
 CM_ SG_ 257 magic "Must equal 0x43485247 (ascii CHRG)";
+CM_ BO_ 259 "Operator pauses/resumes autonomous cell balancing during Charge (#336). Magic-gated, ~2 Hz while held; reverts to auto if silent > 5000 ms. Only affects balancing -- never an AIR / safety path.";
+CM_ SG_ 259 magic "0x42414C4F (ascii BALO) = suppress; 0x42414C58 (ascii BALX) = resume auto";
 CM_ BO_ 2 "Reboot AMS into bootloader. Payload must be the magic B007AD11. Handled by AcuCanTask before VCU dispatch.";
 CM_ SG_ 2 magic "Must equal 0xB007AD11";
 CM_ BO_ 2032 "Enable/disable the pit-diag stream (#247). 4-byte payload = DEADBEEF to enable, 00000000 to disable.";
@@ -955,6 +961,7 @@ CM_ SG_ 1720 temp_m4_t39_C "Module 4, NTC 39";
 CM_ BO_ 1728 "FSM extended status frame. 1 Hz when pit-diag enabled.";
 CM_ SG_ 1728 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error";
 CM_ SG_ 1728 mode_locked "0=Undecided, 1=Car, 2=Charger";
+CM_ SG_ 1728 balance_override "1 = autonomous balancing paused by a fresh 0x103 'BALO' operator override (#336).";
 CM_ SG_ 1728 pec_err_total "Sum of g_ltc_pec_err_count[10]; saturates at 0xFFFF";
 CM_ SG_ 1728 fault_reason "Predicate branch that latched ERROR (#276). 0=None, 1=ForceError, 2=BmsModuleOffline, 3=BmsStale, 4=CellUnderVoltage, 5=CellOverVoltage, 6=CellUnderTemp, 7=CellOverTemp, 8=CurrentSensorFault, 9=CurrentStale, 10=CurrentOverLimit, 11=VcuStale, 12=FsmError (FSM-driven Error path).";
 CM_ SG_ 1728 fault_detail "Per-branch detail. BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index 0..4, or 0xFF = none matched (inconsistent / torn snapshot). BmsModuleOffline: live module_online_mask. Otherwise 0.";

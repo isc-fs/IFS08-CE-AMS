@@ -260,6 +260,21 @@ def charge_req_101() -> Message:
     return m
 
 
+def balance_override_103() -> Message:
+    m = Message(0x103, "Operator_balance_override", 4, "Pit_Tool",
+                comment=("Operator pauses/resumes autonomous cell balancing "
+                         "during Charge (#336). Magic-gated, ~2 Hz while held; "
+                         "reverts to auto if silent > 5000 ms. Only affects "
+                         "balancing -- never an AIR / safety path."))
+    m.signals = [
+        Signal("magic", be_start_bit_for_byte(0), 32, "0", "+",
+               unit="magic",
+               comment="0x42414C4F (ascii BALO) = suppress; "
+                       "0x42414C58 (ascii BALX) = resume auto"),
+    ]
+    return m
+
+
 def bl_trigger_002() -> Message:
     m = Message(0x002, "BL_boot_trigger", 4, "Pit_Tool",
                 comment=("Reboot AMS into bootloader. Payload must be the "
@@ -363,6 +378,10 @@ def pit_fsm_status_6c0() -> Message:
                unit="bool"),
         Signal("dash_chg_readback", 8*2+1, 1, "1", "+",
                unit="bool"),
+        Signal("balance_override", 8*2+2, 1, "1", "+",
+               unit="bool",
+               comment="1 = autonomous balancing paused by a fresh 0x103 "
+                       "'BALO' operator override (#336)."),
         Signal("ams_ok",        le_start_bit_for_byte(3), 8, "1", "+",
                unit="bool"),
         Signal("pec_err_total", be_start_bit_for_byte(4), 16, "0", "+",
@@ -635,7 +654,7 @@ def build_all() -> List[Message]:
              tmax_mod(0x136, [0, 1, 2], "A"),
              tmax_mod(0x137, [3, 4],    "B", include_dcdc=True)]
     # VCU + BL trigger.
-    msgs += [vcu_100(), charge_req_101(), bl_trigger_002()]
+    msgs += [vcu_100(), charge_req_101(), balance_override_103(), bl_trigger_002()]
     # Pit-diag.
     msgs += [pit_cmd_7f0(), pit_ack_7f1()]
     msgs += pit_cells()

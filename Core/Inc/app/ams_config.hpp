@@ -137,6 +137,19 @@ inline constexpr std::uint8_t  ChargeModeReqDlc     = 4u;
 inline constexpr std::uint8_t  ChargeModeReqMagic[4] = { 0x43u, 0x48u, 0x52u, 0x47u };  // "CHRG"
 inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this recent at the mode lock
 
+// Operator balance-control override (#336). The ChargerDisplayWario pit
+// tool can pause autonomous cell balancing during Charge (e.g. for a
+// clean cell-V snapshot). Magic-gated like 0x101: "BALO" suppresses
+// balancing, "BALX" resumes auto. Re-sent ~2 Hz while ON; if the frame
+// goes stale (> BalanceOverrideFreshMs) the AMS reverts to autonomous.
+// Only affects balancing (which runs in Charge only) -- never an AIR /
+// safety path.
+inline constexpr std::uint32_t BalanceOverrideReqId    = 0x103u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
+inline constexpr std::uint8_t  BalanceOverrideReqDlc   = 4u;
+inline constexpr std::uint8_t  BalanceOverrideOnMagic[4]  = { 0x42u, 0x41u, 0x4Cu, 0x4Fu };  // "BALO" -> suppress
+inline constexpr std::uint8_t  BalanceOverrideOffMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x58u };  // "BALX" -> resume auto
+inline constexpr std::uint32_t BalanceOverrideFreshMs  = 5000;   // revert to auto if silent this long
+
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time
 // telemetry. All standard 11-bit IDs, big-endian payloads.
