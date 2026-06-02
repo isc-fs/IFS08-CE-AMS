@@ -8,6 +8,11 @@ further down are historical archaeology — see the note below.
 
 ## Bus assignment
 
+**Bit rate: 1 Mbps** (classic CAN, 75 % sample point — FDCAN kernel clock
+24 MHz, nominal prescaler 3, Tseg1 5, Tseg2 2, SJW 1). Bumped from 500 kbps;
+the whole bus — VCU, ECU, charger, and the **bootloader** — must run at
+1 Mbps in lockstep. No CAN-FD / bit-rate switching (all frames classic).
+
 | Bus | Role | Frame format | Filter |
 |---|---|---|---|
 | **FDCAN1** | Accumulator / vehicle / telemetry | Standard only (extended rejected at HW filter since #236) | Accept all unmatched standard into FIFO0; reject extended; reject remote |
@@ -400,8 +405,8 @@ Dispatch + flag ownership in
 [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
 
 Bus cost: 58 frames/scan (24 cell-V + 25 cell-T + 9 status `0x6C0..0x6C8`)
-× ~12 bytes-on-wire ≈ 5.6 kbit, ~11 ms at 500 kbps = ~1 % bus load when
-enabled.
+× ~12 bytes-on-wire ≈ 5.6 kbit, ~5.6 ms at 1 Mbps ≈ 0.6 % bus load (1 Hz)
+when enabled.
 
 ---
 
