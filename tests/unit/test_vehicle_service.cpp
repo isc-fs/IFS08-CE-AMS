@@ -109,3 +109,47 @@ extern "C" void test_charge_requested_freshness(void) {
         10000, 10000 - ams::config::ChargeReqFreshMs - 1));                     // just stale
     TEST_ASSERT_TRUE (ams::VehicleService::charge_requested(10000, 10005));     // future -> fresh
 }
+
+// ---------------------------------------------------------------------------
+// #336: operator balance override (0x103). "BALO" suppresses + stamps,
+// "BALX" resumes + stamps, an unrecognised payload is ignored.
+// ---------------------------------------------------------------------------
+extern "C" void test_balance_override_balo_suppresses(void) {
+    const std::uint8_t balo[8] = { 0x42, 0x41, 0x4C, 0x4F, 0, 0, 0, 0 };  // "BALO"
+    auto f = make_acu_frame(ams::config::BalanceOverrideReqId,
+                            ams::config::BalanceOverrideReqDlc, balo);
+    f.timestamp_ms = 7000;
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    const auto s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_TRUE(s.balance_override_suppress);
+    TEST_ASSERT_EQUAL_UINT32(7000, s.last_balance_override_tick);
+}
+
+extern "C" void test_balance_override_balx_resumes(void) {
+    const std::uint8_t balx[8] = { 0x42, 0x41, 0x4C, 0x58, 0, 0, 0, 0 };  // "BALX"
+    auto f = make_acu_frame(ams::config::BalanceOverrideReqId,
+                            ams::config::BalanceOverrideReqDlc, balx);
+    f.timestamp_ms = 8000;
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    const auto s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_FALSE(s.balance_override_suppress);
+    TEST_ASSERT_EQUAL_UINT32(8000, s.last_balance_override_tick);
+}
+
+extern "C" void test_balance_override_wrong_magic_ignored(void) {
+    const std::uint8_t bad[8] = { 0x42, 0x41, 0x4C, 0x5A, 0, 0, 0, 0 };  // "BALZ"
+    auto f = make_acu_frame(ams::config::BalanceOverrideReqId,
+                            ams::config::BalanceOverrideReqDlc, bad);
+    TEST_ASSERT_FALSE(ams::VehicleService::instance().update_from_frame(f));
+}
+
+// balance_suppressed: only when the last cmd was BALO (flag true) AND fresh.
+extern "C" void test_balance_suppressed_freshness(void) {
+    TEST_ASSERT_TRUE (ams::VehicleService::balance_suppressed(
+        10000, 10000 - ams::config::BalanceOverrideFreshMs, true));   // exactly fresh
+    TEST_ASSERT_FALSE(ams::VehicleService::balance_suppressed(
+        10000, 10000 - ams::config::BalanceOverrideFreshMs - 1, true)); // just stale
+    TEST_ASSERT_FALSE(ams::VehicleService::balance_suppressed(10000, 9999, false)); // BALX
+    TEST_ASSERT_FALSE(ams::VehicleService::balance_suppressed(10000, 0u, true));    // never
+    TEST_ASSERT_TRUE (ams::VehicleService::balance_suppressed(10000, 10005, true)); // future
+}

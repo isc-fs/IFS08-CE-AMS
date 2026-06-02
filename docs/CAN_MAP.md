@@ -380,7 +380,7 @@ survive a predicate trip.
 |---|---|---|---|
 | `0x680..0x697` | 24 cell-V frames | 4 cells per frame, BE u16 mV. Row-major over `cell_mV[5][19]`. Last frame has 3 real cells + 2-byte sentinel `0xFFFF`. Decode: `cell_index = 4·(id - 0x680) + slot; module = cell_index / 19; cell = cell_index % 19`. | 1 Hz |
 | `0x6A0..0x6B8` | 25 cell-T frames | 8 NTCs per frame, signed i8 °C each. Row-major over `cell_tempC[5][40]`. Decode: `temp_index = 8·(id - 0x6A0) + slot; module = temp_index / 40; temp = temp_index % 40`. | 1 Hz |
-| `0x6C0` | 1 FSM extended status | `[0]` FSM state, `[1]` mode_locked (0/1/2), `[2]` bits `1`=TSMS, `0`=DASH_CHG, `[3]` AMS_OK GPIO, `[4..5]` PEC error total BE u16, `[6]` fault_reason (latched-ERROR predicate branch; see below), `[7]` fault_detail (BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index 0..4, or `0xFF` = none matched → inconsistent/torn snapshot; BmsModuleOffline: module_online_mask; else 0) | 1 Hz |
+| `0x6C0` | 1 FSM extended status | `[0]` FSM state, `[1]` mode_locked (0/1/2), `[2]` bits `2`=balance_override (#336, balancing paused by a fresh `0x103` "BALO"), `1`=TSMS, `0`=DASH_CHG, `[3]` AMS_OK GPIO, `[4..5]` PEC error total BE u16, `[6]` fault_reason (latched-ERROR predicate branch; see below), `[7]` fault_detail (BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index 0..4, or `0xFF` = none matched → inconsistent/torn snapshot; BmsModuleOffline: module_online_mask; else 0) | 1 Hz |
 | `0x6C1` | 1 poll timing | `[0..1]` last V-poll ms BE u16, `[2..3]` worst-case V-poll BE u16, `[4..7]` last T-sweep failure mask LE u32 | 1 Hz |
 | `0x6C2` | 1 balance mask A | DCC mask bits 0..63: `[i]` bit `b` = cell `(8·i + b)` of the row-major flat (`cell_idx = 19·m + c`) selected for discharge last balance window. | 1 Hz |
 | `0x6C3` | 1 balance mask B | `[0..3]` DCC mask bits 64..94 (bit 31 reserved 0), `[4..5]` `balance_cycles_total` LE u16 (mod 65536), `[6..7]` `balance_cycles_active` LE u16. Reconstruct: bit `b` → `module = b/19, cell = b%19`. | 1 Hz |
@@ -511,6 +511,28 @@ output. If `0x101` goes stale before the proceed (charger unplugged), the
 precharge holds and hits the `PrechargeMaxMs` timeout → Error rather than
 closing AIR+ into a disconnected charger. See `state_machine.hpp` /
 `safety_task.cpp`.
+
+### `0x103` — operator balance-control override (#336)
+
+| Field | Value |
+|---|---|
+| Direction | RX (operator tool → AMS) |
+| Bus | FDCAN1 (standard 11-bit) |
+| DLC | ≥ 4 |
+| Payload | bytes `[0..3]` = `42 41 4C 4F` ("BALO") → **suppress** autonomous balancing; `42 41 4C 58` ("BALX") → **resume** auto. Other payloads ignored. |
+| Source | the ChargerDisplayWario pit tool (BALANCE ON/OFF button) |
+| Cadence | re-sent ≥ 2 Hz while suppress is held |
+| Freshness | reverts to autonomous if silent > `BalanceOverrideFreshMs` (5000 ms) |
+
+Lets the pit operator pause passive cell balancing during a charge (e.g.
+for a clean cell-voltage snapshot) without a firmware change. The AMS
+suppresses balancing only while a fresh "BALO" is in effect; a "BALX" or a
+stale override resumes autonomous balancing. **Only affects balancing —
+which runs in `Charge` only — so it can never touch an AIR / safety path,
+and `Error` is unaffected.** The acknowledged override state is mirrored on
+pit-diag `0x6C0[2]` bit 2 so the display can confirm receipt. Magic-gated
+against bus noise; handled in `vehicle_service.cpp`, consumed by
+`BmsPollTask` via `VehicleService::balance_suppressed`.
 
 ### `0x600` — start button **[RETIRED — fix/48]**
 

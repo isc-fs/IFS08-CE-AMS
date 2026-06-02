@@ -43,6 +43,22 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         state_.last_charge_req_tick = f.timestamp_ms;
         return true;
     }
+
+    // Operator balance-control override (#336). Magic-gated: "BALO"
+    // suppresses autonomous balancing, "BALX" resumes it. Both stamp the
+    // freshness tick; an unrecognised payload is ignored (bus-noise safe).
+    if (f.id == config::BalanceOverrideReqId) {
+        if (f.dlc < config::BalanceOverrideReqDlc) return false;
+        bool on = true, off = true;
+        for (std::size_t i = 0; i < config::BalanceOverrideReqDlc; ++i) {
+            if (f.data[i] != config::BalanceOverrideOnMagic[i])  on  = false;
+            if (f.data[i] != config::BalanceOverrideOffMagic[i]) off = false;
+        }
+        if (!on && !off) return false;            // neither magic -> ignore
+        state_.balance_override_suppress  = on;   // BALO -> true, BALX -> false
+        state_.last_balance_override_tick = f.timestamp_ms;
+        return true;
+    }
     return false;
 }
 
@@ -54,6 +70,16 @@ bool VehicleService::charge_requested(std::uint32_t now_tick,
     const std::uint32_t age =
         (now_tick >= last_req_tick) ? (now_tick - last_req_tick) : 0u;
     return age <= config::ChargeReqFreshMs;
+}
+
+bool VehicleService::balance_suppressed(std::uint32_t now_tick,
+                                        std::uint32_t last_override_tick,
+                                        bool          suppress_flag) noexcept {
+    if (!suppress_flag) return false;        // last cmd was BALX (or never)
+    if (last_override_tick == 0u) return false;
+    const std::uint32_t age =
+        (now_tick >= last_override_tick) ? (now_tick - last_override_tick) : 0u;
+    return age <= config::BalanceOverrideFreshMs;
 }
 
 VehicleState VehicleService::snapshot() const noexcept {

@@ -33,9 +33,15 @@ struct Mask {
 };
 
 [[nodiscard]] inline Mask compute_mask(const BmsState&  s,
-                                       fsm::State       fsm_state) noexcept {
+                                       fsm::State       fsm_state,
+                                       bool             suppressed = false) noexcept {
     Mask out = {};
 
+    // Operator override (#336): a fresh "BALO" on 0x103 pauses autonomous
+    // balancing. Checked first so it can only ever PRODUCE an all-zero
+    // mask -- never enable a discharge the policy below wouldn't -- and,
+    // like the Charge gate, is moot outside Charge.
+    if (suppressed)                            return out;
     if (fsm_state != fsm::State::Charge)       return out;
     // Bang-bang thermal lockout: no hysteresis because compute_mask
     // is stateless by design (pure function, unit-testable in

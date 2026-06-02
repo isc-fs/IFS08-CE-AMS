@@ -29,6 +29,13 @@ struct VehicleState {
     // frame (ChargeModeReqId). 0 = never seen. SafetyTask reads its
     // freshness at the Start->Precharge mode lock (#305).
     std::uint32_t last_charge_req_tick;
+    // Operator balance-control override (#336, BalanceOverrideReqId 0x103).
+    // last_balance_override_tick: 0 = never seen. balance_override_suppress:
+    // the last command -- true after "BALO" (suppress balancing), false
+    // after "BALX" (resume auto). BmsPollTask reads both via
+    // balance_suppressed() each balance window.
+    std::uint32_t last_balance_override_tick;
+    bool          balance_override_suppress;
 };
 
 class VehicleService {
@@ -48,6 +55,15 @@ public:
     // ChargeReqFreshMs of now_tick (#305). Pure; future-tick safe.
     [[nodiscard]] static bool charge_requested(std::uint32_t now_tick,
                                                std::uint32_t last_req_tick) noexcept;
+
+    // True iff autonomous balancing should be SUPPRESSED right now (#336):
+    // the last 0x103 was "BALO" (suppress_flag true) AND it is still fresh
+    // (within BalanceOverrideFreshMs). A "BALX" (suppress_flag false) or a
+    // stale override reverts to autonomous (returns false). Pure;
+    // future-tick safe.
+    [[nodiscard]] static bool balance_suppressed(std::uint32_t now_tick,
+                                                 std::uint32_t last_override_tick,
+                                                 bool          suppress_flag) noexcept;
 
 private:
     VehicleService() = default;

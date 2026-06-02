@@ -101,7 +101,9 @@ using Frame = std::array<std::uint8_t, 8>;
 //
 //   byte 0  fsm_state  (same encoding as 0x4A0[0]: 0..5)
 //   byte 1  mode_locked (Undecided=0 / Car=1 / Charger=2)
-//   byte 2  cockpit inputs: bit1=TSMS readback, bit0=DASH_CHG readback
+//   byte 2  cockpit inputs: bit2=balance_override (#336, balancing
+//                           paused by a fresh 0x103 "BALO"),
+//                           bit1=TSMS readback, bit0=DASH_CHG readback
 //   byte 3  ams_ok_gpio (0/1)
 //   bytes 4..5  pec_err_total  BE u16 (saturates at 0xFFFF if all 10
 //                              ICs combined exceed 65 535)
@@ -118,11 +120,13 @@ using Frame = std::array<std::uint8_t, 8>;
                                              std::uint8_t  ams_ok_gpio,
                                              std::uint32_t pec_err_total,
                                              std::uint8_t  fault_reason = 0u,
-                                             std::uint8_t  fault_detail = 0u) noexcept {
+                                             std::uint8_t  fault_detail = 0u,
+                                             bool          balance_override = false) noexcept {
     Frame f = {};
     f[0] = fsm_state;
     f[1] = static_cast<std::uint8_t>(mode_locked);
-    f[2] = static_cast<std::uint8_t>((tsms ? 0x02u : 0u) | (dash_chg ? 0x01u : 0u));
+    f[2] = static_cast<std::uint8_t>((balance_override ? 0x04u : 0u) |
+                                     (tsms ? 0x02u : 0u) | (dash_chg ? 0x01u : 0u));
     f[3] = ams_ok_gpio ? 1u : 0u;
     const std::uint16_t pec16 = (pec_err_total > 0xFFFFu)
                                     ? 0xFFFFu

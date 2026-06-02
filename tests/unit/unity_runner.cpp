@@ -63,6 +63,10 @@ void test_acu_unknown_id_rejected(void);
 void test_charge_req_magic_frame_sets_tick(void);
 void test_charge_req_wrong_magic_ignored(void);
 void test_charge_requested_freshness(void);
+void test_balance_override_balo_suppresses(void);
+void test_balance_override_balx_resumes(void);
+void test_balance_override_wrong_magic_ignored(void);
+void test_balance_suppressed_freshness(void);
 
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
@@ -208,6 +212,7 @@ void test_balance_single_hot_cell_in_charge(void);
 void test_balance_caps_at_max_active_per_module(void);
 void test_balance_disabled_outside_charge(void);
 void test_balance_thermal_lockout(void);
+void test_balance_override_suppresses_in_charge(void);
 void test_balance_threshold_strict_inequality(void);
 
 // test_sil_scenarios.cpp
@@ -273,6 +278,10 @@ int main(void) {
     RUN_TEST(test_charge_req_magic_frame_sets_tick);
     RUN_TEST(test_charge_req_wrong_magic_ignored);
     RUN_TEST(test_charge_requested_freshness);
+    RUN_TEST(test_balance_override_balo_suppresses);
+    RUN_TEST(test_balance_override_balx_resumes);
+    RUN_TEST(test_balance_override_wrong_magic_ignored);
+    RUN_TEST(test_balance_suppressed_freshness);
     RUN_TEST(test_acu_unknown_id_rejected);
 
     RUN_TEST(test_bootloader_trigger_exact_match);
@@ -412,6 +421,7 @@ int main(void) {
     RUN_TEST(test_balance_caps_at_max_active_per_module);
     RUN_TEST(test_balance_disabled_outside_charge);
     RUN_TEST(test_balance_thermal_lockout);
+    RUN_TEST(test_balance_override_suppresses_in_charge);
     RUN_TEST(test_balance_threshold_strict_inequality);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
