@@ -113,7 +113,11 @@ def status_4a0() -> Message:
     m.signals = [
         Signal("fsm_state", le_start_bit_for_byte(0), 8, "1", "+",
                unit="enum", values=FSM_STATE_VALUES,
-               comment="0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error"),
+               comment="0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, "
+                       "5=Error. STABLE ECU<->AMS state contract (#342): "
+                       "external consumers (ECU) read FSM state here, incl. "
+                       "while latched in Error. Do not reorder these enum "
+                       "values without coordinating with the ECU."),
         Signal("ams_ok", le_start_bit_for_byte(1), 8, "1", "+",
                unit="bool", comment="AMS_OK GPIO readback"),
         Signal("module_online_mask", le_start_bit_for_byte(2), 8, "1", "+",
