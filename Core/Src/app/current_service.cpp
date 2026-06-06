@@ -41,11 +41,11 @@ std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
 }
 
 std::int32_t CurrentService::adc_to_mA_dcdc(std::uint16_t raw) noexcept {
-    // DCDC current, read SINGLE-ended on PC1 (ADC3_INP11): one analog
-    // leg of a 2nd SSA-2-250A. A single leg carries half the
-    // differential sensitivity (2.5 mV/A) biased at the output
-    // common-mode (~1.44 V), so it uses its own zero/sens constants.
-    // Classic single-ended mapping (zero at the common-mode voltage):
+    // DCDC current, read SINGLE-ended on PC1 (ADC3_INP11): an Allegro
+    // ACS758 Hall sensor through a unity buffer. Ratiometric @ 3.3 V ->
+    // offset 1.65 V (Vcc/2), sensitivity 26.4 mV/A. Uses its own
+    // zero/sens constants. Classic single-ended mapping (zero at the
+    // offset voltage):
     //
     //   v_uV     = raw * Vref_mV * 1000 / 4095
     //   delta_uV = v_uV - DcdcCurrentZeroMv * 1000   (+ above zero)

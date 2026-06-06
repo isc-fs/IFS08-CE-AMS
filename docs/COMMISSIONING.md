@@ -102,27 +102,28 @@ clip). Keep it at the FS-rules value unless a tighter pack limit applies.
 
 ### 2.4 DCDC current channel
 
-DCDC supply current uses a **second Bourns SSA-2-250A** (same part as the
-pack sensor) moved to `PC1 = ADC3_INP11` (was `PF8`) and wired
-**single-ended**: only one analog leg (`Analog+` / `OUT_P`) goes to PC1,
-referenced to GND. Because the SSA-2's `±5 mV/A` spec is the
-*differential* output and the two legs swing symmetrically about the
-output common-mode, a single leg carries **half** the sensitivity:
+DCDC supply current uses an **Allegro ACS758** Hall-effect sensor (a
+different part from the pack SSA-2) on `PC1 = ADC3_INP11` (was `PF8`),
+read **single-ended** through a unity buffer (gain 1). The ACS758 is
+**ratiometric** — both its zero offset and its sensitivity scale with
+`Vcc`. At the 5 V datasheet rating it is 40 mV/A with offset
+`0.5·Vcc = 2.5 V`; powered from **3.3 V** here, both scale by `3.3/5`:
 
-> `V(PC1) = CommonMode + 2.5 mV/A × I`
+> offset = `0.5 × 3.3 V` = **1.65 V**
+> sensitivity = `40 mV/A × 3.3/5` = **26.4 mV/A**
+> `V(PC1) = 1.65 V + 26.4 mV/A × I`
 
 Converted by `adc_to_mA_dcdc` using its own constants, both `COMMISSION`:
-- `DcdcCurrentZeroMv` (nominal **1440 mV** — the SSA-2 output
-  common-mode, *not* Vref/2)
-- `DcdcCurrentMvPerAmpe1` (nominal **25**, i.e. 2.5 mV/A × 10 — a single
-  leg, half the differential)
+- `DcdcCurrentZeroMv` (nominal **1650 mV** — `Vcc/2`, which also equals
+  ADC mid-scale because the ACS758 shares the 3.3 V rail)
+- `DcdcCurrentMvPerAmpe1` (nominal **264**, i.e. 26.4 mV/A × 10)
 
 DCDC is **informational only** — not part of any safety predicate
 (`DcdcIStaleMs` staleness has no FSM impact). Calibrate by the same
 zero-then-sensitivity procedure as §2.1–2.2 but against the PC1
 single-ended reading (`v_mV = raw × 3300 / 4095`). **Confirm the sign on
-the bench** — whether `Analog+` or `Analog−` is the wired leg sets
-whether discharge reads positive or negative.
+the bench** — the ACS758's IP+→IP− conductor direction sets whether
+discharge reads positive or negative.
 
 ---
 

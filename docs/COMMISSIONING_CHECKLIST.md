@@ -46,10 +46,10 @@ over-current trip.**
 | `CurrentMvPerAmpe1` | 50 | 0.1·mV/A | Sensitivity ×10 (5 mV/A nominal, bare sensor — no carrier gain). Inject a known current, solve mV/A. | | ☐ |
 | `CurrentMaxMa` | 200000 | mA | Over-current trip = pack/fuse continuous rating (− margin). Now genuinely reachable on this HW rev. | | ☐ |
 
-DCDC current (informational, not safety-gated) is a 2nd SSA-2-250A wired
-single-ended on `PC1` (ADC3_INP11) — one leg, so 2.5 mV/A at the output
-common-mode. Calibrate `DcdcCurrentZeroMv` (1440) and
-`DcdcCurrentMvPerAmpe1` (25), and confirm the sign, per
+DCDC current (informational, not safety-gated) is an Allegro **ACS758**
+Hall sensor single-ended on `PC1` (ADC3_INP11), ratiometric @ 3.3 V →
+26.4 mV/A at a 1.65 V (Vcc/2) offset. Calibrate `DcdcCurrentZeroMv`
+(1650) and `DcdcCurrentMvPerAmpe1` (264), and confirm the sign, per
 `COMMISSIONING.md` §2.4.
 
 ## 3. Precharge & bus-collapse  🔒  (`COMMISSIONING.md` §3, §3.4)
