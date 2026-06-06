@@ -222,7 +222,7 @@ flowchart TD
     FDCAN1[FDCAN1 RX/TX<br/>ACU + bootloader-trigger]
     FDCAN2[FDCAN2<br/>bootloader-claimed post-reset only]
     SPI1[SPI1 master + PA4 CS<br/>via LTC6820]
-    ADC1[ADC3 ch3 PF7]
+    ADC1[ADC3 diff ch3 PF7/PF8<br/>+ SE ch11 PC1 DCDC]
     GPIOB[GPIOB<br/>PB4 AMS_OK<br/>PB5/6/7 relays]
     TIM17[TIM17_CH1 PB9 fan]
     FDCAN1TX[FDCAN1 TX telemetry<br/>0x4A0/0x4A1/0x4A2]

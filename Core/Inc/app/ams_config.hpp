@@ -26,7 +26,7 @@ inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- C
 inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
-inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate sensor on PF8 and DCDC failure is recoverable)
+inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
 inline constexpr std::uint32_t BmsStaleMs     = 1500;  // any BMS module silent
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
@@ -251,47 +251,69 @@ inline constexpr std::uint32_t BusCollapsePercent     = 50;  // COMMISSION (% of
 inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~200 ms @ 10 ms)
 
 // Current sensor calibration. Pack current measured via a Bourns
-// SSA-2-250A shunt sensor (datasheet: pcbs/ssa-2.pdf). The sensor's
-// raw differential output OUTP/OUTN is bipolar at +/- 5 mV/A (250 A
-// nominal, 500 A max unclipped, common-mode +1.44 V). A discrete
-// difference amplifier on the carrier (MCP6001R, gain x4, R12 biased
-// to Vref/2 = 1.65 V) converts the differential signal to a
-// single-ended S_CURRENT routed to PF7 -> ADC3 channel 3:
+// SSA-2-250A shunt sensor (datasheet: pcbs/ssa-2.pdf). The sensor is a
+// 2-wire amplified-differential device: its OUT_P / OUT_N pins carry a
+// bipolar +/- 5 mV/A differential signal (250 A nominal, 500 A max
+// unclipped, output clips at +/- 2.62 V, common-mode ~1.44 V).
 //
-//   S_CURRENT = 4 * (OUTP - OUTN) + 1.65 V
+// HW revision (feat/current-sensor-diff): the external carrier diff amp
+// (old MCP6001R, gain x4, Vref/2 bias) is REMOVED. OUT_P and OUT_N now
+// wire straight to the STM32 and the ADC reads them in DIFFERENTIAL
+// mode:
+//   OUT_P = PF7 = ADC3_INP3   (positive input)
+//   OUT_N = PF8 = ADC3_INN3   (negative input, hardware-paired to INP3)
 //
-// Net sensitivity at the ADC pin: 5 mV/A * 4 = 20 mV/A. Zero current
-// reads as 1.65 V (mid-rail). Discharge -> positive (OUTP - OUTN) ->
-// S_CURRENT rises above 1.65 V. Charge -> negative (OUTP - OUTN) ->
-// S_CURRENT drops below 1.65 V.
+// In STM32H7 differential mode the conversion encodes V(INP) - V(INN)
+// over the range -Vref .. +Vref onto codes 0 .. 4095, with the
+// zero-difference point at mid-scale (code ~= 2048). The sensor's
+// common-mode (1.44 V) cancels in the subtraction, so only the bipolar
+// +/- 5 mV/A differential remains:
 //
-// Bipolar range constrained by the 0..3.3 V ADC rail: +/- 1.65 V swing
-// around mid-rail = +/- 82.5 A measurable before clipping. Real
-// currents above that are not observable by firmware (the diff amp
-// saturates at the rail). The CurrentMaxMa safety threshold is therefore
-// a defensive-only check in this HW revision -- it can never trip
-// from a clipping anomaly because the firmware's reading caps at
-// 82.5 A. Re-evaluate if the diff-amp gain ever drops.
+//   V(INP) - V(INN) = 5 mV/A * I        (discharge -> +, charge -> -)
+//   raw            ~= 2048 + (V_diff / LSB_diff),  LSB_diff = 2*Vref/4095
 //
-// PF8 -> ADC3 channel 7 is configured as an analog input on the
-// carrier for a future DCDC supply-current measurement (separate
-// sensor; not the bipolar half of S_CURRENT). Firmware does NOT
-// trigger conversions to PF8 yet.
+// Net sensitivity is now the bare sensor 5 mV/A (no x4 gain), so
+// CurrentMvPerAmpe1 drops from 200 (20 mV/A) to 50 (5 mV/A). Zero
+// current reads code ~2048 (CurrentZeroCount), NOT a mid-rail voltage:
+// the natural reference in differential mode is the mid code, so the
+// zero point is a COMMISSION *count* offset rather than a voltage.
 //
-// .ioc puts ADC3 in 12-bit single-channel regular conversion (no
-// oversampling by default; bump in CubeMX if calibration shows the
-// LSB noise floor is the limiting factor). Sample is 12-bit
-// (0..4095) referenced to Vref ~ 3.3 V.
+// Observable range: the differential pair spans ~+/- Vref, i.e. well
+// beyond the sensor's own +/- 2.62 V (~+/-524 A) clip and beyond the
+// rail headroom set by the 1.44 V common-mode. Unlike the old x4 +
+// 1.65 V single-ended front-end (which clipped firmware-side at only
+// +/- 82.5 A, below the 200 A safety threshold), the CurrentMaxMa
+// over-current check is now genuinely reachable.
 //
-// COMMISSION: CurrentZeroMv and CurrentMvPerAmpe1 MUST be calibrated
-// per real-hardware procedure in docs/COMMISSIONING.md §2 before
-// v1.0.0. The Vref/2 divider tolerance + R10..R13 mismatch can shift
-// the zero point by tens of mV; the unit-test-passing defaults
-// below are nominal only.
+// DCDC supply current uses a SECOND Bourns SSA-2-250A (same part as the
+// pack sensor), moved to PC1 = ADC3_INP11 (was PF8) and wired
+// SINGLE-ENDED: only one analog leg (Analog+ / OUT_P) goes to PC1,
+// referenced to GND. Because the SSA-2's +/- 5 mV/A spec is the
+// DIFFERENTIAL output (OUT_P - OUT_N) and the two legs swing
+// symmetrically about the output common-mode, a single leg carries HALF
+// the sensitivity (2.5 mV/A) biased at the common-mode (~1.44 V):
+//
+//   V(PC1) = CommonMode + 2.5 mV/A * I     (discharge -> +)
+//
+// Hence DcdcCurrentZeroMv ~= 1440 (common-mode, not Vref/2) and
+// DcdcCurrentMvPerAmpe1 = 25 (2.5 mV/A x10). Converted by
+// adc_to_mA_dcdc. DCDC is informational only -- not part of any safety
+// predicate -- and the exact zero/sensitivity/sign MUST be confirmed on
+// the bench (which leg is wired sets the sign).
+//
+// COMMISSION: CurrentZeroCount and CurrentMvPerAmpe1 (pack), and
+// DcdcCurrentZeroMv / DcdcCurrentMvPerAmpe1 (DCDC), MUST be calibrated
+// per docs/COMMISSIONING.md §2 before v1.0.0. The sensor DC offset
+// (<= +/-0.4 mV) plus ADC offset shift the zero code by a few LSB; the
+// unit-test-passing defaults below are nominal only.
 inline constexpr std::uint16_t AdcVrefMv          = 3300;
 inline constexpr std::uint16_t AdcMaxCount        = 4095;
-inline constexpr std::int32_t  CurrentZeroMv      = 1650;  // Vref/2  COMMISSION
-inline constexpr std::int32_t  CurrentMvPerAmpe1  = 200;   // COMMISSION (20 mV/A x10)
+// Pack channel (differential ADC3_INP3/INN3 = PF7/PF8).
+inline constexpr std::int32_t  CurrentZeroCount   = 2048;  // diff mid-scale  COMMISSION
+inline constexpr std::int32_t  CurrentMvPerAmpe1  = 50;    // COMMISSION (5 mV/A x10)
+// DCDC channel (single-ended ADC3_INP11 = PC1; one leg of a 2nd SSA-2).
+inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1440; // SSA-2 output common-mode  COMMISSION
+inline constexpr std::int32_t  DcdcCurrentMvPerAmpe1 = 25;   // COMMISSION (2.5 mV/A x10, single leg)
 inline constexpr std::uint8_t  CurrentFilterShift = 4;     // tau ~ 16 samples
 
 // IIR low-pass filter coefficient is encoded as a shift so the filter

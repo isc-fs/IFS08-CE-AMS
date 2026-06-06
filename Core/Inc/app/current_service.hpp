@@ -14,15 +14,16 @@ namespace ams {
 
 struct CurrentState {
     // Pack current. Signed mA; convention is `+ = discharge, - = charge`.
-    // Sourced from PF7 / ADC3_INP3 (Bourns SSA-2-250A behind a diff
-    // amp; see adc_to_mA + ams_config.hpp commentary).
+    // Sourced from the differential pair PF7/PF8 (ADC3_INP3/INN3,
+    // Bourns SSA-2-250A read in ADC differential mode; see adc_to_mA +
+    // ams_config.hpp commentary).
     std::int32_t  raw_mA;        // single-sample, no filter
     std::int32_t  filtered_mA;   // IIR low-pass, tau ~ 16 samples
     std::uint32_t last_update_tick;
     bool          sensor_fault;      // ADC failed to convert, or out of plausible range
 
-    // DCDC current (fix/53). Sourced from PF8 / ADC3_INP7, same diff-
-    // amp topology as the pack channel (same calibration). The ECU
+    // DCDC current (fix/53). Sourced from PC1 / ADC3_INP11, a separate
+    // single-ended sensor (own calibration, adc_to_mA_dcdc). The ECU
     // forwards both via 0x135. last_dcdc_update_tick is independent
     // from the pack tick so a DCDC ADC failure doesn't stale the
     // safety predicate that watches the pack channel.
@@ -54,10 +55,19 @@ public:
     // (500 ms) of now_tick.
     [[nodiscard]] bool is_dcdc_fresh(std::uint32_t now_tick) const noexcept;
 
-    // Pure helper, exposed for unit testing. Maps a 12-bit ADC reading
-    // (0..4095 referenced to Vref) to a signed current in mA using
-    // the constants in ams_config. Static -> no mutex.
+    // Pure helpers, exposed for unit testing. Static -> no mutex.
+    //
+    // adc_to_mA: maps a 12-bit DIFFERENTIAL ADC reading (0..4095, with
+    // zero-current at CurrentZeroCount ~= 2048) to a signed pack current
+    // in mA. The differential LSB is 2*Vref/4095 (twice the single-ended
+    // LSB), and sensitivity is the bare-sensor CurrentMvPerAmpe1.
     static std::int32_t adc_to_mA(std::uint16_t raw) noexcept;
+
+    // adc_to_mA_dcdc: maps a 12-bit SINGLE-ENDED ADC reading (PC1 /
+    // ADC3_INP11) to a signed DCDC current in mA, using the DcdcCurrent*
+    // constants (zero at DcdcCurrentZeroMv, sensitivity
+    // DcdcCurrentMvPerAmpe1). Informational only.
+    static std::int32_t adc_to_mA_dcdc(std::uint16_t raw) noexcept;
 
 private:
     CurrentService() = default;

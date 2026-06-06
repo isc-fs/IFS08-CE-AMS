@@ -84,7 +84,7 @@ invariants still hold:
   Start→Precharge needs TSMS held + a DASH_CHG press; Run/Charge are
   sustained by **TSMS alone** (releasing DASH_CHG does not fault). Charger
   precharge proceeds on a still-fresh operator `0x101`; Car on `dc_bus_V ≥ 95 %`.
-- **Pins:** AIR− PB6, AIR+ PB5, precharge PB7, `AMS_OK` PB4; pack current ADC3/PF7.
+- **Pins:** AIR− PB6, AIR+ PB5, precharge PB7, `AMS_OK` PB4; pack current ADC3 differential PF7/PF8 (INP3/INN3), DCDC current ADC3 single-ended PC1 (INP11).
 - **ErrorLatch** is sticky across resets (RTC backup register).
 
 ## Where to look

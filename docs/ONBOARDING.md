@@ -23,7 +23,8 @@ the instant anything goes out of bounds.
 
 - **Watches** — 95 cell voltages + 200 temperatures, read over isoSPI from
   a daisy-chain of LTC6811 monitors (via an LTC6820 bridge on SPI1), plus
-  the pack current from an analog shunt on ADC3 (PF7).
+  the pack current from an analog shunt read differentially on ADC3
+  (PF7/PF8).
 - **Drives** — three contactors (AIR−, AIR+, precharge) on GPIO PB5/6/7,
   and the `AMS_OK` leg of the shutdown circuit (SDC) on PB4.
 - **Kills** — a 10 ms safety supervisor evaluates a set of fault
