@@ -285,21 +285,22 @@ inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~20
 // +/- 82.5 A, below the 200 A safety threshold), the CurrentMaxMa
 // over-current check is now genuinely reachable.
 //
-// DCDC supply current uses a SECOND Bourns SSA-2-250A (same part as the
-// pack sensor), moved to PC1 = ADC3_INP11 (was PF8) and wired
-// SINGLE-ENDED: only one analog leg (Analog+ / OUT_P) goes to PC1,
-// referenced to GND. Because the SSA-2's +/- 5 mV/A spec is the
-// DIFFERENTIAL output (OUT_P - OUT_N) and the two legs swing
-// symmetrically about the output common-mode, a single leg carries HALF
-// the sensitivity (2.5 mV/A) biased at the common-mode (~1.44 V):
+// DCDC supply current uses an Allegro ACS758 Hall-effect sensor (a
+// different part from the pack SSA-2) on PC1 = ADC3_INP11 (was PF8),
+// read SINGLE-ENDED through a unity buffer (gain 1). The ACS758 is
+// RATIOMETRIC: both its zero offset and its sensitivity scale with Vcc.
+// At the 5 V datasheet rating it is 40 mV/A with offset 0.5*Vcc = 2.5 V;
+// powered from 3.3 V here, both scale by 3.3/5:
 //
-//   V(PC1) = CommonMode + 2.5 mV/A * I     (discharge -> +)
+//   offset      = 0.5 * 3.3 V        = 1.65 V
+//   sensitivity = 40 mV/A * 3.3/5    = 26.4 mV/A
+//   V(PC1) = 1.65 V + 26.4 mV/A * I     (sign per IP+ -> IP- wiring)
 //
-// Hence DcdcCurrentZeroMv ~= 1440 (common-mode, not Vref/2) and
-// DcdcCurrentMvPerAmpe1 = 25 (2.5 mV/A x10). Converted by
-// adc_to_mA_dcdc. DCDC is informational only -- not part of any safety
-// predicate -- and the exact zero/sensitivity/sign MUST be confirmed on
-// the bench (which leg is wired sets the sign).
+// Hence DcdcCurrentZeroMv = 1650 (= Vcc/2, which is also ADC mid-scale
+// since the ACS758 shares the 3.3 V rail) and DcdcCurrentMvPerAmpe1 =
+// 264 (26.4 mV/A x10). Converted by adc_to_mA_dcdc. DCDC is
+// informational only -- not part of any safety predicate -- and the
+// sign MUST be confirmed on the bench (the ACS758 IP direction sets it).
 //
 // COMMISSION: CurrentZeroCount and CurrentMvPerAmpe1 (pack), and
 // DcdcCurrentZeroMv / DcdcCurrentMvPerAmpe1 (DCDC), MUST be calibrated
@@ -311,9 +312,9 @@ inline constexpr std::uint16_t AdcMaxCount        = 4095;
 // Pack channel (differential ADC3_INP3/INN3 = PF7/PF8).
 inline constexpr std::int32_t  CurrentZeroCount   = 2048;  // diff mid-scale  COMMISSION
 inline constexpr std::int32_t  CurrentMvPerAmpe1  = 50;    // COMMISSION (5 mV/A x10)
-// DCDC channel (single-ended ADC3_INP11 = PC1; one leg of a 2nd SSA-2).
-inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1440; // SSA-2 output common-mode  COMMISSION
-inline constexpr std::int32_t  DcdcCurrentMvPerAmpe1 = 25;   // COMMISSION (2.5 mV/A x10, single leg)
+// DCDC channel (single-ended ADC3_INP11 = PC1; Allegro ACS758 @ 3.3 V).
+inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1650; // ACS758 offset = Vcc/2 @ 3.3 V  COMMISSION
+inline constexpr std::int32_t  DcdcCurrentMvPerAmpe1 = 264;  // COMMISSION (26.4 mV/A x10 ratiometric @ 3.3 V)
 inline constexpr std::uint8_t  CurrentFilterShift = 4;     // tau ~ 16 samples
 
 // IIR low-pass filter coefficient is encoded as a shift so the filter

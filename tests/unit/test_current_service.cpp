@@ -110,9 +110,9 @@ extern "C" void test_current_adc_full_scale_rails(void) {
 }
 
 // ---------------------------------------------------------------------------
-// adc_to_mA_dcdc: single-ended one leg of a 2nd SSA-2 (2.5 mV/A), zero
-// at the output common-mode (DcdcCurrentZeroMv). The zero-bias ADC code
-// reads ~0 mA, a +100 mV step reads +40 A (at 2.5 mV/A).
+// adc_to_mA_dcdc: single-ended Allegro ACS758 @ 3.3 V (ratiometric,
+// 26.4 mV/A, offset 1.65 V = DcdcCurrentZeroMv). The zero-bias ADC code
+// reads ~0 mA; a +264 mV step (26.4 mV/A x 10 A) reads +10 A.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_dcdc_zero_and_discharge(void) {
     const std::uint16_t zero_raw = static_cast<std::uint16_t>(
@@ -120,14 +120,15 @@ extern "C" void test_current_dcdc_zero_and_discharge(void) {
          static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
         ams::config::AdcVrefMv);
     TEST_ASSERT_LESS_OR_EQUAL_INT32(
-        300, std::abs(ams::CurrentService::adc_to_mA_dcdc(zero_raw)));
+        200, std::abs(ams::CurrentService::adc_to_mA_dcdc(zero_raw)));
 
-    const std::int32_t up_mv = ams::config::DcdcCurrentZeroMv + 100;
+    // +10 A -> +264 mV above the 1.65 V offset (26.4 mV/A).
+    const std::int32_t up_mv = ams::config::DcdcCurrentZeroMv + 264;
     const std::uint16_t up_raw = static_cast<std::uint16_t>(
         (up_mv * static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
         ams::config::AdcVrefMv);
-    // 100 mV / 2.5 mV/A = 40 A = 40000 mA. Allow +-400 mA rounding.
-    TEST_ASSERT_INT32_WITHIN(400, 40000,
+    // 264 mV / 26.4 mV/A = 10 A = 10000 mA. Allow +-200 mA rounding.
+    TEST_ASSERT_INT32_WITHIN(200, 10000,
                              ams::CurrentService::adc_to_mA_dcdc(up_raw));
 }
 
