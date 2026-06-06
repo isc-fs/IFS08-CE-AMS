@@ -601,4 +601,4 @@ Host-side unit tests run on every push (Unity), in both flight and HIL_STUB buil
 4. `scoped_mutex.hpp` — orphaned since the refactor; delete or document.
 5. `VehicleService::start_button` legacy path — dead since the GPIO move; the FSM now reads TSMS/DASH_CHG directly.
 6. `encode_diag` / `AmsTelemDiagId = 0x4A3` — still defined, never emitted; the pit-diag stream supersedes it. Remove or document the deferred plan.
-7. Pit-diag 1 Hz burst is the largest CAN producer (~49 frames/s, ≈12% of FDCAN1 TX at 1 Mbps) — budget it before adding another large producer.
+7. Pit-diag 1 Hz burst is the largest CAN producer (~49 frames/s, ≈24% of FDCAN1 TX at 500 kbps) — budget it before adding another large producer.
