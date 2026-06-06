@@ -18,7 +18,8 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "cmsis_os.h"
+#include "FreeRTOS.h"
+#include "cmsis_os2.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -399,7 +400,7 @@ static void MX_ADC3_Init(void)
   sConfig.Channel = ADC_CHANNEL_3;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC3_SAMPLETIME_2CYCLES_5;
-  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.SingleDiff = ADC_DIFFERENTIAL_ENDED;
   sConfig.OffsetNumber = ADC_OFFSET_NONE;
   sConfig.Offset = 0;
   sConfig.OffsetSign = ADC3_OFFSET_SIGN_NEGATIVE;
@@ -659,15 +660,16 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(LTC6820_CS_GPIO_Port, LTC6820_CS_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, AMS_OK_Pin|RELAY_AIR_P_Pin|RELAY_AIR_N_Pin|RELAY_PRECHARGE_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, AMS_OK_Pin|RELAY_AIR_P_Pin|RELAY_AIR_N_Pin|RELAY_PRECHARGE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(LTC6820_CS_GPIO_Port, LTC6820_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : TSMS_Pin DASH_CHG_Pin */
   GPIO_InitStruct.Pin = TSMS_Pin|DASH_CHG_Pin;
@@ -675,19 +677,19 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : LTC6820_CS_Pin */
-  GPIO_InitStruct.Pin = LTC6820_CS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(LTC6820_CS_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pins : AMS_OK_Pin RELAY_AIR_P_Pin RELAY_AIR_N_Pin RELAY_PRECHARGE_Pin */
   GPIO_InitStruct.Pin = AMS_OK_Pin|RELAY_AIR_P_Pin|RELAY_AIR_N_Pin|RELAY_PRECHARGE_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : LTC6820_CS_Pin */
+  GPIO_InitStruct.Pin = LTC6820_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  HAL_GPIO_Init(LTC6820_CS_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 

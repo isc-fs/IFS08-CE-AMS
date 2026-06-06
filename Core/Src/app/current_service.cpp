@@ -13,32 +13,53 @@ CurrentService& CurrentService::instance() noexcept {
 }
 
 std::int32_t CurrentService::adc_to_mA(std::uint16_t raw) noexcept {
-    // Work in microvolts to keep integer-mV bias out of the rounding
-    // around the zero point. Bipolar mapping after the carrier-board
-    // diff amp (gain x4, R12 biased to Vref/2): S_CURRENT = 4 *
-    // (OUTP - OUTN) + 1.65 V. Discharge -> positive S_CURRENT above
-    // 1.65 V; charge -> negative S_CURRENT below 1.65 V.
+    // Pack current, read in ADC DIFFERENTIAL mode on PF7/PF8
+    // (ADC3_INP3/INN3). The conversion encodes OUT_P - OUT_N over
+    // -Vref..+Vref onto codes 0..4095, with the zero-difference point at
+    // mid-scale (CurrentZeroCount ~= 2048). The sensor common-mode
+    // (~1.44 V) cancels in the subtraction, leaving only the bipolar
+    // +/- 5 mV/A differential.
+    //
+    //   delta_codes = raw - CurrentZeroCount        (+ discharge, - charge)
+    //   diff_uV     = delta_codes * 2 * Vref_mV * 1000 / 4095  (2x SE LSB)
+    //   sensitivity = 5 mV/A * 10 = 50 (10*mV / A)   [CurrentMvPerAmpe1]
+    //   mA          = diff_uV * 10 / CurrentMvPerAmpe1
+    //
+    // The "+ = discharge, - = charge" convention is preserved: discharge
+    // drives OUT_P above OUT_N, so raw sits above mid-scale and the
+    // returned mA is positive.
+    //
+    // delta_codes * 2 * Vref_mV * 1000 can reach ~2048 * 2 * 3300 * 1000
+    // ~= 1.35e10, so the multiplication must be done in int64.
+    const std::int64_t delta_codes =
+        static_cast<std::int64_t>(raw) - config::CurrentZeroCount;
+    const std::int64_t diff_uV =
+        (delta_codes * 2 * static_cast<std::int64_t>(config::AdcVrefMv) * 1000) /
+        config::AdcMaxCount;
+    return static_cast<std::int32_t>(
+        (diff_uV * 10) / config::CurrentMvPerAmpe1);
+}
+
+std::int32_t CurrentService::adc_to_mA_dcdc(std::uint16_t raw) noexcept {
+    // DCDC current, read SINGLE-ended on PC1 (ADC3_INP11): one analog
+    // leg of a 2nd SSA-2-250A. A single leg carries half the
+    // differential sensitivity (2.5 mV/A) biased at the output
+    // common-mode (~1.44 V), so it uses its own zero/sens constants.
+    // Classic single-ended mapping (zero at the common-mode voltage):
     //
     //   v_uV     = raw * Vref_mV * 1000 / 4095
-    //   delta_uV = v_uV - zero_mV * 1000        (+ above zero, - below)
-    //   sensitivity = 20 mV/A * 10 = 200 (10*mV / A)
-    //   mA       = delta_uV / sensitivity_uV_per_mA
-    //            = delta_uV * 10 / CurrentMvPerAmpe1
+    //   delta_uV = v_uV - DcdcCurrentZeroMv * 1000   (+ above zero)
+    //   mA       = delta_uV * 10 / DcdcCurrentMvPerAmpe1
     //
-    // The "+ = discharge, - = charge" convention is preserved: with
-    // zero at 1.65 V and v_uV > zero on discharge, delta_uV is
-    // positive and so is the returned mA value.
-    //
-    // raw * Vref_mV * 1000 can reach 4095 * 3300 * 1000 ≈ 1.35e10, so
-    // the multiplication must be done in int64.
+    // raw * Vref_mV * 1000 can reach ~1.35e10 -> int64.
     const std::int64_t v_uV =
         (static_cast<std::int64_t>(raw) *
          static_cast<std::int64_t>(config::AdcVrefMv) * 1000) /
         config::AdcMaxCount;
     const std::int64_t delta_uV =
-        v_uV - static_cast<std::int64_t>(config::CurrentZeroMv) * 1000;
+        v_uV - static_cast<std::int64_t>(config::DcdcCurrentZeroMv) * 1000;
     return static_cast<std::int32_t>(
-        (delta_uV * 10) / config::CurrentMvPerAmpe1);
+        (delta_uV * 10) / config::DcdcCurrentMvPerAmpe1);
 }
 
 void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept {
@@ -61,11 +82,9 @@ void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) 
 
 void CurrentService::update_dcdc_from_adc(std::uint16_t raw,
                                           std::uint32_t now_tick) noexcept {
-    // Same diff-amp topology + same SSA-2 sensor model as the pack
-    // channel, so adc_to_mA is reused. If a future revision wires a
-    // different sensor or different gain on the DCDC path, split this
-    // into its own converter.
-    const std::int32_t mA = adc_to_mA(raw);
+    // Separate single-ended sensor on PC1 (ADC3_INP11), distinct from
+    // the differential pack channel -- use the DCDC-specific converter.
+    const std::int32_t mA = adc_to_mA_dcdc(raw);
 
     state_.dcdc_raw_mA           = mA;
     state_.last_dcdc_update_tick = now_tick;

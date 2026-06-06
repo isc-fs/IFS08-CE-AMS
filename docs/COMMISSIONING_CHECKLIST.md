@@ -36,14 +36,21 @@ checklist + record.
 
 ## 2. Pack current sensor  🔒  (`COMMISSIONING.md` §2)
 
-Bourns SSA-2-250A shunt on `PF7`/ADC3. **Calibrate the two cal constants
-before trusting the over-current trip.**
+Bourns SSA-2-250A shunt read **differentially** on `PF7`/`PF8`
+(ADC3_INP3/INN3). **Calibrate the two cal constants before trusting the
+over-current trip.**
 
 | Constant | Default | Unit | How to determine | Final | ✓ |
 |---|---|---|---|---|---|
-| `CurrentZeroMv` | 1650 | mV | Zero-current ADC reading (pack open / 0 A). Record the actual offset. | | ☐ |
-| `CurrentMvPerAmpe1` | 200 | 0.1·mV/A | Sensitivity ×10 (20 mV/A nominal). Inject a known current, solve mV/A. | | ☐ |
-| `CurrentMaxMa` | 200000 | mA | Over-current trip = pack/fuse continuous rating (− margin). | | ☐ |
+| `CurrentZeroCount` | 2048 | ADC counts | Zero-current differential code (pack open / 0 A). Record the actual mid-scale offset. | | ☐ |
+| `CurrentMvPerAmpe1` | 50 | 0.1·mV/A | Sensitivity ×10 (5 mV/A nominal, bare sensor — no carrier gain). Inject a known current, solve mV/A. | | ☐ |
+| `CurrentMaxMa` | 200000 | mA | Over-current trip = pack/fuse continuous rating (− margin). Now genuinely reachable on this HW rev. | | ☐ |
+
+DCDC current (informational, not safety-gated) is a 2nd SSA-2-250A wired
+single-ended on `PC1` (ADC3_INP11) — one leg, so 2.5 mV/A at the output
+common-mode. Calibrate `DcdcCurrentZeroMv` (1440) and
+`DcdcCurrentMvPerAmpe1` (25), and confirm the sign, per
+`COMMISSIONING.md` §2.4.
 
 ## 3. Precharge & bus-collapse  🔒  (`COMMISSIONING.md` §3, §3.4)
 

@@ -17,7 +17,6 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
-
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 /* USER CODE BEGIN Includes */
@@ -115,14 +114,21 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
     __HAL_RCC_ADC3_CLK_ENABLE();
 
     __HAL_RCC_GPIOF_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
     /**ADC3 GPIO Configuration
     PF7     ------> ADC3_INP3
-    PF8     ------> ADC3_INP7
+    PF8     ------> ADC3_INN3
+    PC1     ------> ADC3_INP11
     */
-    GPIO_InitStruct.Pin = S_CURRENT_Pin|S_CURRENT_DCDC_Pin;
+    GPIO_InitStruct.Pin = S_CURRENT_P_Pin|S_CURRENT_N_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+    GPIO_InitStruct.Pin = S_CURRENT_DCDC_Pin;
+    GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(S_CURRENT_DCDC_GPIO_Port, &GPIO_InitStruct);
 
     /* USER CODE BEGIN ADC3_MspInit 1 */
 
@@ -150,9 +156,12 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* hadc)
 
     /**ADC3 GPIO Configuration
     PF7     ------> ADC3_INP3
-    PF8     ------> ADC3_INP7
+    PF8     ------> ADC3_INN3
+    PC1     ------> ADC3_INP11
     */
-    HAL_GPIO_DeInit(GPIOF, S_CURRENT_Pin|S_CURRENT_DCDC_Pin);
+    HAL_GPIO_DeInit(GPIOF, S_CURRENT_P_Pin|S_CURRENT_N_Pin);
+
+    HAL_GPIO_DeInit(S_CURRENT_DCDC_GPIO_Port, S_CURRENT_DCDC_Pin);
 
     /* USER CODE BEGIN ADC3_MspDeInit 1 */
 

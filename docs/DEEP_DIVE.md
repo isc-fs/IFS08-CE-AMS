@@ -46,7 +46,7 @@ flowchart LR
     AMS -- "isoSPI via LTC6820" --> Chain([10 × LTC6811-1<br/>+ 10 × ADG731<br/>95 cells / 200 NTCs])
     AMS -- "AMS_OK PB4 (driven)<br/>AIR+ PB5 · AIR- PB6 · PRECHARGE PB7" --> SDC([Shutdown circuit + AIRs])
     AMS -- "0x4A0/4A1/4A2 telem · 500 ms<br/>0x450 current · 250 ms<br/>0x680..0x6C8 pit-diag · gated" --> VCU
-    AMS -- "ADC3 PF7" --> CurrSensor([SSA-2-250A<br/>bipolar shunt])
+    AMS -- "ADC3 diff PF7/PF8" --> CurrSensor([SSA-2-250A<br/>bipolar shunt])
 ```
 
 | Property | Value |
@@ -454,8 +454,8 @@ Single namespace `ams::config` (`ams_config.hpp`) — the canonical home for eve
 
 | Pack limits | Current sensor | Balancing + NTC |
 |---|---|---|
-| `CellUnderVoltageMv` 2800 | `CurrentZeroMv` 1650 (Vref/2, bipolar) | `BalanceDeltaMv` 50 |
-| `CellOverVoltageMv` 4200 | `CurrentMvPerAmpe1` (diff-amp scaled) | `BalanceTempMax` 50 °C |
+| `CellUnderVoltageMv` 2800 | `CurrentZeroCount` 2048 (diff mid-scale) | `BalanceDeltaMv` 50 |
+| `CellOverVoltageMv` 4200 | `CurrentMvPerAmpe1` 50 (5 mV/A, bare sensor) | `BalanceTempMax` 50 °C |
 | `CellUnderTempC` -10 °C | `CurrentFilterShift` (IIR) | `BalanceMaxActive` 4 |
 | `CellOverTempC` 60 °C | | `NtcBeta` 3380 K |
 | `CurrentMaxMa` 200000 | | `NtcR25` 10 kΩ |

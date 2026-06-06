@@ -36,69 +36,93 @@ they're derived from.
 ## 2. Current sensor calibration
 
 The pack current path uses a **Bourns SSA-2-250A** shunt sensor
-(datasheet at `pcbs/ssa-2.pdf`). The sensor's raw differential output
-is `±5 mV/A` around a common-mode voltage of `+1.44 V`. A discrete
-difference amplifier on the carrier (MCP6001R, gain ×4, R12 biased
-to `Vref/2 = 1.65 V`) converts the differential signal to a
-single-ended `S_CURRENT` routed to `PF7` (ADC3 ch 3, 12-bit):
+(datasheet at `pcbs/ssa-2.pdf`). It is a 2-wire amplified-differential
+device: its `OUT_P` / `OUT_N` pins carry a bipolar `±5 mV/A`
+differential signal around a common-mode of `+1.44 V`.
 
-> `S_CURRENT = 4 × (OUTP − OUTN) + 1.65 V`
+**HW revision `feat/current-sensor-diff`:** the external carrier diff
+amp (old MCP6001R ×4 + Vref/2 bias) is **removed**. `OUT_P` and `OUT_N`
+now wire straight to the STM32 and the ADC reads them in **differential
+mode**:
 
-Nominal calibration:
-- **Zero current** → S_CURRENT = 1650 mV (`CurrentZeroMv`)
-- **Sensitivity** at the ADC pin = 5 mV/A × 4 = 20 mV/A
-  (`CurrentMvPerAmpe1` = 200, i.e. 20 mV/A × 10)
-- **Sign convention**: discharge → positive `(OUTP − OUTN)` → S_CURRENT
-  rises above 1.65 V → positive mA. Charge does the opposite.
-- **Observable range**: bipolar `±82.5 A` (constrained by the 0–3.3 V
-  ADC rail). Currents beyond that clip at the rail and become
-  indistinguishable; `CurrentMaxMa = 200 A` is therefore a defensive-only
-  predicate on this HW revision — see §2.4.
+> `OUT_P = PF7 = ADC3_INP3`  ·  `OUT_N = PF8 = ADC3_INN3`
 
-Tolerance of the Vref/2 divider and R10..R13 mismatch can shift the
-zero point by tens of mV; calibrate before v1.0.0.
+In STM32H7 differential mode the conversion encodes `V(INP) − V(INN)`
+over `−Vref … +Vref` onto codes `0 … 4095`, with the zero-difference
+point at **mid-scale (code ≈ 2048)**. The sensor common-mode (1.44 V)
+cancels in the subtraction, leaving only the bipolar `±5 mV/A`:
+
+> `raw ≈ 2048 + (5 mV/A × I) / LSB_diff`,  `LSB_diff = 2·Vref/4095 ≈ 1.61 mV`
+
+Nominal calibration (`ams_config.hpp`):
+- **Zero current** → ADC code ≈ 2048 (`CurrentZeroCount`, a *count*, not
+  a voltage — the natural reference in differential mode is the mid code)
+- **Sensitivity** = the bare sensor 5 mV/A (no ×4 gain anymore):
+  `CurrentMvPerAmpe1 = 50` (i.e. 5 mV/A × 10)
+- **Sign convention**: discharge → `OUT_P` above `OUT_N` → raw above
+  mid-scale → positive mA. Charge does the opposite.
+- **Observable range**: the differential pair spans ≈ `±Vref`, well
+  beyond the sensor's own `±2.62 V` (≈ `±524 A`) clip. Unlike the old
+  ×4 + 1.65 V front-end (which clipped firmware-side at only `±82.5 A`),
+  `CurrentMaxMa = 200 A` is now **genuinely reachable** — see §2.3.
+
+The sensor DC offset (≤ ±0.4 mV) plus the ADC offset shift the zero code
+by a few LSB; calibrate before v1.0.0.
 
 ### 2.1 Zero-offset
 
 1. Disconnect the pack from anything that draws current.
-2. Read the raw ADC value via debugger (`hadc3` → start → poll → get).
-3. Compute the implied voltage `v_mV = raw * 3300 / 4095`.
-4. If `v_mV` differs from `1650` by more than 30 mV, update
-   `CurrentZeroMv` in `ams_config.hpp` to the measured value.
+2. Read the raw differential ADC code for the pack channel (CH3,
+   `ADC_DIFFERENTIAL_ENDED`) — see the firmware's `read_adc3_channel`.
+3. If the raw code differs from `2048` by more than ~20 counts, update
+   `CurrentZeroCount` in `ams_config.hpp` to the measured value.
 
 ### 2.2 Sensitivity
 
 1. Connect a calibrated current source in series with the pack.
-2. Run **+10 A** discharge. Note the new ADC raw.
-3. Run **−10 A** charge (regen or external charger). Note ADC raw.
-4. Sensitivity = `(v_at_+10A_mV − v_zero_mV) / 10`, in mV/A. (Note
-   the sign — discharge raises voltage on this HW revision.)
+2. Run **+10 A** discharge. Note the new raw code `r_plus`.
+3. Run **−10 A** charge (regen or external charger). Note `r_minus`.
+4. Counts-per-amp = `(r_plus − CurrentZeroCount) / 10`. Convert to mV/A:
+   `mV_per_A = counts_per_amp × LSB_diff` where `LSB_diff = 2·3300/4095 ≈
+   1.612 mV`. Nominal result ≈ 5 mV/A.
 5. Update `CurrentMvPerAmpe1` (scaled ×10): set it to
-   `round(sensitivity_mV_per_A × 10)`. Nominal is 200.
-6. Confirm symmetry by comparing the −10 A reading; if `|v_at_-10A_mV
-   − v_zero_mV|` differs from `|v_at_+10A_mV − v_zero_mV|` by > 2 %,
-   log a non-linearity warning in the project log and consider a
-   per-direction calibration table (out of v1.0.0 scope).
+   `round(mV_per_A × 10)`. Nominal is 50.
+6. Confirm symmetry by comparing the −10 A reading; if `|r_minus −
+   CurrentZeroCount|` differs from `|r_plus − CurrentZeroCount|` by > 2 %,
+   log a non-linearity warning and consider a per-direction calibration
+   table (out of v1.0.0 scope).
 
 ### 2.3 Absolute limit
 
-`CurrentMaxMa` defaults to 200 000 mA (200 A). On the current HW revision
-the ADC clips at ±82.5 A, so the predicate `|filtered_mA| > CurrentMaxMa`
-never trips in practice — it's a defensive-only check. If you want a
-real over-limit safety, lower `CurrentMaxMa` to e.g. 75 000 mA (75 A, with
-10 % margin from the clipping rail). Otherwise leave at the FS-rules
-value and treat clipping at the rail as the de-facto trip.
+`CurrentMaxMa` defaults to 200 000 mA (200 A). With the differential
+front-end this threshold maps to a raw code (`2048 + ~620 ≈ 2668`) well
+inside `0…4095`, so the predicate `|filtered_mA| > CurrentMaxMa` is now a
+**real, reachable** over-current trip (no longer defeated by an 82.5 A
+clip). Keep it at the FS-rules value unless a tighter pack limit applies.
 
-### 2.4 Charge-current observability caveat
+### 2.4 DCDC current channel
 
-The diff-amp gain (×4) plus the Vref/2 bias means the full 3.3 V rail
-maps to ±82.5 A. Real currents above that are not observable. Two
-HW design choices that affect this:
-- **Lower the gain** (e.g. ×2) to widen the range to ±165 A at the
-  cost of doubling the LSB per ampere (10 mV/A noise floor).
-- **Add a second sensor** on `S_CURRENT_DCDC` (PF8 → ADC3 ch 7,
-  currently configured as analog input but not read by firmware).
-Both are tracked as v1.5 follow-ups.
+DCDC supply current uses a **second Bourns SSA-2-250A** (same part as the
+pack sensor) moved to `PC1 = ADC3_INP11` (was `PF8`) and wired
+**single-ended**: only one analog leg (`Analog+` / `OUT_P`) goes to PC1,
+referenced to GND. Because the SSA-2's `±5 mV/A` spec is the
+*differential* output and the two legs swing symmetrically about the
+output common-mode, a single leg carries **half** the sensitivity:
+
+> `V(PC1) = CommonMode + 2.5 mV/A × I`
+
+Converted by `adc_to_mA_dcdc` using its own constants, both `COMMISSION`:
+- `DcdcCurrentZeroMv` (nominal **1440 mV** — the SSA-2 output
+  common-mode, *not* Vref/2)
+- `DcdcCurrentMvPerAmpe1` (nominal **25**, i.e. 2.5 mV/A × 10 — a single
+  leg, half the differential)
+
+DCDC is **informational only** — not part of any safety predicate
+(`DcdcIStaleMs` staleness has no FSM impact). Calibrate by the same
+zero-then-sensitivity procedure as §2.1–2.2 but against the PC1
+single-ended reading (`v_mV = raw × 3300 / 4095`). **Confirm the sign on
+the bench** — whether `Analog+` or `Analog−` is the wired leg sets
+whether discharge reads positive or negative.
 
 ---
 

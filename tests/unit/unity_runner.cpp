@@ -51,8 +51,9 @@ void test_current_adc_zero_point_reads_near_zero(void);
 void test_current_adc_discharge_positive(void);
 void test_current_adc_charge_negative(void);
 void test_current_adc_symmetric_around_zero(void);
-void test_current_adc_upper_rail_near_82500_mA(void);
-void test_current_adc_lower_rail_near_minus_82500_mA(void);
+void test_current_adc_over_limit_is_observable(void);
+void test_current_adc_full_scale_rails(void);
+void test_current_dcdc_zero_and_discharge(void);
 void test_current_is_dcdc_fresh_lifecycle(void);
 
 // test_vehicle_service.cpp
@@ -268,8 +269,9 @@ int main(void) {
     RUN_TEST(test_current_adc_discharge_positive);
     RUN_TEST(test_current_adc_charge_negative);
     RUN_TEST(test_current_adc_symmetric_around_zero);
-    RUN_TEST(test_current_adc_upper_rail_near_82500_mA);
-    RUN_TEST(test_current_adc_lower_rail_near_minus_82500_mA);
+    RUN_TEST(test_current_adc_over_limit_is_observable);
+    RUN_TEST(test_current_adc_full_scale_rails);
+    RUN_TEST(test_current_dcdc_zero_and_discharge);
     RUN_TEST(test_current_is_dcdc_fresh_lifecycle);
 
     RUN_TEST(test_decode_dc_bus_little_endian);

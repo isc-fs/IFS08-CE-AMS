@@ -255,8 +255,10 @@ Same layout as `0x132` with `vmax_module[3..4]`.
 | 2–3 | `current_dcdc` BE int16, deciamps |
 
 Sign convention preserved from `+ = discharge, − = charge`. Pack current
-saturates at int16 extremes (the HW caps at ±82.5 A so saturation is
-unreachable in practice). Supersedes the retired `0x450`.
+is read **differentially** (PF7/PF8, ADC3_INP3/INN3); the front-end now
+observes well beyond the FS-rules range (the old ×4 + 1.65 V single-ended
+front-end capped firmware-side at ±82.5 A — that limit is gone).
+Supersedes the retired `0x450`.
 
 ### `0x136` — temp_max per module (modules 0..2)
 
