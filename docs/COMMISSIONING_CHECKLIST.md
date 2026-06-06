@@ -42,8 +42,8 @@ over-current trip.**
 
 | Constant | Default | Unit | How to determine | Final | ✓ |
 |---|---|---|---|---|---|
-| `CurrentZeroCount` | 2048 | ADC counts | Zero-current differential code (pack open / 0 A). Record the actual mid-scale offset. | | ☐ |
-| `CurrentMvPerAmpe1` | 50 | 0.1·mV/A | Sensitivity ×10 (5 mV/A nominal, bare sensor — no carrier gain). Inject a known current, solve mV/A. | | ☐ |
+| `CurrentZeroCount` | 2050 | ADC counts | Zero-current differential code (pack open / 0 A). HIL-commissioned (#348, ideal 2048). Record the actual mid-scale offset per carrier. | | ☐ |
+| `CurrentMvPerAmpe1` | 46 | 0.1·mV/A | Sensitivity ×10. HIL-commissioned (#348): ideal 50 (5 mV/A) trimmed for a measured 0.924× ADC/VREF gain → trip at 200 A real. Re-measure per carrier. | | ☐ |
 | `CurrentMaxMa` | 200000 | mA | Over-current trip = pack/fuse continuous rating (− margin). Now genuinely reachable on this HW rev. | | ☐ |
 
 DCDC current (informational, not safety-gated) is an Allegro **ACS758**

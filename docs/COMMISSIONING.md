@@ -54,11 +54,21 @@ cancels in the subtraction, leaving only the bipolar `±5 mV/A`:
 
 > `raw ≈ 2048 + (5 mV/A × I) / LSB_diff`,  `LSB_diff = 2·Vref/4095 ≈ 1.61 mV`
 
-Nominal calibration (`ams_config.hpp`):
+Nominal (ideal) calibration:
 - **Zero current** → ADC code ≈ 2048 (`CurrentZeroCount`, a *count*, not
   a voltage — the natural reference in differential mode is the mid code)
 - **Sensitivity** = the bare sensor 5 mV/A (no ×4 gain anymore):
-  `CurrentMvPerAmpe1 = 50` (i.e. 5 mV/A × 10)
+  ideal `CurrentMvPerAmpe1 = 50` (i.e. 5 mV/A × 10)
+
+> **HIL-commissioned values (#348)** — `ams_config.hpp` currently ships
+> the bench-measured figures, not the ideal ones. A DAC injection
+> verified at exactly 5 mV/A measured the firmware reading a stable
+> **0.924× (7.6 % low)** with a **+0.6 A** zero (6-boot spread 0.1 A).
+> Folding that effective ADC/VREF gain into the COMMISSION constants:
+> **`CurrentMvPerAmpe1 = 46`** (50 / 0.924, residual +0.4 %) and
+> **`CurrentZeroCount = 2050`** (raw at 0 A) → the over-current trip
+> lands at **200 A real** and telemetry is accurate. Re-measure on each
+> new carrier; the gain is board-specific (VREF+ tolerance).
 - **Sign convention**: discharge → `OUT_P` above `OUT_N` → raw above
   mid-scale → positive mA. Charge does the opposite.
 - **Observable range**: the differential pair spans ≈ `±Vref`, well
@@ -95,7 +105,7 @@ by a few LSB; calibrate before v1.0.0.
 ### 2.3 Absolute limit
 
 `CurrentMaxMa` defaults to 200 000 mA (200 A). With the differential
-front-end this threshold maps to a raw code (`2048 + ~620 ≈ 2668`) well
+front-end this threshold maps to a raw code (`2050 + ~571 ≈ 2621`) well
 inside `0…4095`, so the predicate `|filtered_mA| > CurrentMaxMa` is now a
 **real, reachable** over-current trip (no longer defeated by an 82.5 A
 clip). Keep it at the FS-rules value unless a tighter pack limit applies.

@@ -99,14 +99,15 @@ extern "C" void test_current_adc_over_limit_is_observable(void) {
 
 // ---------------------------------------------------------------------------
 // adc_to_mA: full-scale rails. raw = 4095 and raw = 0 are the extreme
-// differential codes (~+/- Vref); confirm sign and rough magnitude.
-// (4095 - 2048) * 2 * 3300 * 1000 / 4095 / 5 mV/A ~= +660 A.
+// differential codes (~+/- Vref); confirm sign and rough magnitude with
+// the HIL-commissioned constants (CurrentZeroCount 2050, sens 46):
+// (4095 - 2050) * 2 * 3300 * 1000 / 4095 * 10 / 46 ~= +717 A.
 // ---------------------------------------------------------------------------
 extern "C" void test_current_adc_full_scale_rails(void) {
     const std::int32_t hi = ams::CurrentService::adc_to_mA(ams::config::AdcMaxCount);
     const std::int32_t lo = ams::CurrentService::adc_to_mA(0);
-    TEST_ASSERT_INT32_WITHIN(2000, 659830, hi);
-    TEST_ASSERT_INT32_WITHIN(2000, -660160, lo);
+    TEST_ASSERT_INT32_WITHIN(2000, 716674, hi);
+    TEST_ASSERT_INT32_WITHIN(2000, -718426, lo);
 }
 
 // ---------------------------------------------------------------------------
