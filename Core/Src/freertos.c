@@ -53,7 +53,7 @@
 /* USER CODE END FunctionPrototypes */
 
 /* Hook prototypes */
-void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName);
+void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName);
 void vApplicationMallocFailedHook(void);
 
 /* USER CODE BEGIN 4 */
@@ -74,7 +74,7 @@ volatile uint32_t g_stack_overflow_watermark      = 0xFFFFFFFFu;
 extern void ams_relays_open_all_c(void);   /* relay_driver.cpp wrapper */
 extern void ams_error_latch_set_c(void);   /* error_latch.cpp wrapper */
 
-void vApplicationStackOverflowHook(xTaskHandle xTask, signed char *pcTaskName)
+void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName)
 {
    /* configCHECK_FOR_STACK_OVERFLOW=2 -> guard pattern detected the
     * overflow. Make this loud: open the relays, latch ERROR in

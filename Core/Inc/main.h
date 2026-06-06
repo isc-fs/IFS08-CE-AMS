@@ -57,16 +57,16 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define S_CURRENT_Pin GPIO_PIN_7
-#define S_CURRENT_GPIO_Port GPIOF
-#define S_CURRENT_DCDC_Pin GPIO_PIN_8
-#define S_CURRENT_DCDC_GPIO_Port GPIOF
+#define S_CURRENT_P_Pin GPIO_PIN_7
+#define S_CURRENT_P_GPIO_Port GPIOF
+#define S_CURRENT_N_Pin GPIO_PIN_8
+#define S_CURRENT_N_GPIO_Port GPIOF
 #define TSMS_Pin GPIO_PIN_9
 #define TSMS_GPIO_Port GPIOF
 #define DASH_CHG_Pin GPIO_PIN_10
 #define DASH_CHG_GPIO_Port GPIOF
-#define LTC6820_CS_Pin GPIO_PIN_9
-#define LTC6820_CS_GPIO_Port GPIOB
+#define S_CURRENT_DCDC_Pin GPIO_PIN_1
+#define S_CURRENT_DCDC_GPIO_Port GPIOC
 #define AMS_OK_Pin GPIO_PIN_4
 #define AMS_OK_GPIO_Port GPIOB
 #define RELAY_AIR_P_Pin GPIO_PIN_5
@@ -75,6 +75,8 @@ void Error_Handler(void);
 #define RELAY_AIR_N_GPIO_Port GPIOB
 #define RELAY_PRECHARGE_Pin GPIO_PIN_7
 #define RELAY_PRECHARGE_GPIO_Port GPIOB
+#define LTC6820_CS_Pin GPIO_PIN_9
+#define LTC6820_CS_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 
