@@ -8,10 +8,14 @@ further down are historical archaeology — see the note below.
 
 ## Bus assignment
 
-**Bit rate: 1 Mbps** (classic CAN, 75 % sample point — FDCAN kernel clock
-24 MHz, nominal prescaler 3, Tseg1 5, Tseg2 2, SJW 1). Bumped from 500 kbps;
-the whole bus — VCU, ECU, charger, and the **bootloader** — must run at
-1 Mbps in lockstep. No CAN-FD / bit-rate switching (all frames classic).
+**Bit rate: 500 kbps** (classic CAN, 68.75 % sample point — FDCAN kernel
+clock 24 MHz, nominal prescaler 3, Tseg1 10, Tseg2 5, SJW 1). The 1 Mbps
+bump (#338) was **reverted** (#351): on real hardware the bus ran near its
+signal-integrity margin (~7 errors/5 min vs ≈0 at 500 k) and a mid-flash
+bit error bricked chips via stm32-can-bootloader#166; doubling the bit time
+restores the margin. The whole bus — VCU, ECU, charger, and the
+**bootloader** — must run at 500 kbps in lockstep. No CAN-FD / bit-rate
+switching (all frames classic).
 
 | Bus | Role | Frame format | Filter |
 |---|---|---|---|
@@ -407,7 +411,7 @@ Dispatch + flag ownership in
 [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
 
 Bus cost: 58 frames/scan (24 cell-V + 25 cell-T + 9 status `0x6C0..0x6C8`)
-× ~12 bytes-on-wire ≈ 5.6 kbit, ~5.6 ms at 1 Mbps ≈ 0.6 % bus load (1 Hz)
+× ~12 bytes-on-wire ≈ 5.6 kbit, ~11.2 ms at 500 kbps ≈ 1.1 % bus load (1 Hz)
 when enabled.
 
 ---
