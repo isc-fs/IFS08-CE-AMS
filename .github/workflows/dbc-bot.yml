@@ -13,9 +13,9 @@
 # This replaces the interim "DBC matches code" diff check in
 # build-tests.yml as the source of truth once the action is stable.
 #
-# TODO: the action is pinned to the IFS08-DBCinator#7 review SHA
-# (feat/5-dbc-bot-action). Bump to the tagged release (e.g.
-# isc-fs/IFS08-DBCinator/actions/dbc-bot@v1) once #7 merges + tags.
+# Pinned to @main now that IFS08-DBCinator#7 (the composite action) is
+# merged. Move to a versioned tag (e.g. @v1) once DBCinator cuts one for
+# the action -- or SHA-pin for stricter supply-chain immutability.
 
 name: dbcinator
 
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Regenerate docs/dbc/ams.dbc from the code-first DSL
-        uses: isc-fs/IFS08-DBCinator/actions/dbc-bot@aab4c971ff6f3edd026530b15ea5b67a15efe898
+        uses: isc-fs/IFS08-DBCinator/actions/dbc-bot@main
         with:
           app-id: ${{ secrets.DBCINATOR_APP_ID }}
           private-key: ${{ secrets.DBCINATOR_PRIVATE_KEY }}
