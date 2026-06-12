@@ -173,6 +173,24 @@ static const can_dsl::MsgDesc ALL_MSGS[] = {
 
 static const unsigned ALL_MSGS_COUNT = sizeof(ALL_MSGS) / sizeof(can_dsl::MsgDesc);
 
+// ---- Array-of-frames families (windowed multi-ID streams) ------------------
+// Single source for the pit-diag cell/temp grids. dbc_dump expands each into
+// `frame_count` DBC messages; the firmware encoders (pit_diag_emitter.hpp)
+// read the layout fields from here so encoder + DBC can't drift. Values
+// mirror tools/gen_dbc.py's pit_cells()/pit_temps() so dbc_dump reproduces
+// the same wire contract.
+static const can_dsl::ArrayMsgDesc ALL_ARRAYS[] = {
+    // 0x680..0x697: 24 frames x 4 cells (BE u16 mV), row-major cell_mV[5][19].
+    { "AMS", 0x680u, "PitDiag_cells_%02u", 24u, 4u, 16u, /*BE*/true,  /*signed*/false,
+      /*inner_dim*/19u, /*total*/95u, "cell_m%u_c%02u_mV", "sentinel_slot%u",
+      "mV", 0, 5000, 1000u },
+    // 0x6A0..0x6B8: 25 frames x 8 NTCs (LE i8 degC), row-major cell_tempC[5][40].
+    { "AMS", 0x6A0u, "PitDiag_temps_%02u", 25u, 8u, 8u,  /*BE*/false, /*signed*/true,
+      /*inner_dim*/40u, /*total*/200u, "temp_m%u_t%02u_C", nullptr,
+      "degC", -128, 127, 1000u },
+};
+static const unsigned ALL_ARRAYS_COUNT = sizeof(ALL_ARRAYS) / sizeof(can_dsl::ArrayMsgDesc);
+
 // ---- pass 5: per-message bit-overlap guard (compile-time) ------------------
 // Each field ORs its claimed frame-bit mask; a static_assert fires if two
 // fields claim the same bit (e.g. a copy-paste byte index, or a BITS field

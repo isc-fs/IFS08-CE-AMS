@@ -52,28 +52,19 @@ namespace detail {
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_cell_frame(const BmsState& bms,
                                              std::uint8_t    frame_idx) noexcept {
-    Frame f = {};
-    if (frame_idx >= config::PitDiagCellFrames) return f;
-
-    constexpr std::uint16_t TotalCells =
-        static_cast<std::uint16_t>(config::BmsModuleCount) *
-        static_cast<std::uint16_t>(config::CellsPerModule);
-
-    for (std::uint8_t slot = 0; slot < 4; ++slot) {
-        const std::uint16_t cell_index =
-            static_cast<std::uint16_t>(4u * frame_idx + slot);
-        std::uint16_t v_mV;
-        if (cell_index < TotalCells) {
-            const std::uint8_t module = static_cast<std::uint8_t>(cell_index / config::CellsPerModule);
-            const std::uint8_t cell   = static_cast<std::uint8_t>(cell_index % config::CellsPerModule);
-            v_mV = bms.cell_mV[module][cell];
-        } else {
-            v_mV = config::PitDiagCellSentinel;
-        }
-        f[slot * 2u]      = static_cast<std::uint8_t>((v_mV >> 8) & 0xFFu);
-        f[slot * 2u + 1u] = static_cast<std::uint8_t>(v_mV & 0xFFu);
-    }
-    return f;
+    const auto& A = ifs08::ALL_ARRAYS[0];   // 0x680 cell grid
+    if (frame_idx >= A.frame_count) return Frame{};
+    std::uint8_t b[8];
+    can_dsl::encode_array_window(
+        frame_idx, A.per_frame, A.elem_bits, A.big_endian, A.total_elems,
+        config::PitDiagCellSentinel,
+        [&](unsigned flat) -> std::uint64_t {
+            const std::uint8_t m = static_cast<std::uint8_t>(flat / config::CellsPerModule);
+            const std::uint8_t c = static_cast<std::uint8_t>(flat % config::CellsPerModule);
+            return bms.cell_mV[m][c];
+        },
+        b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -96,17 +87,19 @@ namespace detail {
 
 [[nodiscard]] inline Frame encode_temp_frame(const BmsState& bms,
                                              std::uint8_t    frame_idx) noexcept {
-    Frame f = {};
-    if (frame_idx >= config::PitDiagTempFrames) return f;
-
-    for (std::uint8_t slot = 0; slot < 8; ++slot) {
-        const std::uint16_t temp_index =
-            static_cast<std::uint16_t>(8u * frame_idx + slot);
-        const std::uint8_t module = static_cast<std::uint8_t>(temp_index / config::TempsPerModule);
-        const std::uint8_t temp   = static_cast<std::uint8_t>(temp_index % config::TempsPerModule);
-        f[slot] = static_cast<std::uint8_t>(clip_int8_pit(bms.cell_tempC[module][temp]));
-    }
-    return f;
+    const auto& A = ifs08::ALL_ARRAYS[1];   // 0x6A0 temp grid
+    if (frame_idx >= A.frame_count) return Frame{};
+    std::uint8_t b[8];
+    can_dsl::encode_array_window(
+        frame_idx, A.per_frame, A.elem_bits, A.big_endian, A.total_elems,
+        /*sentinel*/0u,   // 25*8 == 200 exactly, no slot ever exceeds total
+        [&](unsigned flat) -> std::uint64_t {
+            const std::uint8_t m = static_cast<std::uint8_t>(flat / config::TempsPerModule);
+            const std::uint8_t t = static_cast<std::uint8_t>(flat % config::TempsPerModule);
+            return static_cast<std::uint8_t>(clip_int8_pit(bms.cell_tempC[m][t]));
+        },
+        b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
