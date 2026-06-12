@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x137  ACU_tmax_module_b -- per-module tmax, modules 3..4 + DCDC stub.
+ * tmax_dcdc carries config::DcdcTempStubValue (-32768 sentinel) until a
+ * real DCDC temp sensor is wired. Mirrors ams::acu_tx::encode_tmax_module_b().
+ */
+
+CAN_MSG(ACU_tmax_module_b, 0x137, 6, "AMS", 250)
+    FIELD_BE_S (tmax_module3, int16_t, 0, 16, 1, 0, "degC")
+    FIELD_BE_S (tmax_module4, int16_t, 2, 16, 1, 0, "degC")
+    FIELD_BE_S (tmax_dcdc,    int16_t, 4, 16, 1, 0, "degC")
+CAN_MSG_END(ACU_tmax_module_b)

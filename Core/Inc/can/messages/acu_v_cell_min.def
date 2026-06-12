@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x12C  ACU_v_cell_min -- pack-wide min cell voltage.
+ * Mirrors ams::acu_tx::encode_min_voltage().
+ */
+
+CAN_MSG(ACU_v_cell_min, 0x12C, 2, "AMS", 100)
+    FIELD_BE (min_cell_mV, uint16_t, 0, 16, 1, 0, "mV")
+CAN_MSG_END(ACU_v_cell_min)

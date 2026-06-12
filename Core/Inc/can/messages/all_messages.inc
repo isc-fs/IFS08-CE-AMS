@@ -7,8 +7,19 @@
  * has defined.
  *
  * Phase 2a scope: the three AMS telemetry frames (0x4A0/4A1/4A2).
+ * Phase 2b adds the ECU TX matrix (0x020/0x12C/0x131..0x137).
  */
 
 #include "ams_status.def"
 #include "ams_pack.def"
 #include "ams_temps.def"
+
+#include "acu_ok_precharge.def"
+#include "acu_v_cell_min.def"
+#include "acu_vmin_module_a.def"
+#include "acu_vmin_module_b.def"
+#include "acu_vmax_module_a.def"
+#include "acu_vmax_module_b.def"
+#include "acu_currents.def"
+#include "acu_tmax_module_a.def"
+#include "acu_tmax_module_b.def"

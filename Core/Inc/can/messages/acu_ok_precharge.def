@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x020  ACU_ok_precharge -- 1-byte ECU TX matrix flag.
+ * Set iff FSM in Run|Charge. Mirrors ams::acu_tx::encode_ok_precharge()
+ * in Core/Inc/app/acu_tx_encoders.hpp.
+ *
+ * Field macro args: (name, ctype, byte_idx, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(ACU_ok_precharge, 0x020, 1, "AMS", 100)
+    FIELD_LE (ok_precharge, uint8_t, 0, 8, 1, 0, "bool")
+CAN_MSG_END(ACU_ok_precharge)
