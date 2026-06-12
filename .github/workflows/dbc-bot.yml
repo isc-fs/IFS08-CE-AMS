@@ -17,9 +17,20 @@
 
 name: dbc-bot
 
+# TRANSITIONAL paths filter (#365 Phase 2c/2d). gen_dbc.py still owns
+# the unported tail of docs/dbc/ams.dbc; the bot's dbc_dump only knows
+# about the messages currently on the DSL. Until Phase 2d retires
+# gen_dbc.py, fire the bot ONLY on changes that could affect the
+# regenerated slice -- otherwise an unrelated PR would see the bot
+# clobber the gen_dbc.py-owned tail. Drop the paths filter when
+# gen_dbc.py goes.
 on:
   pull_request:
     branches: [main, dev]
+    paths:
+      - 'Core/Inc/can/**'
+      - 'tools/dbc_dump.cpp'
+      - '.github/workflows/dbc-bot.yml'
 
 permissions:
   contents: write          # bot pushes the regenerated DBC onto the PR branch
