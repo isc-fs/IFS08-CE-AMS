@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x100 VCU_dc_bus_heartbeat -- DC bus volts. RX (VCU sends; AMS mode-locks on it). */
+CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 2, "VCU", 100)
+    FIELD_LE (dc_bus_V, uint16_t, 0, 16, 1, 0, "V")
+CAN_MSG_END(VCU_dc_bus_heartbeat)

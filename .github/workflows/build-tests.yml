@@ -69,13 +69,20 @@ jobs:
         run: ctest --test-dir build-tests --output-on-failure
 
   dbc-sync:
-    name: DBC matches generator
+    name: DBC matches code (dbc_dump)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
-      - name: Verify docs/dbc/ams.dbc is up to date
-        run: python3 tools/gen_dbc.py --check
+      # docs/dbc/ams.dbc is GENERATED from the code-first descriptors
+      # (Core/Inc/can/messages/*.def -> tools/dbc_dump.cpp). This guards
+      # that the committed DBC matches the firmware's actual wire layout
+      # -- the C++<->DBC drift that the old gen_dbc.py never checked.
+      # Regenerate locally with: c++ -std=c++17 -I Core/Inc \
+      #   tools/dbc_dump.cpp -o /tmp/dbc_dump && /tmp/dbc_dump > docs/dbc/ams.dbc
+      - name: Build dbc_dump (CMake target) and regenerate
+        run: |
+          cmake -B build-tests -S tests/unit
+          cmake --build build-tests --target dbc_dump
+          ./build-tests/dbc_dump > /tmp/ams.dbc
+      - name: Verify committed docs/dbc/ams.dbc is up to date
+        run: diff -u docs/dbc/ams.dbc /tmp/ams.dbc

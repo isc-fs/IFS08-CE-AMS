@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C4 PIT_boot_diag -- mirrors ams::pit_diag::encode_boot_diag().
+ * fdcan1_start_result is a 24-bit field (bytes 5..7). */
+CAN_MSG(PIT_boot_diag, 0x6C4, 8, "AMS", 1000)
+    FIELD_LE (jump_reason,         uint32_t, 0, 32, 1, 0, "enum")
+    FIELD_LE (app_init_progress,   uint8_t,  4,  8, 1, 0, "count")
+    FIELD_LE (fdcan1_start_result, uint32_t, 5, 24, 1, 0, "status")
+CAN_MSG_END(PIT_boot_diag)

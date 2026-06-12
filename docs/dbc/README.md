@@ -6,7 +6,13 @@ CAN database describing every frame the AMS firmware emits or consumes on FDCAN1
 
 | File | Generated? | Source of truth |
 |---|---|---|
-| `ams.dbc` | yes | [`tools/gen_dbc.py`](../../tools/gen_dbc.py) |
+| `ams.dbc` | yes | the **code-first CAN DSL** — `Core/Inc/can/messages/*.def` → [`tools/dbc_dump.cpp`](../../tools/dbc_dump.cpp) |
+
+> Generated straight from the firmware's own encoder layouts (the same
+> `.def` files the C++ encoders are built from), so the DBC can't drift
+> from the firmware. This is lean by design — no `CM_` comments or `VAL_`
+> enum tables; those are re-added downstream by the DBCinator bot
+> (`isc-fs/IFS08-DBCinator`).
 
 ## What's in it
 
@@ -37,12 +43,13 @@ for msg in bus:
 
 ## Big-endian bit numbering
 
-Most AMS-side values are big-endian (the firmware uses `>> 8` / `& 0xFF` to pack). The DBC follows Vector's Motorola convention: for a BE u16 in bytes `[N, N+1]`, the `start_bit` is `8*N + 7` (the MSB of byte N). The generator computes this automatically — see `be_start_bit_for_byte()` in `tools/gen_dbc.py`.
+Most AMS-side values are big-endian (the firmware uses `>> 8` / `& 0xFF` to pack). The DBC follows Vector's Motorola convention: for a BE u16 in bytes `[N, N+1]`, the `start_bit` is `8*N + 7` (the MSB of byte N). The DSL emits this automatically — see `FIELD_BE` in `Core/Inc/can/can_codecs.hpp` (the descriptor uses `8*byte+7`).
 
 ## Regenerating
 
 ```sh
-python3 tools/gen_dbc.py > docs/dbc/ams.dbc
+c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump
+/tmp/dbc_dump > docs/dbc/ams.dbc
 ```
 
 Validate with cantools:
@@ -52,7 +59,10 @@ pip3 install --user cantools
 python3 -c "import cantools; db = cantools.database.load_file('docs/dbc/ams.dbc'); print(f'{len(db.messages)} messages OK')"
 ```
 
-If you bump the cell or NTC count, edit the constants at the top of `tools/gen_dbc.py` and regenerate. Don't hand-edit `ams.dbc` — your changes will be wiped on the next regen.
+To change a frame's layout, edit its `Core/Inc/can/messages/*.def` (or the
+array families in `can_codecs.hpp` for the cell/temp grids) and regenerate.
+Don't hand-edit `ams.dbc` — CI's "DBC matches code" check (and the next
+regen) will overwrite it.
 
 ## Versioning
 

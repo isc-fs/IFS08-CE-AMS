@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C6 PIT_fw_id -- mirrors ams::pit_diag::encode_fw_id(). */
+CAN_MSG(PIT_fw_id, 0x6C6, 8, "AMS", 1000)
+    FIELD_LE (fw_version_major, uint8_t, 0, 8, 1, 0, "")
+    FIELD_LE (fw_version_minor, uint8_t, 1, 8, 1, 0, "")
+    FIELD_LE (fw_version_patch, uint8_t, 2, 8, 1, 0, "")
+    FIELD_LE (git_hash_0,       uint8_t, 3, 8, 1, 0, "")
+    FIELD_LE (git_hash_1,       uint8_t, 4, 8, 1, 0, "")
+    FIELD_LE (git_hash_2,       uint8_t, 5, 8, 1, 0, "")
+    FIELD_LE (git_hash_3,       uint8_t, 6, 8, 1, 0, "")
+    FIELD_LE (bl_node_id,       uint8_t, 7, 8, 1, 0, "")
+CAN_MSG_END(PIT_fw_id)

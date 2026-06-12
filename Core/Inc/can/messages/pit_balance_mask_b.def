@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C3 PIT_balance_mask_b -- DCC bits cells 64..94 (bits 0..30 of a
+ * 32-bit LE field) + cycle counters. Adapter builds mask + clips counts. */
+CAN_MSG(PIT_balance_mask_b, 0x6C3, 8, "AMS", 1000)
+    FIELD_LE (dcc_mask_hi,   uint32_t, 0, 32, 1, 0, "bitmask")
+    FIELD_LE (cycles_total,  uint16_t, 4, 16, 1, 0, "count")
+    FIELD_LE (cycles_active, uint16_t, 6, 16, 1, 0, "count")
+CAN_MSG_END(PIT_balance_mask_b)

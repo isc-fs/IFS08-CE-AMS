@@ -53,7 +53,10 @@ adds `-DAMS_HIL_CLEAR_ERROR_LATCH=ON` (never in a flight image).
   regenerated from `AMS.ioc`). App logic lives in `Core/{Inc,Src}/app/` and
   is invoked through `extern "C"` `ams_*_task_run` trampolines.
 - **Never hand-edit `docs/dbc/ams.dbc` or `ROADMAP.md`** — both are
-  generated (`gen_dbc.py`, `.github/roadmap.yaml`). Edit the source.
+  generated. The DBC comes from the **code-first CAN DSL**
+  (`Core/Inc/can/messages/*.def` → `tools/dbc_dump.cpp`); regenerate with
+  `c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump && /tmp/dbc_dump > docs/dbc/ams.dbc`
+  (CI's "DBC matches code" check enforces it). `ROADMAP.md` ← `.github/roadmap.yaml`.
 
 ## Safety-critical surface (higher review bar)
 

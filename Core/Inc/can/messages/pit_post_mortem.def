@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C5 PIT_post_mortem -- mirrors ams::pit_diag::encode_post_mortem().
+ * seen flag, watermark sat, malloc count clip all stay in the adapter. */
+CAN_MSG(PIT_post_mortem, 0x6C5, 8, "AMS", 1000)
+    FIELD_LE (stack_overflow_seen,      uint8_t,  0,  8, 1, 0, "bool")
+    FIELD_LE (stack_overflow_watermark, uint8_t,  1,  8, 1, 0, "")
+    FIELD_LE (stack_overflow_task_addr, uint32_t, 2, 32, 1, 0, "")
+    FIELD_LE (malloc_failed_count,      uint16_t, 6, 16, 1, 0, "count")
+CAN_MSG_END(PIT_post_mortem)

@@ -99,3 +99,32 @@ extern "C" void test_dsl_descriptors_match_committed_dbc(void) {
         }
     }
 }
+
+// The array-of-frames families (pit-diag cell/temp grids) expand to one
+// DBC message per frame. Validate every slot of every frame against the
+// committed DBC by bit position -- this is what lets dbc_dump's array
+// expansion eventually replace gen_dbc.py's pit_cells()/pit_temps().
+extern "C" void test_dsl_array_descriptors_match_committed_dbc(void) {
+    TEST_ASSERT_GREATER_THAN_UINT(0u, ifs08::ALL_ARRAYS_COUNT);
+    for (unsigned ai = 0; ai < ifs08::ALL_ARRAYS_COUNT; ++ai) {
+        const auto& A = ifs08::ALL_ARRAYS[ai];
+        const unsigned elem_bytes = A.elem_bits / 8u;
+        for (unsigned frame = 0; frame < A.frame_count; ++frame) {
+            const std::uint32_t id = A.base_id + frame;
+            for (unsigned slot = 0; slot < A.per_frame; ++slot) {
+                const unsigned byte  = slot * elem_bytes;
+                const unsigned start = A.big_endian ? (8u * byte + 7u) : (8u * byte);
+                const DbcSig sig = find_dbc_signal(id, start);
+
+                char msg[160];
+                std::snprintf(msg, sizeof(msg),
+                    "array 0x%lX frame %u slot %u (@bit %u) missing in DBC",
+                    static_cast<unsigned long>(A.base_id), frame, slot, start);
+                TEST_ASSERT_TRUE_MESSAGE(sig.found, msg);
+                TEST_ASSERT_EQUAL_UINT_MESSAGE(A.elem_bits, sig.len, msg);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(A.big_endian ? '0' : '1', sig.order, msg);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(A.is_signed ? '-' : '+', sig.sign, msg);
+            }
+        }
+    }
+}
