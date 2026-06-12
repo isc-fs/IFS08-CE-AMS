@@ -461,3 +461,30 @@ extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// AMS_TEMP_STUB bench path: set_all_temperatures pins every slot to a
+// nominal value so the temp summaries (which the over/under-temp
+// predicate reads) all collapse to it. Modules must be online first
+// (recompute aggregates only online modules) -- which mirrors the real
+// bench, where the temp predicate is gated on first_full_poll_done.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_set_all_temperatures_stub(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    fake_set_tick(7000);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 7000);
+
+    BmsService::instance().set_all_temperatures(30);
+
+    const auto s = BmsService::instance().snapshot();
+    TEST_ASSERT_EQUAL_INT16(30, s.min_tempC);
+    TEST_ASSERT_EQUAL_INT16(30, s.max_tempC);
+    TEST_ASSERT_EQUAL_INT16(30, s.avg_tempC);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        TEST_ASSERT_EQUAL_INT16(30, s.tmax_module[m]);
+    }
+    // Slots themselves are written regardless of online state.
+    TEST_ASSERT_EQUAL_INT16(30, s.cell_tempC[0][0]);
+    TEST_ASSERT_EQUAL_INT16(30, s.cell_tempC[4][config::TempsPerModule - 1]);
+}
+

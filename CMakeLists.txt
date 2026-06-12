@@ -135,6 +135,13 @@ message(STATUS "AMS build timestamp: ${AMS_BUILD_TIMESTAMP}")
 option(AMS_HIL_CLEAR_ERROR_LATCH  "HIL: wipe RTC->BKP_DR1 ErrorLatch on every boot" OFF)
 message(STATUS "AMS_HIL_CLEAR_ERROR_LATCH = ${AMS_HIL_CLEAR_ERROR_LATCH}")
 
+# Bench bring-up: no NTC sensor PCB yet. Skip the temperature mux sweep
+# and pin every cell_tempC slot to a nominal in-range value so the
+# over/under-temp predicate passes -- lets BMS-voltage + FSM be tested
+# without the temp hardware. NEVER in a flight image (defaults OFF).
+option(AMS_TEMP_STUB              "Bench: skip NTC temp sweep, inject nominal temp (no sensor PCB)" OFF)
+message(STATUS "AMS_TEMP_STUB = ${AMS_TEMP_STUB}")
+
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     AMS_FW_VERSION_MAJOR=${AMS_FW_VERSION_MAJOR}
@@ -146,6 +153,7 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     AMS_GIT_HASH_3=0x${AMS_GIT_HASH_3_HEX}
     AMS_BUILD_TIMESTAMP=${AMS_BUILD_TIMESTAMP}
     $<$<BOOL:${AMS_HIL_CLEAR_ERROR_LATCH}>:AMS_HIL_CLEAR_ERROR_LATCH=1>
+    $<$<BOOL:${AMS_TEMP_STUB}>:AMS_TEMP_STUB=1>
 )
 
 # C++ build rules (per docs/ARCHITECTURE.md §11).

@@ -25,6 +25,12 @@ inline constexpr std::int16_t  CellUnderTempC  =   -10;  // under-temp °C   -- 
 inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- COMMISSION
 inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
 
+// Nominal temperature injected for every cell_tempC slot under the
+// AMS_TEMP_STUB bench build (no NTC sensor PCB): a safely in-range value
+// (between CellUnderTempC and CellOverTempC) so the temp predicate
+// passes. Bench-only; flight builds never define AMS_TEMP_STUB.
+inline constexpr std::int16_t  TempStubValueC =    25;
+
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
 inline constexpr std::uint32_t BmsStaleMs     = 1500;  // any BMS module silent

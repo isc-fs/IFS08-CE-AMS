@@ -110,6 +110,38 @@ frames (`0x6C0..0x6C8`). See [`CAN_MAP.md`](CAN_MAP.md).
 
 ---
 
+## `AMS_TEMP_STUB` build flag (no NTC sensor PCB)
+
+A second bench-only CMake `option()` (default **OFF**) for bringing up
+the BMS + AMS **before the NTC temperature sensor PCB exists**. When ON,
+`run_temperature_poll()` **skips the ADG731/ADAX mux sweep entirely** and
+pins every `cell_tempC` slot to `config::TempStubValueC` (25 °C) via
+`BmsService::set_all_temperatures()`, so the over/under-temp predicate
+sees an in-range pack and passes.
+
+> ⚠️ Like `AMS_HIL_CLEAR_ERROR_LATCH`, this defeats a real safety check
+> (cell over/under-temperature) and must **never** be in a flight image.
+> Defaults OFF; CI builds with it OFF.
+
+Cell-**voltage** safety is unaffected: `first_full_poll_done` is armed by
+the voltage poll, so cell UV/OV/offline/stale faults are detected
+normally — you're only neutralising the temperature branch.
+
+```bash
+# Bench bring-up: stub temps AND auto-clear the latch
+cmake -B build-hil \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake \
+      -DAMS_HIL_CLEAR_ERROR_LATCH=ON \
+      -DAMS_TEMP_STUB=ON
+cmake --build build-hil
+```
+
+Retire the flag once the sensor PCB is in: a flag-OFF build runs the real
+mux sweep and the temp predicate goes live again. Guarded by
+`#if defined(AMS_TEMP_STUB)` in `bms_poll_task.cpp`.
+
+---
+
 ## See also
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §1 — safety invariants; the

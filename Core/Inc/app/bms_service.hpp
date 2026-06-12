@@ -134,6 +134,14 @@ public:
                             const std::uint8_t* chain_response,
                             std::size_t         len) noexcept;
 
+    // Bench bring-up (AMS_TEMP_STUB): pin every cell_tempC slot to a
+    // nominal in-range value and recompute the temp summaries, so the
+    // over/under-temp predicate passes with no NTC sensor PCB present.
+    // Always compiled (so host tests can exercise it) but only CALLED
+    // from the temp-poll path under AMS_TEMP_STUB; never invoked in a
+    // flight build.
+    void set_all_temperatures(std::int16_t tempC) noexcept;
+
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.
     [[nodiscard]] BmsState snapshot() const noexcept;

@@ -274,6 +274,19 @@ extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
 void run_temperature_poll() {
     using namespace ams;
 
+#if defined(AMS_TEMP_STUB) && AMS_TEMP_STUB
+    // Bench bring-up: no NTC sensor PCB. Skip the ADG731/ADAX mux sweep
+    // entirely (there's nothing to talk to) and pin every temperature
+    // slot to a nominal in-range value so the over/under-temp predicate
+    // passes -- BMS-voltage + FSM integration can be exercised without
+    // the temp hardware. Voltage polls still arm first_full_poll_done,
+    // so cell-voltage faults are detected normally. NEVER in a flight
+    // build (CMake AMS_TEMP_STUB defaults OFF).
+    BmsService::instance().set_all_temperatures(config::TempStubValueC);
+    g_temp_sweep_last_mask   = 0;
+    g_temp_sweep_sticky_mask = 0;
+    return;
+#else
     auto& bus = ltc6820::Bus::default_instance();
 
     // Same mux-select payload broadcast to every LTC each step. The
@@ -340,6 +353,7 @@ void run_temperature_poll() {
 
     g_temp_sweep_last_mask    = this_sweep_fail;
     g_temp_sweep_sticky_mask |= this_sweep_fail;
+#endif  // AMS_TEMP_STUB
 }
 
 }  // namespace

@@ -306,6 +306,19 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
     return any_ok;
 }
 
+void BmsService::set_all_temperatures(std::int16_t tempC) noexcept {
+    // Bench bring-up only (AMS_TEMP_STUB): overwrite every NTC slot with
+    // a nominal in-range temperature and recompute the summaries. Mirrors
+    // what a real all-channels temp sweep would leave behind, minus the
+    // hardware. min/max/avg_tempC + tmax_module collapse to tempC.
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
+            state_.cell_tempC[m][t] = tempC;
+        }
+    }
+    recompute_summaries_();
+}
+
 BmsState BmsService::snapshot() const noexcept {
     return state_;
 }

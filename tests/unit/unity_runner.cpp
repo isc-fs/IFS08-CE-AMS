@@ -23,6 +23,7 @@ void test_bms_temp_bad_channel_idx_rejected(void);
 void test_bms_temp_short_buffer_rejected(void);
 void test_bms_per_module_v_aggregates_after_clean_response(void);
 void test_bms_per_module_tmax_after_temp_sweep(void);
+void test_bms_set_all_temperatures_stub(void);
 
 // test_acu_tx_encoders.cpp
 void test_acu_tx_ok_precharge_high_in_run(void);
@@ -245,6 +246,7 @@ int main(void) {
     RUN_TEST(test_bms_temp_short_buffer_rejected);
     RUN_TEST(test_bms_per_module_v_aggregates_after_clean_response);
     RUN_TEST(test_bms_per_module_tmax_after_temp_sweep);
+    RUN_TEST(test_bms_set_all_temperatures_stub);
 
     RUN_TEST(test_acu_tx_ok_precharge_high_in_run);
     RUN_TEST(test_acu_tx_ok_precharge_high_in_charge);
