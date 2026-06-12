@@ -38,6 +38,12 @@ int main() {
     std::printf("\nBS_:\n\n");
     std::printf("BU_: AMS VCU ECU UDV Pit_Tool\n\n");
 
+    // GenMsgCycleTime attribute declaration. cantools exposes this as
+    // Message.cycle_time; DBCinator's bus_load.py reads it to size the
+    // fleet bus budget. Default 0 means "no declared cadence".
+    std::printf("BA_DEF_ BO_  \"GenMsgCycleTime\" INT 0 65535;\n");
+    std::printf("BA_DEF_DEF_  \"GenMsgCycleTime\" 0;\n\n");
+
     // Fixed-layout messages (one BO_ each).
     for (unsigned mi = 0; mi < ifs08::ALL_MSGS_COUNT; ++mi) {
         const auto& m = ifs08::ALL_MSGS[mi];
@@ -81,6 +87,27 @@ int main() {
                             A.dbc_min, A.dbc_max, A.unit);
             }
             std::printf("\n");
+        }
+    }
+
+    // Per-message GenMsgCycleTime attributes, emitted at the end so
+    // they come after every BO_ they refer to. Period 0 means the
+    // frame is one-shot / on-demand (BL trigger, ACK echoes), and
+    // emitting "BA_ ... BO_ id 0;" is redundant with BA_DEF_DEF_,
+    // so we skip those rows for a leaner DBC.
+    for (unsigned mi = 0; mi < ifs08::ALL_MSGS_COUNT; ++mi) {
+        const auto& m = ifs08::ALL_MSGS[mi];
+        if (m.period_ms > 0) {
+            std::printf("BA_ \"GenMsgCycleTime\" BO_ %u %u;\n", m.id, m.period_ms);
+        }
+    }
+    for (unsigned ai = 0; ai < ifs08::ALL_ARRAYS_COUNT; ++ai) {
+        const auto& A = ifs08::ALL_ARRAYS[ai];
+        if (A.period_ms > 0) {
+            for (unsigned frame = 0; frame < A.frame_count; ++frame) {
+                std::printf("BA_ \"GenMsgCycleTime\" BO_ %u %u;\n",
+                            A.base_id + frame, A.period_ms);
+            }
         }
     }
     return 0;
