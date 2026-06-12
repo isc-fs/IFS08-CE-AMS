@@ -64,7 +64,9 @@ jobs:
               direction: 'desc',
               per_page: 100,
             });
-            const regex = new RegExp(`^\\[${type}/(\\d+)\\]`);
+            /* Accepts both bare `[feat/N]` titles and titled branches
+               like `[feat/N-short-title]`. */
+            const regex = new RegExp(`^\\[${type}/(\\d+)(?:-[^\\]]*)?\\]`);
             let maxNumber = 0;
             for (const issue of issues.data) {
               const match = issue.title.match(regex);

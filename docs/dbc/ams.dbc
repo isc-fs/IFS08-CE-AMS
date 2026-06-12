@@ -1,0 +1,1002 @@
+VERSION "AMS 1.6.0"
+
+NS_ :
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: AMS VCU ECU Pit_Tool
+
+BO_ 1184 AMS_status: 8 AMS
+ SG_ fsm_state : 0|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
+ SG_ ams_ok : 8|8@1+ (1.0,0.0) [0|255] "bool" Vector__XXX
+ SG_ module_online_mask : 16|8@1+ (1.0,0.0) [0|31] "bitmask" Vector__XXX
+ SG_ app_init_progress_or_reserved : 24|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
+ SG_ min_cell_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ max_cell_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1185 AMS_pack: 8 AMS
+ SG_ pack_voltage_mV : 0|32@1+ (1.0,0.0) [0|600000] "mV" Vector__XXX
+ SG_ filtered_mA : 32|32@1- (1.0,0.0) [-2147483648|2147483647] "mA" Vector__XXX
+
+BO_ 1186 AMS_temps_diag: 8 AMS
+ SG_ min_tempC : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ max_tempC : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ avg_tempC : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ dc_bus_V : 24|16@1+ (1.0,0.0) [0|600] "V" Vector__XXX
+ SG_ tsms_dash_chg_byte : 40|8@1+ (1.0,0.0) [0|255] "packed" Vector__XXX
+ SG_ tx_fail_count_lo : 48|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ heartbeat : 56|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+
+BO_ 32 ECU_ok_precharge: 1 AMS
+ SG_ ok_precharge : 0|8@1+ (1.0,0.0) [0|255] "bool" Vector__XXX
+
+BO_ 300 ECU_v_cell_min: 2 AMS
+ SG_ v_cell_min_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 305 ECU_vmin_module_A: 6 AMS
+ SG_ vmin_module_0 : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ vmin_module_1 : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ vmin_module_2 : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 306 ECU_vmin_module_B: 4 AMS
+ SG_ vmin_module_3 : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ vmin_module_4 : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 307 ECU_vmax_module_A: 6 AMS
+ SG_ vmax_module_0 : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ vmax_module_1 : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ vmax_module_2 : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 308 ECU_vmax_module_B: 4 AMS
+ SG_ vmax_module_3 : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ vmax_module_4 : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 309 ECU_currents: 4 AMS
+ SG_ pack_current_dA : 7|16@0- (0.1,0.0) [-825|825] "A" Vector__XXX
+ SG_ dcdc_current_dA : 23|16@0- (0.1,0.0) [-3276.8|3276.7000000000003] "A" Vector__XXX
+
+BO_ 310 ECU_tmax_module_A: 6 AMS
+ SG_ tmax_module_0 : 7|16@0- (1.0,0.0) [-32768|32767] "degC" Vector__XXX
+ SG_ tmax_module_1 : 23|16@0- (1.0,0.0) [-32768|32767] "degC" Vector__XXX
+ SG_ tmax_module_2 : 39|16@0- (1.0,0.0) [-32768|32767] "degC" Vector__XXX
+
+BO_ 311 ECU_tmax_module_B: 6 AMS
+ SG_ tmax_module_3 : 7|16@0- (1.0,0.0) [-32768|32767] "degC" Vector__XXX
+ SG_ tmax_module_4 : 23|16@0- (1.0,0.0) [-32768|32767] "degC" Vector__XXX
+ SG_ temp_dcdc : 39|16@0- (1.0,0.0) [-32768|32767] "degC" Vector__XXX
+
+BO_ 256 VCU_dc_bus_heartbeat: 2 VCU
+ SG_ dc_bus_V : 0|16@1+ (1.0,0.0) [0|600] "V" Vector__XXX
+
+BO_ 257 Operator_charge_request: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
+
+BO_ 259 Operator_balance_override: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
+
+BO_ 2 BL_boot_trigger: 4 Pit_Tool
+ SG_ magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
+
+BO_ 2032 PitDiag_cmd: 4 Pit_Tool
+ SG_ cmd_magic : 7|32@0+ (1.0,0.0) [0|4294967295] "magic" Vector__XXX
+
+BO_ 2033 PitDiag_ack: 1 AMS
+ SG_ enabled : 0|8@1+ (1.0,0.0) [0|255] "bool" Vector__XXX
+
+BO_ 1664 PitDiag_cells_00: 8 AMS
+ SG_ cell_m0_c00_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c01_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c02_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c03_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1665 PitDiag_cells_01: 8 AMS
+ SG_ cell_m0_c04_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c05_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c06_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c07_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1666 PitDiag_cells_02: 8 AMS
+ SG_ cell_m0_c08_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c09_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c10_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c11_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1667 PitDiag_cells_03: 8 AMS
+ SG_ cell_m0_c12_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c13_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c14_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c15_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1668 PitDiag_cells_04: 8 AMS
+ SG_ cell_m0_c16_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c17_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m0_c18_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c00_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1669 PitDiag_cells_05: 8 AMS
+ SG_ cell_m1_c01_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c02_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c03_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c04_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1670 PitDiag_cells_06: 8 AMS
+ SG_ cell_m1_c05_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c06_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c07_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c08_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1671 PitDiag_cells_07: 8 AMS
+ SG_ cell_m1_c09_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c10_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c11_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c12_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1672 PitDiag_cells_08: 8 AMS
+ SG_ cell_m1_c13_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c14_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c15_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c16_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1673 PitDiag_cells_09: 8 AMS
+ SG_ cell_m1_c17_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m1_c18_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c00_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c01_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1674 PitDiag_cells_10: 8 AMS
+ SG_ cell_m2_c02_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c03_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c04_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c05_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1675 PitDiag_cells_11: 8 AMS
+ SG_ cell_m2_c06_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c07_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c08_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c09_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1676 PitDiag_cells_12: 8 AMS
+ SG_ cell_m2_c10_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c11_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c12_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c13_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1677 PitDiag_cells_13: 8 AMS
+ SG_ cell_m2_c14_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c15_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c16_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m2_c17_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1678 PitDiag_cells_14: 8 AMS
+ SG_ cell_m2_c18_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c00_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c01_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c02_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1679 PitDiag_cells_15: 8 AMS
+ SG_ cell_m3_c03_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c04_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c05_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c06_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1680 PitDiag_cells_16: 8 AMS
+ SG_ cell_m3_c07_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c08_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c09_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c10_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1681 PitDiag_cells_17: 8 AMS
+ SG_ cell_m3_c11_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c12_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c13_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c14_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1682 PitDiag_cells_18: 8 AMS
+ SG_ cell_m3_c15_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c16_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c17_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m3_c18_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1683 PitDiag_cells_19: 8 AMS
+ SG_ cell_m4_c00_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c01_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c02_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c03_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1684 PitDiag_cells_20: 8 AMS
+ SG_ cell_m4_c04_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c05_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c06_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c07_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1685 PitDiag_cells_21: 8 AMS
+ SG_ cell_m4_c08_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c09_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c10_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c11_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1686 PitDiag_cells_22: 8 AMS
+ SG_ cell_m4_c12_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c13_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c14_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c15_mV : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1687 PitDiag_cells_23: 8 AMS
+ SG_ cell_m4_c16_mV : 7|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c17_mV : 23|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ cell_m4_c18_mV : 39|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+ SG_ sentinel_slot3 : 55|16@0+ (1.0,0.0) [0|5000] "mV" Vector__XXX
+
+BO_ 1696 PitDiag_temps_00: 8 AMS
+ SG_ temp_m0_t00_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t01_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t02_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t03_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t04_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t05_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t06_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t07_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1697 PitDiag_temps_01: 8 AMS
+ SG_ temp_m0_t08_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t09_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t10_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t11_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t12_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t13_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t14_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t15_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1698 PitDiag_temps_02: 8 AMS
+ SG_ temp_m0_t16_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t17_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t18_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t19_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t20_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t21_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t22_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t23_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1699 PitDiag_temps_03: 8 AMS
+ SG_ temp_m0_t24_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t25_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t26_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t27_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t28_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t29_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t30_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t31_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1700 PitDiag_temps_04: 8 AMS
+ SG_ temp_m0_t32_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t33_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t34_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t35_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t36_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t37_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t38_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m0_t39_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1701 PitDiag_temps_05: 8 AMS
+ SG_ temp_m1_t00_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t01_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t02_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t03_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t04_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t05_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t06_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t07_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1702 PitDiag_temps_06: 8 AMS
+ SG_ temp_m1_t08_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t09_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t10_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t11_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t12_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t13_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t14_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t15_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1703 PitDiag_temps_07: 8 AMS
+ SG_ temp_m1_t16_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t17_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t18_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t19_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t20_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t21_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t22_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t23_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1704 PitDiag_temps_08: 8 AMS
+ SG_ temp_m1_t24_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t25_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t26_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t27_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t28_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t29_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t30_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t31_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1705 PitDiag_temps_09: 8 AMS
+ SG_ temp_m1_t32_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t33_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t34_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t35_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t36_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t37_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t38_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m1_t39_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1706 PitDiag_temps_10: 8 AMS
+ SG_ temp_m2_t00_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t01_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t02_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t03_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t04_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t05_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t06_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t07_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1707 PitDiag_temps_11: 8 AMS
+ SG_ temp_m2_t08_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t09_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t10_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t11_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t12_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t13_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t14_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t15_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1708 PitDiag_temps_12: 8 AMS
+ SG_ temp_m2_t16_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t17_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t18_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t19_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t20_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t21_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t22_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t23_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1709 PitDiag_temps_13: 8 AMS
+ SG_ temp_m2_t24_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t25_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t26_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t27_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t28_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t29_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t30_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t31_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1710 PitDiag_temps_14: 8 AMS
+ SG_ temp_m2_t32_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t33_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t34_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t35_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t36_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t37_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t38_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m2_t39_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1711 PitDiag_temps_15: 8 AMS
+ SG_ temp_m3_t00_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t01_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t02_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t03_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t04_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t05_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t06_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t07_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1712 PitDiag_temps_16: 8 AMS
+ SG_ temp_m3_t08_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t09_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t10_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t11_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t12_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t13_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t14_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t15_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1713 PitDiag_temps_17: 8 AMS
+ SG_ temp_m3_t16_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t17_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t18_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t19_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t20_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t21_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t22_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t23_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1714 PitDiag_temps_18: 8 AMS
+ SG_ temp_m3_t24_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t25_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t26_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t27_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t28_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t29_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t30_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t31_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1715 PitDiag_temps_19: 8 AMS
+ SG_ temp_m3_t32_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t33_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t34_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t35_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t36_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t37_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t38_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m3_t39_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1716 PitDiag_temps_20: 8 AMS
+ SG_ temp_m4_t00_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t01_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t02_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t03_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t04_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t05_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t06_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t07_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1717 PitDiag_temps_21: 8 AMS
+ SG_ temp_m4_t08_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t09_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t10_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t11_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t12_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t13_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t14_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t15_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1718 PitDiag_temps_22: 8 AMS
+ SG_ temp_m4_t16_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t17_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t18_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t19_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t20_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t21_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t22_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t23_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1719 PitDiag_temps_23: 8 AMS
+ SG_ temp_m4_t24_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t25_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t26_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t27_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t28_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t29_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t30_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t31_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1720 PitDiag_temps_24: 8 AMS
+ SG_ temp_m4_t32_C : 0|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t33_C : 8|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t34_C : 16|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t35_C : 24|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t36_C : 32|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t37_C : 40|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t38_C : 48|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+ SG_ temp_m4_t39_C : 56|8@1- (1.0,0.0) [-128|127] "degC" Vector__XXX
+
+BO_ 1728 PitDiag_fsm_status: 8 AMS
+ SG_ fsm_state : 0|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
+ SG_ mode_locked : 8|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
+ SG_ tsms_readback : 16|1@1+ (1.0,0.0) [0|1] "bool" Vector__XXX
+ SG_ dash_chg_readback : 17|1@1+ (1.0,0.0) [0|1] "bool" Vector__XXX
+ SG_ balance_override : 18|1@1+ (1.0,0.0) [0|1] "bool" Vector__XXX
+ SG_ ams_ok : 24|8@1+ (1.0,0.0) [0|255] "bool" Vector__XXX
+ SG_ pec_err_total : 39|16@0+ (1.0,0.0) [0|65535] "count" Vector__XXX
+ SG_ fault_reason : 48|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
+ SG_ fault_detail : 56|8@1+ (1.0,0.0) [0|255] "raw" Vector__XXX
+
+BO_ 1729 PitDiag_timing: 8 AMS
+ SG_ bms_volt_poll_ms : 7|16@0+ (1.0,0.0) [0|65535] "ms" Vector__XXX
+ SG_ bms_volt_poll_max_ms : 23|16@0+ (1.0,0.0) [0|65535] "ms" Vector__XXX
+ SG_ temp_sweep_last_mask : 32|32@1+ (1.0,0.0) [0|4294967295] "bitmask" Vector__XXX
+
+BO_ 1730 PitDiag_balance_mask_a: 8 AMS
+ SG_ dcc_bits_lo64 : 0|64@1+ (1.0,0.0) [0|18446744073709551616] "bitmask" Vector__XXX
+
+BO_ 1731 PitDiag_balance_mask_b: 8 AMS
+ SG_ dcc_bits_hi32 : 0|32@1+ (1.0,0.0) [0|4294967295] "bitmask" Vector__XXX
+ SG_ balance_cycles_total : 32|16@1+ (1.0,0.0) [0|65535] "count" Vector__XXX
+ SG_ balance_cycles_active : 48|16@1+ (1.0,0.0) [0|65535] "count" Vector__XXX
+
+BO_ 1732 PitDiag_boot_diag: 8 AMS
+ SG_ jump_reason : 0|32@1+ (1.0,0.0) [0|4294967295] "enum" Vector__XXX
+ SG_ app_init_progress : 32|8@1+ (1.0,0.0) [0|255] "enum" Vector__XXX
+ SG_ fdcan1_start_result : 40|24@1+ (1.0,0.0) [0|16777215] "HAL_StatusTypeDef" Vector__XXX
+
+BO_ 1733 PitDiag_post_mortem: 8 AMS
+ SG_ stack_overflow_seen : 0|8@1+ (1.0,0.0) [0|255] "bool" Vector__XXX
+ SG_ watermark_low_byte : 8|8@1+ (1.0,0.0) [0|255] "words" Vector__XXX
+ SG_ task_addr_lo : 16|32@1+ (1.0,0.0) [0|4294967295] "address" Vector__XXX
+ SG_ malloc_failed_count : 48|16@1+ (1.0,0.0) [0|65535] "count" Vector__XXX
+
+BO_ 1734 PitDiag_fw_id: 8 AMS
+ SG_ fw_version_major : 0|8@1+ (1.0,0.0) [0|255] "semver" Vector__XXX
+ SG_ fw_version_minor : 8|8@1+ (1.0,0.0) [0|255] "semver" Vector__XXX
+ SG_ fw_version_patch : 16|8@1+ (1.0,0.0) [0|255] "semver" Vector__XXX
+ SG_ git_hash_0 : 24|8@1+ (1.0,0.0) [0|255] "byte" Vector__XXX
+ SG_ git_hash_1 : 32|8@1+ (1.0,0.0) [0|255] "byte" Vector__XXX
+ SG_ git_hash_2 : 40|8@1+ (1.0,0.0) [0|255] "byte" Vector__XXX
+ SG_ git_hash_3 : 48|8@1+ (1.0,0.0) [0|255] "byte" Vector__XXX
+ SG_ bl_node_id : 56|8@1+ (1.0,0.0) [0|255] "id" Vector__XXX
+
+BO_ 1735 PitDiag_pec_per_ic_a: 8 AMS
+ SG_ pec_err_ic_0_count : 0|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_1_count : 8|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_2_count : 16|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_3_count : 24|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_4_count : 32|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_5_count : 40|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_6_count : 48|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_7_count : 56|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+
+BO_ 1736 PitDiag_pec_per_ic_b: 8 AMS
+ SG_ pec_err_ic_8_count : 0|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+ SG_ pec_err_ic_9_count : 8|8@1+ (1.0,0.0) [0|255] "count" Vector__XXX
+
+CM_ BO_ 1184 "500 ms cadence. Top-level supervisor snapshot.";
+CM_ SG_ 1184 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error. STABLE ECU<->AMS state contract (#342): external consumers (ECU) read FSM state here, incl. while latched in Error. Do not reorder these enum values without coordinating with the ECU.";
+CM_ SG_ 1184 ams_ok "AMS_OK GPIO readback";
+CM_ SG_ 1184 module_online_mask "Bit N set iff module N's last PEC-clean response is within BmsStaleMs";
+CM_ SG_ 1184 app_init_progress_or_reserved "Reserved (=0).";
+CM_ BO_ 1185 "500 ms cadence. Pack energy-state.";
+CM_ SG_ 1185 filtered_mA "+ discharge, − charge";
+CM_ BO_ 1186 "500 ms cadence. Bytes 3..4 carry dc_bus_V. Byte 5 is the always-on cockpit byte (#251).";
+CM_ SG_ 1186 dc_bus_V "DC bus voltage mirrored from VehicleService.";
+CM_ SG_ 1186 tsms_dash_chg_byte "Cockpit snapshot (#251, always-on): bit7=sentinel, bits3:2=mode_locked (0=Undecided/1=Car/2=Charger), bit1=TSMS, bit0=DASH_CHG.";
+CM_ SG_ 1186 tx_fail_count_lo "Low byte of g_telemetry_tx_fail";
+CM_ SG_ 1186 heartbeat "500 ms wraparound counter";
+CM_ BO_ 32 "100 ms. 1 iff FSM in {Run, Charge}.";
+CM_ BO_ 300 "100 ms. Pack-wide min cell voltage.";
+CM_ BO_ 305 "100 ms. Per-module vmin for modules [0, 1, 2].";
+CM_ SG_ 305 vmin_module_0 "Sentinel 0xFFFF if module offline";
+CM_ SG_ 305 vmin_module_1 "Sentinel 0xFFFF if module offline";
+CM_ SG_ 305 vmin_module_2 "Sentinel 0xFFFF if module offline";
+CM_ BO_ 306 "100 ms. Per-module vmin for modules [3, 4].";
+CM_ SG_ 306 vmin_module_3 "Sentinel 0xFFFF if module offline";
+CM_ SG_ 306 vmin_module_4 "Sentinel 0xFFFF if module offline";
+CM_ BO_ 307 "100 ms. Per-module vmax for modules [0, 1, 2].";
+CM_ SG_ 307 vmax_module_0 "Sentinel 0x0000 if module offline";
+CM_ SG_ 307 vmax_module_1 "Sentinel 0x0000 if module offline";
+CM_ SG_ 307 vmax_module_2 "Sentinel 0x0000 if module offline";
+CM_ BO_ 308 "100 ms. Per-module vmax for modules [3, 4].";
+CM_ SG_ 308 vmax_module_3 "Sentinel 0x0000 if module offline";
+CM_ SG_ 308 vmax_module_4 "Sentinel 0x0000 if module offline";
+CM_ BO_ 309 "50 ms (the fast lane). Pack + DCDC currents.";
+CM_ SG_ 309 pack_current_dA "Signed deciamps (1 LSB = 0.1 A). + discharge.";
+CM_ BO_ 310 "250 ms. Per-module max temperature for modules [0, 1, 2].";
+CM_ SG_ 310 tmax_module_0 "Sentinel INT16_MIN if offline";
+CM_ SG_ 310 tmax_module_1 "Sentinel INT16_MIN if offline";
+CM_ SG_ 310 tmax_module_2 "Sentinel INT16_MIN if offline";
+CM_ BO_ 311 "250 ms. Per-module max temperature for modules [3, 4].";
+CM_ SG_ 311 tmax_module_3 "Sentinel INT16_MIN if offline";
+CM_ SG_ 311 tmax_module_4 "Sentinel INT16_MIN if offline";
+CM_ SG_ 311 temp_dcdc "DCDC temperature stub (currently 0)";
+CM_ BO_ 256 "20 Hz from VCU. AMS consumes for mode-lock + DC bus.";
+CM_ BO_ 257 "Operator declares 'on the charger' (#305). AMS enters Charger mode only if fresh (<=1000 ms) AND VCU absent at the Start->Precharge lock. Magic-gated so noise can't flip HV mode.";
+CM_ SG_ 257 magic "Must equal 0x43485247 (ascii CHRG)";
+CM_ BO_ 259 "Operator pauses/resumes autonomous cell balancing during Charge (#336). Magic-gated, ~2 Hz while held; reverts to auto if silent > 5000 ms. Only affects balancing -- never an AIR / safety path.";
+CM_ SG_ 259 magic "0x42414C4F (ascii BALO) = suppress; 0x42414C58 (ascii BALX) = resume auto";
+CM_ BO_ 2 "Reboot AMS into bootloader. Payload must be the magic B007AD11. Handled by AcuCanTask before VCU dispatch.";
+CM_ SG_ 2 magic "Must equal 0xB007AD11";
+CM_ BO_ 2032 "Enable/disable the pit-diag stream (#247). 4-byte payload = DEADBEEF to enable, 00000000 to disable.";
+CM_ SG_ 2032 cmd_magic "0xDEADBEEF enable, 0x00000000 disable";
+CM_ BO_ 2033 "One-shot ACK after a 0x7F0 state transition.";
+CM_ SG_ 2033 enabled "1 if stream just enabled, 0 if disabled";
+CM_ BO_ 1664 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1664 cell_m0_c00_mV "Module 0, cell 0";
+CM_ SG_ 1664 cell_m0_c01_mV "Module 0, cell 1";
+CM_ SG_ 1664 cell_m0_c02_mV "Module 0, cell 2";
+CM_ SG_ 1664 cell_m0_c03_mV "Module 0, cell 3";
+CM_ BO_ 1665 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1665 cell_m0_c04_mV "Module 0, cell 4";
+CM_ SG_ 1665 cell_m0_c05_mV "Module 0, cell 5";
+CM_ SG_ 1665 cell_m0_c06_mV "Module 0, cell 6";
+CM_ SG_ 1665 cell_m0_c07_mV "Module 0, cell 7";
+CM_ BO_ 1666 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1666 cell_m0_c08_mV "Module 0, cell 8";
+CM_ SG_ 1666 cell_m0_c09_mV "Module 0, cell 9";
+CM_ SG_ 1666 cell_m0_c10_mV "Module 0, cell 10";
+CM_ SG_ 1666 cell_m0_c11_mV "Module 0, cell 11";
+CM_ BO_ 1667 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1667 cell_m0_c12_mV "Module 0, cell 12";
+CM_ SG_ 1667 cell_m0_c13_mV "Module 0, cell 13";
+CM_ SG_ 1667 cell_m0_c14_mV "Module 0, cell 14";
+CM_ SG_ 1667 cell_m0_c15_mV "Module 0, cell 15";
+CM_ BO_ 1668 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1668 cell_m0_c16_mV "Module 0, cell 16";
+CM_ SG_ 1668 cell_m0_c17_mV "Module 0, cell 17";
+CM_ SG_ 1668 cell_m0_c18_mV "Module 0, cell 18";
+CM_ SG_ 1668 cell_m1_c00_mV "Module 1, cell 0";
+CM_ BO_ 1669 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1669 cell_m1_c01_mV "Module 1, cell 1";
+CM_ SG_ 1669 cell_m1_c02_mV "Module 1, cell 2";
+CM_ SG_ 1669 cell_m1_c03_mV "Module 1, cell 3";
+CM_ SG_ 1669 cell_m1_c04_mV "Module 1, cell 4";
+CM_ BO_ 1670 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1670 cell_m1_c05_mV "Module 1, cell 5";
+CM_ SG_ 1670 cell_m1_c06_mV "Module 1, cell 6";
+CM_ SG_ 1670 cell_m1_c07_mV "Module 1, cell 7";
+CM_ SG_ 1670 cell_m1_c08_mV "Module 1, cell 8";
+CM_ BO_ 1671 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1671 cell_m1_c09_mV "Module 1, cell 9";
+CM_ SG_ 1671 cell_m1_c10_mV "Module 1, cell 10";
+CM_ SG_ 1671 cell_m1_c11_mV "Module 1, cell 11";
+CM_ SG_ 1671 cell_m1_c12_mV "Module 1, cell 12";
+CM_ BO_ 1672 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1672 cell_m1_c13_mV "Module 1, cell 13";
+CM_ SG_ 1672 cell_m1_c14_mV "Module 1, cell 14";
+CM_ SG_ 1672 cell_m1_c15_mV "Module 1, cell 15";
+CM_ SG_ 1672 cell_m1_c16_mV "Module 1, cell 16";
+CM_ BO_ 1673 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1673 cell_m1_c17_mV "Module 1, cell 17";
+CM_ SG_ 1673 cell_m1_c18_mV "Module 1, cell 18";
+CM_ SG_ 1673 cell_m2_c00_mV "Module 2, cell 0";
+CM_ SG_ 1673 cell_m2_c01_mV "Module 2, cell 1";
+CM_ BO_ 1674 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1674 cell_m2_c02_mV "Module 2, cell 2";
+CM_ SG_ 1674 cell_m2_c03_mV "Module 2, cell 3";
+CM_ SG_ 1674 cell_m2_c04_mV "Module 2, cell 4";
+CM_ SG_ 1674 cell_m2_c05_mV "Module 2, cell 5";
+CM_ BO_ 1675 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1675 cell_m2_c06_mV "Module 2, cell 6";
+CM_ SG_ 1675 cell_m2_c07_mV "Module 2, cell 7";
+CM_ SG_ 1675 cell_m2_c08_mV "Module 2, cell 8";
+CM_ SG_ 1675 cell_m2_c09_mV "Module 2, cell 9";
+CM_ BO_ 1676 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1676 cell_m2_c10_mV "Module 2, cell 10";
+CM_ SG_ 1676 cell_m2_c11_mV "Module 2, cell 11";
+CM_ SG_ 1676 cell_m2_c12_mV "Module 2, cell 12";
+CM_ SG_ 1676 cell_m2_c13_mV "Module 2, cell 13";
+CM_ BO_ 1677 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1677 cell_m2_c14_mV "Module 2, cell 14";
+CM_ SG_ 1677 cell_m2_c15_mV "Module 2, cell 15";
+CM_ SG_ 1677 cell_m2_c16_mV "Module 2, cell 16";
+CM_ SG_ 1677 cell_m2_c17_mV "Module 2, cell 17";
+CM_ BO_ 1678 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1678 cell_m2_c18_mV "Module 2, cell 18";
+CM_ SG_ 1678 cell_m3_c00_mV "Module 3, cell 0";
+CM_ SG_ 1678 cell_m3_c01_mV "Module 3, cell 1";
+CM_ SG_ 1678 cell_m3_c02_mV "Module 3, cell 2";
+CM_ BO_ 1679 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1679 cell_m3_c03_mV "Module 3, cell 3";
+CM_ SG_ 1679 cell_m3_c04_mV "Module 3, cell 4";
+CM_ SG_ 1679 cell_m3_c05_mV "Module 3, cell 5";
+CM_ SG_ 1679 cell_m3_c06_mV "Module 3, cell 6";
+CM_ BO_ 1680 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1680 cell_m3_c07_mV "Module 3, cell 7";
+CM_ SG_ 1680 cell_m3_c08_mV "Module 3, cell 8";
+CM_ SG_ 1680 cell_m3_c09_mV "Module 3, cell 9";
+CM_ SG_ 1680 cell_m3_c10_mV "Module 3, cell 10";
+CM_ BO_ 1681 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1681 cell_m3_c11_mV "Module 3, cell 11";
+CM_ SG_ 1681 cell_m3_c12_mV "Module 3, cell 12";
+CM_ SG_ 1681 cell_m3_c13_mV "Module 3, cell 13";
+CM_ SG_ 1681 cell_m3_c14_mV "Module 3, cell 14";
+CM_ BO_ 1682 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1682 cell_m3_c15_mV "Module 3, cell 15";
+CM_ SG_ 1682 cell_m3_c16_mV "Module 3, cell 16";
+CM_ SG_ 1682 cell_m3_c17_mV "Module 3, cell 17";
+CM_ SG_ 1682 cell_m3_c18_mV "Module 3, cell 18";
+CM_ BO_ 1683 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1683 cell_m4_c00_mV "Module 4, cell 0";
+CM_ SG_ 1683 cell_m4_c01_mV "Module 4, cell 1";
+CM_ SG_ 1683 cell_m4_c02_mV "Module 4, cell 2";
+CM_ SG_ 1683 cell_m4_c03_mV "Module 4, cell 3";
+CM_ BO_ 1684 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1684 cell_m4_c04_mV "Module 4, cell 4";
+CM_ SG_ 1684 cell_m4_c05_mV "Module 4, cell 5";
+CM_ SG_ 1684 cell_m4_c06_mV "Module 4, cell 6";
+CM_ SG_ 1684 cell_m4_c07_mV "Module 4, cell 7";
+CM_ BO_ 1685 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1685 cell_m4_c08_mV "Module 4, cell 8";
+CM_ SG_ 1685 cell_m4_c09_mV "Module 4, cell 9";
+CM_ SG_ 1685 cell_m4_c10_mV "Module 4, cell 10";
+CM_ SG_ 1685 cell_m4_c11_mV "Module 4, cell 11";
+CM_ BO_ 1686 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1686 cell_m4_c12_mV "Module 4, cell 12";
+CM_ SG_ 1686 cell_m4_c13_mV "Module 4, cell 13";
+CM_ SG_ 1686 cell_m4_c14_mV "Module 4, cell 14";
+CM_ SG_ 1686 cell_m4_c15_mV "Module 4, cell 15";
+CM_ BO_ 1687 "Pit-diag cell-V frame. Decode: cell_index = 4*frame_idx + slot; module = cell_index // 19; cell = cell_index % 19. 0xFFFF in any slot = no cell at that index.";
+CM_ SG_ 1687 cell_m4_c16_mV "Module 4, cell 16";
+CM_ SG_ 1687 cell_m4_c17_mV "Module 4, cell 17";
+CM_ SG_ 1687 cell_m4_c18_mV "Module 4, cell 18";
+CM_ SG_ 1687 sentinel_slot3 "Beyond cell 94: always 0xFFFF";
+CM_ BO_ 1696 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1696 temp_m0_t00_C "Module 0, NTC 0";
+CM_ SG_ 1696 temp_m0_t01_C "Module 0, NTC 1";
+CM_ SG_ 1696 temp_m0_t02_C "Module 0, NTC 2";
+CM_ SG_ 1696 temp_m0_t03_C "Module 0, NTC 3";
+CM_ SG_ 1696 temp_m0_t04_C "Module 0, NTC 4";
+CM_ SG_ 1696 temp_m0_t05_C "Module 0, NTC 5";
+CM_ SG_ 1696 temp_m0_t06_C "Module 0, NTC 6";
+CM_ SG_ 1696 temp_m0_t07_C "Module 0, NTC 7";
+CM_ BO_ 1697 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1697 temp_m0_t08_C "Module 0, NTC 8";
+CM_ SG_ 1697 temp_m0_t09_C "Module 0, NTC 9";
+CM_ SG_ 1697 temp_m0_t10_C "Module 0, NTC 10";
+CM_ SG_ 1697 temp_m0_t11_C "Module 0, NTC 11";
+CM_ SG_ 1697 temp_m0_t12_C "Module 0, NTC 12";
+CM_ SG_ 1697 temp_m0_t13_C "Module 0, NTC 13";
+CM_ SG_ 1697 temp_m0_t14_C "Module 0, NTC 14";
+CM_ SG_ 1697 temp_m0_t15_C "Module 0, NTC 15";
+CM_ BO_ 1698 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1698 temp_m0_t16_C "Module 0, NTC 16";
+CM_ SG_ 1698 temp_m0_t17_C "Module 0, NTC 17";
+CM_ SG_ 1698 temp_m0_t18_C "Module 0, NTC 18";
+CM_ SG_ 1698 temp_m0_t19_C "Module 0, NTC 19";
+CM_ SG_ 1698 temp_m0_t20_C "Module 0, NTC 20";
+CM_ SG_ 1698 temp_m0_t21_C "Module 0, NTC 21";
+CM_ SG_ 1698 temp_m0_t22_C "Module 0, NTC 22";
+CM_ SG_ 1698 temp_m0_t23_C "Module 0, NTC 23";
+CM_ BO_ 1699 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1699 temp_m0_t24_C "Module 0, NTC 24";
+CM_ SG_ 1699 temp_m0_t25_C "Module 0, NTC 25";
+CM_ SG_ 1699 temp_m0_t26_C "Module 0, NTC 26";
+CM_ SG_ 1699 temp_m0_t27_C "Module 0, NTC 27";
+CM_ SG_ 1699 temp_m0_t28_C "Module 0, NTC 28";
+CM_ SG_ 1699 temp_m0_t29_C "Module 0, NTC 29";
+CM_ SG_ 1699 temp_m0_t30_C "Module 0, NTC 30";
+CM_ SG_ 1699 temp_m0_t31_C "Module 0, NTC 31";
+CM_ BO_ 1700 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1700 temp_m0_t32_C "Module 0, NTC 32";
+CM_ SG_ 1700 temp_m0_t33_C "Module 0, NTC 33";
+CM_ SG_ 1700 temp_m0_t34_C "Module 0, NTC 34";
+CM_ SG_ 1700 temp_m0_t35_C "Module 0, NTC 35";
+CM_ SG_ 1700 temp_m0_t36_C "Module 0, NTC 36";
+CM_ SG_ 1700 temp_m0_t37_C "Module 0, NTC 37";
+CM_ SG_ 1700 temp_m0_t38_C "Module 0, NTC 38";
+CM_ SG_ 1700 temp_m0_t39_C "Module 0, NTC 39";
+CM_ BO_ 1701 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1701 temp_m1_t00_C "Module 1, NTC 0";
+CM_ SG_ 1701 temp_m1_t01_C "Module 1, NTC 1";
+CM_ SG_ 1701 temp_m1_t02_C "Module 1, NTC 2";
+CM_ SG_ 1701 temp_m1_t03_C "Module 1, NTC 3";
+CM_ SG_ 1701 temp_m1_t04_C "Module 1, NTC 4";
+CM_ SG_ 1701 temp_m1_t05_C "Module 1, NTC 5";
+CM_ SG_ 1701 temp_m1_t06_C "Module 1, NTC 6";
+CM_ SG_ 1701 temp_m1_t07_C "Module 1, NTC 7";
+CM_ BO_ 1702 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1702 temp_m1_t08_C "Module 1, NTC 8";
+CM_ SG_ 1702 temp_m1_t09_C "Module 1, NTC 9";
+CM_ SG_ 1702 temp_m1_t10_C "Module 1, NTC 10";
+CM_ SG_ 1702 temp_m1_t11_C "Module 1, NTC 11";
+CM_ SG_ 1702 temp_m1_t12_C "Module 1, NTC 12";
+CM_ SG_ 1702 temp_m1_t13_C "Module 1, NTC 13";
+CM_ SG_ 1702 temp_m1_t14_C "Module 1, NTC 14";
+CM_ SG_ 1702 temp_m1_t15_C "Module 1, NTC 15";
+CM_ BO_ 1703 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1703 temp_m1_t16_C "Module 1, NTC 16";
+CM_ SG_ 1703 temp_m1_t17_C "Module 1, NTC 17";
+CM_ SG_ 1703 temp_m1_t18_C "Module 1, NTC 18";
+CM_ SG_ 1703 temp_m1_t19_C "Module 1, NTC 19";
+CM_ SG_ 1703 temp_m1_t20_C "Module 1, NTC 20";
+CM_ SG_ 1703 temp_m1_t21_C "Module 1, NTC 21";
+CM_ SG_ 1703 temp_m1_t22_C "Module 1, NTC 22";
+CM_ SG_ 1703 temp_m1_t23_C "Module 1, NTC 23";
+CM_ BO_ 1704 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1704 temp_m1_t24_C "Module 1, NTC 24";
+CM_ SG_ 1704 temp_m1_t25_C "Module 1, NTC 25";
+CM_ SG_ 1704 temp_m1_t26_C "Module 1, NTC 26";
+CM_ SG_ 1704 temp_m1_t27_C "Module 1, NTC 27";
+CM_ SG_ 1704 temp_m1_t28_C "Module 1, NTC 28";
+CM_ SG_ 1704 temp_m1_t29_C "Module 1, NTC 29";
+CM_ SG_ 1704 temp_m1_t30_C "Module 1, NTC 30";
+CM_ SG_ 1704 temp_m1_t31_C "Module 1, NTC 31";
+CM_ BO_ 1705 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1705 temp_m1_t32_C "Module 1, NTC 32";
+CM_ SG_ 1705 temp_m1_t33_C "Module 1, NTC 33";
+CM_ SG_ 1705 temp_m1_t34_C "Module 1, NTC 34";
+CM_ SG_ 1705 temp_m1_t35_C "Module 1, NTC 35";
+CM_ SG_ 1705 temp_m1_t36_C "Module 1, NTC 36";
+CM_ SG_ 1705 temp_m1_t37_C "Module 1, NTC 37";
+CM_ SG_ 1705 temp_m1_t38_C "Module 1, NTC 38";
+CM_ SG_ 1705 temp_m1_t39_C "Module 1, NTC 39";
+CM_ BO_ 1706 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1706 temp_m2_t00_C "Module 2, NTC 0";
+CM_ SG_ 1706 temp_m2_t01_C "Module 2, NTC 1";
+CM_ SG_ 1706 temp_m2_t02_C "Module 2, NTC 2";
+CM_ SG_ 1706 temp_m2_t03_C "Module 2, NTC 3";
+CM_ SG_ 1706 temp_m2_t04_C "Module 2, NTC 4";
+CM_ SG_ 1706 temp_m2_t05_C "Module 2, NTC 5";
+CM_ SG_ 1706 temp_m2_t06_C "Module 2, NTC 6";
+CM_ SG_ 1706 temp_m2_t07_C "Module 2, NTC 7";
+CM_ BO_ 1707 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1707 temp_m2_t08_C "Module 2, NTC 8";
+CM_ SG_ 1707 temp_m2_t09_C "Module 2, NTC 9";
+CM_ SG_ 1707 temp_m2_t10_C "Module 2, NTC 10";
+CM_ SG_ 1707 temp_m2_t11_C "Module 2, NTC 11";
+CM_ SG_ 1707 temp_m2_t12_C "Module 2, NTC 12";
+CM_ SG_ 1707 temp_m2_t13_C "Module 2, NTC 13";
+CM_ SG_ 1707 temp_m2_t14_C "Module 2, NTC 14";
+CM_ SG_ 1707 temp_m2_t15_C "Module 2, NTC 15";
+CM_ BO_ 1708 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1708 temp_m2_t16_C "Module 2, NTC 16";
+CM_ SG_ 1708 temp_m2_t17_C "Module 2, NTC 17";
+CM_ SG_ 1708 temp_m2_t18_C "Module 2, NTC 18";
+CM_ SG_ 1708 temp_m2_t19_C "Module 2, NTC 19";
+CM_ SG_ 1708 temp_m2_t20_C "Module 2, NTC 20";
+CM_ SG_ 1708 temp_m2_t21_C "Module 2, NTC 21";
+CM_ SG_ 1708 temp_m2_t22_C "Module 2, NTC 22";
+CM_ SG_ 1708 temp_m2_t23_C "Module 2, NTC 23";
+CM_ BO_ 1709 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1709 temp_m2_t24_C "Module 2, NTC 24";
+CM_ SG_ 1709 temp_m2_t25_C "Module 2, NTC 25";
+CM_ SG_ 1709 temp_m2_t26_C "Module 2, NTC 26";
+CM_ SG_ 1709 temp_m2_t27_C "Module 2, NTC 27";
+CM_ SG_ 1709 temp_m2_t28_C "Module 2, NTC 28";
+CM_ SG_ 1709 temp_m2_t29_C "Module 2, NTC 29";
+CM_ SG_ 1709 temp_m2_t30_C "Module 2, NTC 30";
+CM_ SG_ 1709 temp_m2_t31_C "Module 2, NTC 31";
+CM_ BO_ 1710 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1710 temp_m2_t32_C "Module 2, NTC 32";
+CM_ SG_ 1710 temp_m2_t33_C "Module 2, NTC 33";
+CM_ SG_ 1710 temp_m2_t34_C "Module 2, NTC 34";
+CM_ SG_ 1710 temp_m2_t35_C "Module 2, NTC 35";
+CM_ SG_ 1710 temp_m2_t36_C "Module 2, NTC 36";
+CM_ SG_ 1710 temp_m2_t37_C "Module 2, NTC 37";
+CM_ SG_ 1710 temp_m2_t38_C "Module 2, NTC 38";
+CM_ SG_ 1710 temp_m2_t39_C "Module 2, NTC 39";
+CM_ BO_ 1711 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1711 temp_m3_t00_C "Module 3, NTC 0";
+CM_ SG_ 1711 temp_m3_t01_C "Module 3, NTC 1";
+CM_ SG_ 1711 temp_m3_t02_C "Module 3, NTC 2";
+CM_ SG_ 1711 temp_m3_t03_C "Module 3, NTC 3";
+CM_ SG_ 1711 temp_m3_t04_C "Module 3, NTC 4";
+CM_ SG_ 1711 temp_m3_t05_C "Module 3, NTC 5";
+CM_ SG_ 1711 temp_m3_t06_C "Module 3, NTC 6";
+CM_ SG_ 1711 temp_m3_t07_C "Module 3, NTC 7";
+CM_ BO_ 1712 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1712 temp_m3_t08_C "Module 3, NTC 8";
+CM_ SG_ 1712 temp_m3_t09_C "Module 3, NTC 9";
+CM_ SG_ 1712 temp_m3_t10_C "Module 3, NTC 10";
+CM_ SG_ 1712 temp_m3_t11_C "Module 3, NTC 11";
+CM_ SG_ 1712 temp_m3_t12_C "Module 3, NTC 12";
+CM_ SG_ 1712 temp_m3_t13_C "Module 3, NTC 13";
+CM_ SG_ 1712 temp_m3_t14_C "Module 3, NTC 14";
+CM_ SG_ 1712 temp_m3_t15_C "Module 3, NTC 15";
+CM_ BO_ 1713 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1713 temp_m3_t16_C "Module 3, NTC 16";
+CM_ SG_ 1713 temp_m3_t17_C "Module 3, NTC 17";
+CM_ SG_ 1713 temp_m3_t18_C "Module 3, NTC 18";
+CM_ SG_ 1713 temp_m3_t19_C "Module 3, NTC 19";
+CM_ SG_ 1713 temp_m3_t20_C "Module 3, NTC 20";
+CM_ SG_ 1713 temp_m3_t21_C "Module 3, NTC 21";
+CM_ SG_ 1713 temp_m3_t22_C "Module 3, NTC 22";
+CM_ SG_ 1713 temp_m3_t23_C "Module 3, NTC 23";
+CM_ BO_ 1714 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1714 temp_m3_t24_C "Module 3, NTC 24";
+CM_ SG_ 1714 temp_m3_t25_C "Module 3, NTC 25";
+CM_ SG_ 1714 temp_m3_t26_C "Module 3, NTC 26";
+CM_ SG_ 1714 temp_m3_t27_C "Module 3, NTC 27";
+CM_ SG_ 1714 temp_m3_t28_C "Module 3, NTC 28";
+CM_ SG_ 1714 temp_m3_t29_C "Module 3, NTC 29";
+CM_ SG_ 1714 temp_m3_t30_C "Module 3, NTC 30";
+CM_ SG_ 1714 temp_m3_t31_C "Module 3, NTC 31";
+CM_ BO_ 1715 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1715 temp_m3_t32_C "Module 3, NTC 32";
+CM_ SG_ 1715 temp_m3_t33_C "Module 3, NTC 33";
+CM_ SG_ 1715 temp_m3_t34_C "Module 3, NTC 34";
+CM_ SG_ 1715 temp_m3_t35_C "Module 3, NTC 35";
+CM_ SG_ 1715 temp_m3_t36_C "Module 3, NTC 36";
+CM_ SG_ 1715 temp_m3_t37_C "Module 3, NTC 37";
+CM_ SG_ 1715 temp_m3_t38_C "Module 3, NTC 38";
+CM_ SG_ 1715 temp_m3_t39_C "Module 3, NTC 39";
+CM_ BO_ 1716 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1716 temp_m4_t00_C "Module 4, NTC 0";
+CM_ SG_ 1716 temp_m4_t01_C "Module 4, NTC 1";
+CM_ SG_ 1716 temp_m4_t02_C "Module 4, NTC 2";
+CM_ SG_ 1716 temp_m4_t03_C "Module 4, NTC 3";
+CM_ SG_ 1716 temp_m4_t04_C "Module 4, NTC 4";
+CM_ SG_ 1716 temp_m4_t05_C "Module 4, NTC 5";
+CM_ SG_ 1716 temp_m4_t06_C "Module 4, NTC 6";
+CM_ SG_ 1716 temp_m4_t07_C "Module 4, NTC 7";
+CM_ BO_ 1717 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1717 temp_m4_t08_C "Module 4, NTC 8";
+CM_ SG_ 1717 temp_m4_t09_C "Module 4, NTC 9";
+CM_ SG_ 1717 temp_m4_t10_C "Module 4, NTC 10";
+CM_ SG_ 1717 temp_m4_t11_C "Module 4, NTC 11";
+CM_ SG_ 1717 temp_m4_t12_C "Module 4, NTC 12";
+CM_ SG_ 1717 temp_m4_t13_C "Module 4, NTC 13";
+CM_ SG_ 1717 temp_m4_t14_C "Module 4, NTC 14";
+CM_ SG_ 1717 temp_m4_t15_C "Module 4, NTC 15";
+CM_ BO_ 1718 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1718 temp_m4_t16_C "Module 4, NTC 16";
+CM_ SG_ 1718 temp_m4_t17_C "Module 4, NTC 17";
+CM_ SG_ 1718 temp_m4_t18_C "Module 4, NTC 18";
+CM_ SG_ 1718 temp_m4_t19_C "Module 4, NTC 19";
+CM_ SG_ 1718 temp_m4_t20_C "Module 4, NTC 20";
+CM_ SG_ 1718 temp_m4_t21_C "Module 4, NTC 21";
+CM_ SG_ 1718 temp_m4_t22_C "Module 4, NTC 22";
+CM_ SG_ 1718 temp_m4_t23_C "Module 4, NTC 23";
+CM_ BO_ 1719 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1719 temp_m4_t24_C "Module 4, NTC 24";
+CM_ SG_ 1719 temp_m4_t25_C "Module 4, NTC 25";
+CM_ SG_ 1719 temp_m4_t26_C "Module 4, NTC 26";
+CM_ SG_ 1719 temp_m4_t27_C "Module 4, NTC 27";
+CM_ SG_ 1719 temp_m4_t28_C "Module 4, NTC 28";
+CM_ SG_ 1719 temp_m4_t29_C "Module 4, NTC 29";
+CM_ SG_ 1719 temp_m4_t30_C "Module 4, NTC 30";
+CM_ SG_ 1719 temp_m4_t31_C "Module 4, NTC 31";
+CM_ BO_ 1720 "Pit-diag NTC-temp frame. Decode: temp_index = 8*frame_idx + slot; module = temp_index // 40; temp = temp_index % 40.";
+CM_ SG_ 1720 temp_m4_t32_C "Module 4, NTC 32";
+CM_ SG_ 1720 temp_m4_t33_C "Module 4, NTC 33";
+CM_ SG_ 1720 temp_m4_t34_C "Module 4, NTC 34";
+CM_ SG_ 1720 temp_m4_t35_C "Module 4, NTC 35";
+CM_ SG_ 1720 temp_m4_t36_C "Module 4, NTC 36";
+CM_ SG_ 1720 temp_m4_t37_C "Module 4, NTC 37";
+CM_ SG_ 1720 temp_m4_t38_C "Module 4, NTC 38";
+CM_ SG_ 1720 temp_m4_t39_C "Module 4, NTC 39";
+CM_ BO_ 1728 "FSM extended status frame. 1 Hz when pit-diag enabled.";
+CM_ SG_ 1728 fsm_state "0=Start, 1=Precharge, 2=Transition, 3=Run, 4=Charge, 5=Error";
+CM_ SG_ 1728 mode_locked "0=Undecided, 1=Car, 2=Charger";
+CM_ SG_ 1728 balance_override "1 = autonomous balancing paused by a fresh 0x103 'BALO' operator override (#336).";
+CM_ SG_ 1728 pec_err_total "Sum of g_ltc_pec_err_count[10]; saturates at 0xFFFF";
+CM_ SG_ 1728 fault_reason "Predicate branch that latched ERROR (#276). 0=None, 1=ForceError, 2=BmsModuleOffline, 3=BmsStale, 4=CellUnderVoltage, 5=CellOverVoltage, 6=CellUnderTemp, 7=CellOverTemp, 8=CurrentSensorFault, 9=CurrentStale, 10=CurrentOverLimit, 11=VcuStale, 12=FsmError (FSM-driven Error path).";
+CM_ SG_ 1728 fault_detail "Per-branch detail. BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index 0..4, or 0xFF = none matched (inconsistent / torn snapshot). BmsModuleOffline: live module_online_mask. Otherwise 0.";
+CM_ BO_ 1729 "V-poll cadence + last temp-sweep failure mask.";
+CM_ SG_ 1729 temp_sweep_last_mask "1 bit per NTC channel that failed the last sweep";
+CM_ BO_ 1730 "Balance DCC bits for cell indices 0..63. Bit b of byte i represents cell (8*i + b). Cell -> module/cell: module = idx // 19, cell = idx % 19.";
+CM_ BO_ 1731 "Balance DCC bits for cell indices 64..94 + per-cycle counters. Bits 64..94 occupy bytes 0..3 (low 31 bits).";
+CM_ SG_ 1731 dcc_bits_hi32 "Low 31 bits = cells 64..94; bit 31 reserved 0";
+CM_ SG_ 1731 balance_cycles_total "Mod 65536";
+CM_ SG_ 1731 balance_cycles_active "Cycles where at least one DCC bit was set";
+CM_ BO_ 1732 "Reset reason + App_InitTask milestone + FDCAN1 start result.";
+CM_ SG_ 1732 jump_reason "0=POR cold boot; 0x4A554D50='JUMP' CAN trigger; 0x4D414E55='MANU' manual request";
+CM_ SG_ 1732 app_init_progress "0..7 milestone counter, 7=clean self-exit";
+CM_ SG_ 1732 fdcan1_start_result "0=HAL_OK; low 24 bits of HAL_FDCAN_Start return";
+CM_ BO_ 1733 "FreeRTOS stack-overflow + malloc-failed hooks (captured to .bss; survives soft reset).";
+CM_ SG_ 1733 stack_overflow_seen "1 if g_stack_overflow_task_addr != 0";
+CM_ SG_ 1733 watermark_low_byte "Saturates at 0xFF";
+CM_ SG_ 1733 task_addr_lo "Low 32 bits of failing task's xTaskHandle";
+CM_ SG_ 1733 malloc_failed_count "Saturates at 0xFFFF";
+CM_ BO_ 1734 "Firmware identification (post-#252). Populated from VERSION file + git rev-parse at configure time.";
+CM_ SG_ 1734 bl_node_id "From firmware_info.reserved[0]; MingoCAN checks against the BL";
+CM_ BO_ 1735 "Per-IC PEC error count for chain indices 0..7 (#258). Saturating uint8 per IC. Chain index 2m = upper LTC of module m (cells 0..9); 2m+1 = lower (cells 10..18). 0xFF means '>= 255 failures' -- for diagnostic localisation the chip-identity matters, not the precise count past saturation.";
+CM_ SG_ 1735 pec_err_ic_0_count "IC 0 = module 0 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_1_count "IC 1 = module 0 lower LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_2_count "IC 2 = module 1 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_3_count "IC 3 = module 1 lower LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_4_count "IC 4 = module 2 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_5_count "IC 5 = module 2 lower LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_6_count "IC 6 = module 3 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1735 pec_err_ic_7_count "IC 7 = module 3 lower LTC6811. Saturates at 0xFF.";
+CM_ BO_ 1736 "Per-IC PEC count for ICs 8..9 + reserved bytes (#258).";
+CM_ SG_ 1736 pec_err_ic_8_count "IC 8 = module 4 upper LTC6811. Saturates at 0xFF.";
+CM_ SG_ 1736 pec_err_ic_9_count "IC 9 = module 4 lower LTC6811. Saturates at 0xFF.";
+VAL_ 1184 fsm_state 0 "Start" 1 "Precharge" 2 "Transition" 3 "Run" 4 "Charge" 5 "Error" ;
+VAL_ 1728 fsm_state 0 "Start" 1 "Precharge" 2 "Transition" 3 "Run" 4 "Charge" 5 "Error" ;
+VAL_ 1728 mode_locked 0 "Undecided" 1 "Car" 2 "Charger" ;
+VAL_ 1728 fault_reason 0 "None" 1 "ForceError" 2 "BmsModuleOffline" 3 "BmsStale" 4 "CellUnderVoltage" 5 "CellOverVoltage" 6 "CellUnderTemp" 7 "CellOverTemp" 8 "CurrentSensorFault" 9 "CurrentStale" 10 "CurrentOverLimit" 11 "VcuStale" 12 "FsmError" ;
+
