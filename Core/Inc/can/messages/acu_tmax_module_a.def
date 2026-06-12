@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x136  ACU_tmax_module_a -- per-module tmax, modules 0..2.
+ * Mirrors ams::acu_tx::encode_tmax_module_a().
+ */
+
+CAN_MSG(ACU_tmax_module_a, 0x136, 6, "AMS", 250)
+    FIELD_BE_S (tmax_module0, int16_t, 0, 16, 1, 0, "degC")
+    FIELD_BE_S (tmax_module1, int16_t, 2, 16, 1, 0, "degC")
+    FIELD_BE_S (tmax_module2, int16_t, 4, 16, 1, 0, "degC")
+CAN_MSG_END(ACU_tmax_module_a)

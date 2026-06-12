@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x135  ACU_currents -- accumulator + DCDC currents in deciamps.
+ * Wire convention: + = discharge. Mirrors ams::acu_tx::encode_currents().
+ *
+ * Struct holds RAW deciamps (the wire value). The DBC factor 0.1
+ * describes the physical interpretation; it is NOT applied by the C++
+ * encoder. Adapter (acu_tx_encoders.hpp) converts mA -> dA via
+ * mA_to_deciamps_i16() before populating the struct.
+ */
+
+CAN_MSG(ACU_currents, 0x135, 4, "AMS", 50)
+    FIELD_BE_S (current_accu_dA, int16_t, 0, 16, 0.1, 0, "A")
+    FIELD_BE_S (current_dcdc_dA, int16_t, 2, 16, 0.1, 0, "A")
+CAN_MSG_END(ACU_currents)

@@ -49,8 +49,10 @@ namespace ifs08 {
 #undef FIELD_BE_S
 
 // ---- pass 2: encode (struct -> bytes) --------------------------------------
+// The encoder takes a sized array reference so the DLC is enforced at the
+// callsite -- passing a 4-byte buffer to a Dlc=6 encoder fails to compile.
 #define CAN_MSG(Name, Id, Dlc, Sender, Period) \
-    inline void encode_##Name(const Name##_t& in, uint8_t (&d)[8]) noexcept { \
+    inline void encode_##Name(const Name##_t& in, uint8_t (&d)[Dlc]) noexcept { \
         for (auto& b : d) b = 0;
 #define CAN_MSG_END(Name) }
 #define FIELD_LE(name, ctype, byte, len, f, o, u) \
@@ -71,7 +73,7 @@ namespace ifs08 {
 
 // ---- pass 3: decode (bytes -> struct) --------------------------------------
 #define CAN_MSG(Name, Id, Dlc, Sender, Period) \
-    inline void decode_##Name(const uint8_t (&d)[8], Name##_t& out) noexcept {
+    inline void decode_##Name(const uint8_t (&d)[Dlc], Name##_t& out) noexcept {
 #define CAN_MSG_END(Name) }
 #define FIELD_LE(name, ctype, byte, len, f, o, u) \
     out.name = static_cast<ctype>(can_dsl::get_le(d, 8u*(byte), len));

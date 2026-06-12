@@ -24,7 +24,7 @@ namespace can_dsl {
 // within a byte (towards bit 0), then jump to bit 7 of the next byte.
 // This matches the convention cantools / Vector CANdb++ use.
 
-inline uint64_t get_le(const uint8_t (&d)[8], unsigned start, unsigned len) noexcept {
+inline uint64_t get_le(const uint8_t* d, unsigned start, unsigned len) noexcept {
     uint64_t v = 0;
     for (unsigned i = 0; i < len; ++i) {
         const unsigned bit = start + i;
@@ -33,7 +33,7 @@ inline uint64_t get_le(const uint8_t (&d)[8], unsigned start, unsigned len) noex
     return v;
 }
 
-inline void set_le(uint8_t (&d)[8], unsigned start, unsigned len, uint64_t v) noexcept {
+inline void set_le(uint8_t* d, unsigned start, unsigned len, uint64_t v) noexcept {
     for (unsigned i = 0; i < len; ++i) {
         const unsigned bit = start + i;
         const uint8_t b = static_cast<uint8_t>((v >> i) & 1u);
@@ -42,7 +42,7 @@ inline void set_le(uint8_t (&d)[8], unsigned start, unsigned len, uint64_t v) no
     }
 }
 
-inline uint64_t get_be(const uint8_t (&d)[8], unsigned start, unsigned len) noexcept {
+inline uint64_t get_be(const uint8_t* d, unsigned start, unsigned len) noexcept {
     uint64_t v = 0;
     unsigned bit = start;
     for (unsigned i = 0; i < len; ++i) {
@@ -53,7 +53,7 @@ inline uint64_t get_be(const uint8_t (&d)[8], unsigned start, unsigned len) noex
     return v;
 }
 
-inline void set_be(uint8_t (&d)[8], unsigned start, unsigned len, uint64_t v) noexcept {
+inline void set_be(uint8_t* d, unsigned start, unsigned len, uint64_t v) noexcept {
     unsigned bit = start;
     for (unsigned i = 0; i < len; ++i) {
         const uint8_t b = static_cast<uint8_t>((v >> (len - 1 - i)) & 1u);

@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: proprietary
 //
-// Pure-logic encoders for the ECU-side TX matrix shipped in fix/53.
-// Header-only so the host unit-test build can exercise them without
-// pulling in HAL / FreeRTOS. Byte-by-byte layouts mirror the table in
-// docs/CAN_MAP.md.
+// ECU-side TX matrix encoders. As of Phase-2b of the code-first DSL
+// these are thin adapters: the byte layout for every 0x020/0x12C/0x131..
+// 0x137 frame lives in Core/Inc/can/messages/acu_*.def -- shared with
+// the DBC descriptors -- and these wrappers just map service fields
+// into the generated `ifs08::ACU_*_t` struct and call the generated
+// `ifs08::encode_ACU_*`. Value transforms (Run|Charge -> bit, mA -> dA,
+// DCDC temp stub) stay at the adapter.
+//
+// Hand-rolled-byte parity with the previous implementation is locked
+// by tests/unit/test_acu_tx_encoders.cpp; the adapter mapping by
+// tests/unit/test_dsl_parity.cpp.
 
 #pragma once
 
@@ -11,20 +18,12 @@
 #include "bms_service.hpp"
 #include "current_service.hpp"
 
+#include "can/can_codecs.hpp"   // code-first DSL encoders
+
 #include <array>
 #include <cstdint>
 
 namespace ams::acu_tx {
-
-// Big-endian writers.
-inline void be_put_u16(std::uint8_t *p, std::uint16_t v) noexcept {
-    p[0] = static_cast<std::uint8_t>((v >> 8) & 0xFFu);
-    p[1] = static_cast<std::uint8_t>( v       & 0xFFu);
-}
-
-inline void be_put_i16(std::uint8_t *p, std::int16_t v) noexcept {
-    be_put_u16(p, static_cast<std::uint16_t>(v));
-}
 
 // Saturating int16 clamp.
 [[nodiscard]] inline std::int16_t sat_i16(std::int32_t v) noexcept {
@@ -41,13 +40,30 @@ inline void be_put_i16(std::uint8_t *p, std::int16_t v) noexcept {
     return sat_i16(dA);
 }
 
+namespace detail {
+// Convert a sized C array (the DSL encoder's output buffer) into a
+// std::array of the same size. The DLC is enforced at compile time by
+// the encoder signature.
+template <std::size_t N>
+[[nodiscard]] inline std::array<std::uint8_t, N>
+to_array(const std::uint8_t (&buf)[N]) noexcept {
+    std::array<std::uint8_t, N> out{};
+    for (std::size_t i = 0; i < N; ++i) out[i] = buf[i];
+    return out;
+}
+}  // namespace detail
+
 // ----- Frame builders ---------------------------------------------------
 
 // 0x020 ok_precharge — 1 byte, 1 iff FSM in Run|Charge.
 [[nodiscard]] inline std::array<std::uint8_t, 1>
 encode_ok_precharge(std::uint8_t fsm_state) noexcept {
-    return { static_cast<std::uint8_t>(
-        (fsm_state == 3u /*Run*/ || fsm_state == 4u /*Charge*/) ? 1u : 0u) };
+    ifs08::ACU_ok_precharge_t in{};
+    in.ok_precharge = static_cast<std::uint8_t>(
+        (fsm_state == 3u /*Run*/ || fsm_state == 4u /*Charge*/) ? 1u : 0u);
+    std::uint8_t buf[1] = {0};
+    ifs08::encode_ACU_ok_precharge(in, buf);
+    return detail::to_array(buf);
 }
 
 // 0x130 SoC % — DEFERRED. No SOC estimator in firmware yet. Stub
@@ -55,6 +71,8 @@ encode_ok_precharge(std::uint8_t fsm_state) noexcept {
 // "no estimator running" from a real 0..100 value once one lands.
 // Not currently called by acu_can_task.cpp's TX scheduler -- reserve
 // the encoder for the contract-first day someone wires a real SoC.
+// Intentionally NOT on the DSL yet (no .def, no DBC row) because the
+// frame is not transmitted; ID stays reserved.
 [[nodiscard]] inline std::array<std::uint8_t, 1>
 encode_soc_stub() noexcept {
     return { std::uint8_t{0xFFu} };
@@ -63,76 +81,92 @@ encode_soc_stub() noexcept {
 // 0x12C v_cell_min — BE u16 mV (pack-wide cell min).
 [[nodiscard]] inline std::array<std::uint8_t, 2>
 encode_min_voltage(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 2> out{};
-    be_put_u16(out.data(), bms.min_cell_mV);
-    return out;
+    ifs08::ACU_v_cell_min_t in{};
+    in.min_cell_mV = bms.min_cell_mV;
+    std::uint8_t buf[2] = {0};
+    ifs08::encode_ACU_v_cell_min(in, buf);
+    return detail::to_array(buf);
 }
 
-// 0x131 vmin modules 0..2 — BE u16 mV x3 = 6 bytes.
+// 0x131 vmin modules 0..2.
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_vmin_module_a(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 6> out{};
-    be_put_u16(out.data() + 0, bms.vmin_module[0]);
-    be_put_u16(out.data() + 2, bms.vmin_module[1]);
-    be_put_u16(out.data() + 4, bms.vmin_module[2]);
-    return out;
+    ifs08::ACU_vmin_module_a_t in{};
+    in.vmin_module0 = bms.vmin_module[0];
+    in.vmin_module1 = bms.vmin_module[1];
+    in.vmin_module2 = bms.vmin_module[2];
+    std::uint8_t buf[6] = {0};
+    ifs08::encode_ACU_vmin_module_a(in, buf);
+    return detail::to_array(buf);
 }
 
-// 0x132 vmin modules 3..4 — 4 bytes.
+// 0x132 vmin modules 3..4.
 [[nodiscard]] inline std::array<std::uint8_t, 4>
 encode_vmin_module_b(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 4> out{};
-    be_put_u16(out.data() + 0, bms.vmin_module[3]);
-    be_put_u16(out.data() + 2, bms.vmin_module[4]);
-    return out;
+    ifs08::ACU_vmin_module_b_t in{};
+    in.vmin_module3 = bms.vmin_module[3];
+    in.vmin_module4 = bms.vmin_module[4];
+    std::uint8_t buf[4] = {0};
+    ifs08::encode_ACU_vmin_module_b(in, buf);
+    return detail::to_array(buf);
 }
 
 // 0x133 vmax modules 0..2.
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_vmax_module_a(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 6> out{};
-    be_put_u16(out.data() + 0, bms.vmax_module[0]);
-    be_put_u16(out.data() + 2, bms.vmax_module[1]);
-    be_put_u16(out.data() + 4, bms.vmax_module[2]);
-    return out;
+    ifs08::ACU_vmax_module_a_t in{};
+    in.vmax_module0 = bms.vmax_module[0];
+    in.vmax_module1 = bms.vmax_module[1];
+    in.vmax_module2 = bms.vmax_module[2];
+    std::uint8_t buf[6] = {0};
+    ifs08::encode_ACU_vmax_module_a(in, buf);
+    return detail::to_array(buf);
 }
 
 // 0x134 vmax modules 3..4.
 [[nodiscard]] inline std::array<std::uint8_t, 4>
 encode_vmax_module_b(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 4> out{};
-    be_put_u16(out.data() + 0, bms.vmax_module[3]);
-    be_put_u16(out.data() + 2, bms.vmax_module[4]);
-    return out;
+    ifs08::ACU_vmax_module_b_t in{};
+    in.vmax_module3 = bms.vmax_module[3];
+    in.vmax_module4 = bms.vmax_module[4];
+    std::uint8_t buf[4] = {0};
+    ifs08::encode_ACU_vmax_module_b(in, buf);
+    return detail::to_array(buf);
 }
 
 // 0x135 currents — BE i16 deciamps: [accu | dcdc].
 [[nodiscard]] inline std::array<std::uint8_t, 4>
 encode_currents(const CurrentState& cur) noexcept {
-    std::array<std::uint8_t, 4> out{};
-    be_put_i16(out.data() + 0, mA_to_deciamps_i16(cur.filtered_mA));
-    be_put_i16(out.data() + 2, mA_to_deciamps_i16(cur.dcdc_filtered_mA));
-    return out;
+    ifs08::ACU_currents_t in{};
+    in.current_accu_dA = mA_to_deciamps_i16(cur.filtered_mA);
+    in.current_dcdc_dA = mA_to_deciamps_i16(cur.dcdc_filtered_mA);
+    std::uint8_t buf[4] = {0};
+    ifs08::encode_ACU_currents(in, buf);
+    return detail::to_array(buf);
 }
 
 // 0x136 temp_max modules 0..2 — BE i16 degC x3.
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_tmax_module_a(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 6> out{};
-    be_put_i16(out.data() + 0, bms.tmax_module[0]);
-    be_put_i16(out.data() + 2, bms.tmax_module[1]);
-    be_put_i16(out.data() + 4, bms.tmax_module[2]);
-    return out;
+    ifs08::ACU_tmax_module_a_t in{};
+    in.tmax_module0 = bms.tmax_module[0];
+    in.tmax_module1 = bms.tmax_module[1];
+    in.tmax_module2 = bms.tmax_module[2];
+    std::uint8_t buf[6] = {0};
+    ifs08::encode_ACU_tmax_module_a(in, buf);
+    return detail::to_array(buf);
 }
 
 // 0x137 temp_max modules 3..4 + temp_dcdc stub — BE i16 degC x3.
 [[nodiscard]] inline std::array<std::uint8_t, 6>
 encode_tmax_module_b(const BmsState& bms) noexcept {
-    std::array<std::uint8_t, 6> out{};
-    be_put_i16(out.data() + 0, bms.tmax_module[3]);
-    be_put_i16(out.data() + 2, bms.tmax_module[4]);
-    be_put_i16(out.data() + 4, config::DcdcTempStubValue);
-    return out;
+    ifs08::ACU_tmax_module_b_t in{};
+    in.tmax_module3 = bms.tmax_module[3];
+    in.tmax_module4 = bms.tmax_module[4];
+    in.tmax_dcdc    = config::DcdcTempStubValue;
+    std::uint8_t buf[6] = {0};
+    ifs08::encode_ACU_tmax_module_b(in, buf);
+    return detail::to_array(buf);
 }
 
 }  // namespace ams::acu_tx
