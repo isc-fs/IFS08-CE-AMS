@@ -62,13 +62,22 @@ std::int32_t CurrentService::adc_to_mA_dcdc(std::uint16_t raw) noexcept {
         (delta_uV * 10) / config::DcdcCurrentMvPerAmpe1);
 }
 
-void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept {
+bool CurrentService::leg_voltage_plausible(std::uint16_t raw) noexcept {
+    // Single-ended OUT_P voltage in mV = raw * Vref / FS.
+    const std::int32_t v_mV = static_cast<std::int32_t>(
+        (static_cast<std::int64_t>(raw) * config::AdcVrefMv) / config::AdcMaxCount);
+    return v_mV >= config::CurrentLegPlausMinMv &&
+           v_mV <= config::CurrentLegPlausMaxMv;
+}
+
+void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
+                                     bool sensor_fault) noexcept {
     const std::int32_t mA = adc_to_mA(raw);
 
 
     state_.raw_mA           = mA;
     state_.last_update_tick = now_tick;
-    state_.sensor_fault     = false;  // we got a sample; trust it
+    state_.sensor_fault     = sensor_fault;  // debounced disconnect verdict
 
     // IIR LPF: filtered <- filtered - (filtered >> N) + (raw >> N)
     // First sample seeds the filter so we don't ramp from zero.

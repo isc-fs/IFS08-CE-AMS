@@ -54,6 +54,8 @@ void test_current_adc_symmetric_around_zero(void);
 void test_current_adc_over_limit_is_observable(void);
 void test_current_adc_full_scale_rails(void);
 void test_current_dcdc_zero_and_discharge(void);
+void test_current_leg_voltage_window(void);
+void test_current_update_sets_sensor_fault(void);
 void test_current_is_dcdc_fresh_lifecycle(void);
 
 // test_vehicle_service.cpp
@@ -272,6 +274,8 @@ int main(void) {
     RUN_TEST(test_current_adc_over_limit_is_observable);
     RUN_TEST(test_current_adc_full_scale_rails);
     RUN_TEST(test_current_dcdc_zero_and_discharge);
+    RUN_TEST(test_current_leg_voltage_window);
+    RUN_TEST(test_current_update_sets_sensor_fault);
     RUN_TEST(test_current_is_dcdc_fresh_lifecycle);
 
     RUN_TEST(test_decode_dc_bus_little_endian);

@@ -41,7 +41,11 @@ public:
     // updates the filter, refreshes the timestamp. Mirrors for the
     // DCDC channel are independent (separate filter state, separate
     // freshness tick).
-    void update_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept;
+    // `sensor_fault` is the debounced disconnect verdict from the task
+    // (OUT_P single-ended out of its plausible window); it sets the
+    // CurrentState.sensor_fault flag the safety predicate reads.
+    void update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
+                         bool sensor_fault = false) noexcept;
     void update_dcdc_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept;
 
     // Atomic read of the full state.
@@ -68,6 +72,14 @@ public:
     // constants (zero at DcdcCurrentZeroMv, sensitivity
     // DcdcCurrentMvPerAmpe1). Informational only.
     static std::int32_t adc_to_mA_dcdc(std::uint16_t raw) noexcept;
+
+    // leg_voltage_plausible: true iff a SINGLE-ENDED reading of the
+    // OUT_P leg (PF7 / ADC3_INP3) sits inside [CurrentLegPlausMinMv,
+    // CurrentLegPlausMaxMv]. A connected SSA-2 holds OUT_P near the
+    // common-mode +/- the half-swing; a disconnect (with the internal
+    // pull-down) collapses it toward 0 V -> implausible -> the caller
+    // debounces this into CurrentState.sensor_fault.
+    static bool leg_voltage_plausible(std::uint16_t raw) noexcept;
 
 private:
     CurrentService() = default;

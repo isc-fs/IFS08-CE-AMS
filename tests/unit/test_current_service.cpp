@@ -134,6 +134,42 @@ extern "C" void test_current_dcdc_zero_and_discharge(void) {
 }
 
 // ---------------------------------------------------------------------------
+// leg_voltage_plausible: a connected OUT_P leg sits near the 1.44 V
+// common-mode (plus its half-swing); a disconnect (with the internal
+// pull-down) reads ~0 V -> implausible. Check the window edges.
+// ---------------------------------------------------------------------------
+extern "C" void test_current_leg_voltage_window(void) {
+    auto raw_for_mv = [](std::int32_t mv) {
+        return static_cast<std::uint16_t>(
+            (mv * static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
+            ams::config::AdcVrefMv);
+    };
+    // Connected: OUT_P at the common-mode (~1.44 V) and across the swing.
+    TEST_ASSERT_TRUE(ams::CurrentService::leg_voltage_plausible(raw_for_mv(1440)));
+    TEST_ASSERT_TRUE(ams::CurrentService::leg_voltage_plausible(raw_for_mv(940)));   // -200 A
+    TEST_ASSERT_TRUE(ams::CurrentService::leg_voltage_plausible(raw_for_mv(1940)));  // +200 A
+    // Disconnected: pulled to ~0 V -> below CurrentLegPlausMinMv.
+    TEST_ASSERT_FALSE(ams::CurrentService::leg_voltage_plausible(raw_for_mv(0)));
+    TEST_ASSERT_FALSE(ams::CurrentService::leg_voltage_plausible(
+        raw_for_mv(ams::config::CurrentLegPlausMinMv - 50)));
+    // Stuck at the upper rail -> above CurrentLegPlausMaxMv.
+    TEST_ASSERT_FALSE(ams::CurrentService::leg_voltage_plausible(
+        raw_for_mv(ams::config::CurrentLegPlausMaxMv + 50)));
+}
+
+// ---------------------------------------------------------------------------
+// update_from_adc propagates the debounced sensor_fault verdict into the
+// snapshot (the flag the CurrentSensorFault safety predicate reads).
+// ---------------------------------------------------------------------------
+extern "C" void test_current_update_sets_sensor_fault(void) {
+    auto& cs = ams::CurrentService::instance();
+    cs.update_from_adc(2050, 5000, /*sensor_fault=*/true);
+    TEST_ASSERT_TRUE(cs.snapshot().sensor_fault);
+    cs.update_from_adc(2050, 5050, /*sensor_fault=*/false);
+    TEST_ASSERT_FALSE(cs.snapshot().sensor_fault);
+}
+
+// ---------------------------------------------------------------------------
 // is_dcdc_fresh: false before any DCDC sample, true after a recent one,
 // false again after DcdcIStaleMs elapses. (Pack channel staleness is
 // covered indirectly via the safety-predicate tests; DCDC is purely

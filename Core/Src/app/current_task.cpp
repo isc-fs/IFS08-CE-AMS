@@ -8,11 +8,13 @@
 // 50 ms period. Each cycle:
 //   1. Reconfigure ADC3 regular channel for INP3 differential (pack),
 //      start, poll, get
-//   2. Feed into CurrentService::update_from_adc
-//   3. Reconfigure ADC3 regular channel for INP11 single-ended (DCDC),
+//   2. Disconnect check: re-read INP3 SINGLE-ENDED (OUT_P leg) and test
+//      it sits in the plausible window; debounce N cycles -> sensor_fault
+//   3. Feed both into CurrentService::update_from_adc
+//   4. Reconfigure ADC3 regular channel for INP11 single-ended (DCDC),
 //      start, poll, get
-//   4. Feed into CurrentService::update_dcdc_from_adc
-//   5. On HAL error at any step: skip that channel's update so the
+//   5. Feed into CurrentService::update_dcdc_from_adc
+//   6. On HAL error at any step: skip that channel's update so the
 //      corresponding last_*_update_tick does not advance -> SafetyTask
 //      trips on staleness for the pack channel (IStaleMs = 200 ms) and
 //      forces ERROR. DCDC staleness is informational only (no FSM impact).
@@ -47,6 +49,13 @@ namespace {
 // so the bench can localise which channel is the problem.
 volatile std::uint32_t g_current_adc_fail      = 0;
 volatile std::uint32_t g_current_adc_dcdc_fail = 0;
+
+// Disconnect debounce: consecutive cycles the OUT_P single-ended leg
+// read landed outside the plausible window. Only after
+// CurrentDisconnectConfirm in a row do we assert sensor_fault, so a
+// single glitch during the diff->SE channel reconfigure can't latch a
+// sticky Error. Exposed for telemetry/bench visibility.
+volatile std::uint8_t  g_current_disconnect_streak = 0;
 
 // One-shot single-channel read on ADC3. Reconfigures rank 1 to the
 // requested channel and single/differential mode, starts, polls, gets
@@ -99,8 +108,29 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
         // --- Pack current (PF7/PF8 / ADC3_INP3+INN3, differential) ---
         std::uint16_t raw_pack = 0;
         if (read_adc3_channel(ADC_CHANNEL_3, ADC_DIFFERENTIAL_ENDED, raw_pack)) {
+            // Disconnect check: read OUT_P (PF7 / CH3) SINGLE-ENDED and
+            // test it sits in the plausible window. With the internal
+            // pull-down an open connector collapses OUT_P toward 0 V.
+            // A failed SE read (or an in-window read) clears the streak
+            // so we never fault on a missing sample -- only a sustained
+            // out-of-window leg latches sensor_fault. INN3/PF8 can't be
+            // sampled independently in a differential pair, so we watch
+            // the OUT_P leg; an OUT_N-only break is caught instead by
+            // the over-limit predicate (skewed differential).
+            std::uint16_t raw_legp = 0;
+            const bool se_ok = read_adc3_channel(ADC_CHANNEL_3, ADC_SINGLE_ENDED, raw_legp);
+            if (se_ok && !ams::CurrentService::leg_voltage_plausible(raw_legp)) {
+                if (g_current_disconnect_streak < ams::config::CurrentDisconnectConfirm) {
+                    ++g_current_disconnect_streak;
+                }
+            } else {
+                g_current_disconnect_streak = 0;
+            }
+            const bool sensor_fault =
+                g_current_disconnect_streak >= ams::config::CurrentDisconnectConfirm;
+
             ams::CurrentService::instance().update_from_adc(
-                raw_pack, osKernelGetTickCount());
+                raw_pack, osKernelGetTickCount(), sensor_fault);
         } else {
             ++g_current_adc_fail;
         }
