@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: proprietary
+#
+# dbcinator bot: regenerates docs/dbc/ams.dbc from the code-first DSL
+# descriptors on every PR. If the regenerated DBC differs from the
+# in-tree copy, the bot commits + pushes the update onto the PR branch
+# as `dbcinator[bot]` and posts a structured wire-contract diff
+# comment summarising the change.
+#
+# Source of truth: Core/Inc/can/messages/*.def. The in-tree DBC is a
+# derived artefact and must not be hand-edited -- the bot will
+# overwrite manual changes.
+#
+# The reusable composite action lives in isc-fs/IFS08-DBCinator. See:
+#   - isc-fs/IFS08-DBCinator (actions/dbc-bot/action.yml)
+#   - isc-fs/IFS08-DBCinator (docs/CONSUMING_REPOS.md)
+#   - isc-fs/IFS08-CE-AMS#365 (this repo's adoption tracking issue)
+
+name: dbc-bot
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: write          # bot pushes the regenerated DBC onto the PR branch
+  pull-requests: write     # bot posts the wire-contract diff comment
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: isc-fs/IFS08-DBCinator/actions/dbc-bot@main
+        with:
+          app-id:       ${{ secrets.DBCINATOR_APP_ID }}
+          private-key:  ${{ secrets.DBCINATOR_PRIVATE_KEY }}
+          dbc-path:     docs/dbc/ams.dbc
+          # Defaults match this repo's layout (cmake-source-dir=tests/unit,
+          # dump-target=dbc_dump, dump-binary-path=dbc_dump). No overrides
+          # needed.
