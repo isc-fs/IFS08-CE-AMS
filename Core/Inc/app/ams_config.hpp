@@ -322,6 +322,25 @@ inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1650; // ACS758 offset = 
 inline constexpr std::int32_t  DcdcCurrentMvPerAmpe1 = 264;  // COMMISSION (26.4 mV/A x10 ratiometric @ 3.3 V)
 inline constexpr std::uint8_t  CurrentFilterShift = 4;     // tau ~ 16 samples
 
+// Current-sensor disconnect detection. PF7/PF8 carry a weak internal
+// pull-down (GPIO PUPDR, set in stm32h7xx_hal_msp.c) -- the SSA-2's
+// low-impedance op-amp output overrides it when connected, but an open
+// connector lets the legs collapse toward 0 V. We read OUT_P (PF7) in
+// SINGLE-ENDED mode each cycle and check it sits in a plausible window:
+// a connected sensor holds OUT_P at the ~1.44 V common-mode plus the
+// per-leg half-swing (+/- 2.5 mV/A), i.e. ~0.94..1.94 V across +/-200 A;
+// a disconnect drags it to ~0 V, out of the window -> sensor_fault ->
+// the CurrentSensorFault predicate latches Error. (An OUT_N-only break
+// instead skews the differential huge and trips CurrentOverLimit, so
+// between the two predicates every disconnect mode is covered.)
+//
+// COMMISSION: widen/trim the window to the real OUT_P swing + pull-down
+// droop measured on the carrier; confirm the disconnect actually trips
+// on the bench (the pull-down behaviour is board/VREF specific).
+inline constexpr std::int32_t  CurrentLegPlausMinMv = 700;   // COMMISSION (below -> disconnected)
+inline constexpr std::int32_t  CurrentLegPlausMaxMv = 2300;  // COMMISSION (above -> open/rail)
+inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-of-window reads (~150 ms @ 50 ms)
+
 // IIR low-pass filter coefficient is encoded as a shift so the filter
 // is `filtered = filtered - (filtered >> shift) + (raw >> shift)`.
 

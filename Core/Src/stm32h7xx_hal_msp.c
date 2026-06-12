@@ -122,7 +122,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
     */
     GPIO_InitStruct.Pin = S_CURRENT_P_Pin|S_CURRENT_N_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    GPIO_InitStruct.Pull = GPIO_PULLDOWN;
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
     GPIO_InitStruct.Pin = S_CURRENT_DCDC_Pin;

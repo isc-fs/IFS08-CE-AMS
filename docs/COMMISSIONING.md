@@ -135,6 +135,36 @@ single-ended reading (`v_mV = raw × 3300 / 4095`). **Confirm the sign on
 the bench** — the ACS758's IP+→IP− conductor direction sets whether
 discharge reads positive or negative.
 
+### 2.5 Disconnect detection (pack channel)
+
+A disconnected pack sensor is *not* caught by staleness (the ADC keeps
+converting) or by the differential reading (a floating diff pair reads
+≈ 0, i.e. looks like 0 A). To detect it, **PF7/PF8 carry a weak internal
+pull-down** (GPIO PUPDR, set in `stm32h7xx_hal_msp.c` — no board parts).
+The SSA-2's low-impedance op-amp output overrides the pull when
+connected; an open connector lets the legs collapse toward 0 V. Each
+50 ms cycle the firmware reads **OUT_P (PF7) single-ended** and checks it
+sits in `[CurrentLegPlausMinMv, CurrentLegPlausMaxMv]`; after
+`CurrentDisconnectConfirm` consecutive out-of-window reads it asserts
+`sensor_fault` → the `CurrentSensorFault` predicate (reason **8**) latches
+Error, opens the AIRs, drops `AMS_OK`. (An OUT_N-only break instead skews
+the differential and trips `CurrentOverLimit` — between the two, every
+disconnect mode is covered.)
+
+Nominal window `700..2300 mV` brackets the connected OUT_P swing
+(≈ 0.94–1.94 V across ±200 A) with margin; disconnect reads ≈ 0 V.
+**COMMISSION:** on the carrier, measure the connected OUT_P range and the
+pull-down droop, set the window to enclose the former and exclude ~0 V,
+and **confirm on the bench that physically unplugging the sensor latches
+reason 8** (the PUPDR-in-analog behaviour is board/VREF specific). Tune
+`CurrentDisconnectConfirm` if the channel-reconfigure glitch ever shows.
+
+| Const | Default | Meaning |
+|---|---|---|
+| `CurrentLegPlausMinMv` | 700 | below → disconnected (pulled to 0 V) |
+| `CurrentLegPlausMaxMv` | 2300 | above → open / stuck-rail |
+| `CurrentDisconnectConfirm` | 3 | consecutive out-of-window reads (~150 ms) |
+
 ---
 
 ## 3. Precharge target and timing
