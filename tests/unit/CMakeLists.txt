@@ -44,6 +44,7 @@ add_executable(ams_unit_tests
     test_bms_service.cpp
     test_bootloader.cpp
     test_current_service.cpp
+    test_dsl_parity.cpp
     test_ltc6811_decode.cpp
     test_safety_predicates.cpp
     test_sil_scenarios.cpp

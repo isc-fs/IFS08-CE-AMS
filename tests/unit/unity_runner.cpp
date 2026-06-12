@@ -113,6 +113,16 @@ void test_ams_ok_low_during_grace(void);
 void test_ams_ok_high_when_healthy_post_grace(void);
 void test_ams_ok_low_when_latched(void);
 
+// test_dsl_parity.cpp
+void test_dsl_status_matches_handrolled(void);
+void test_dsl_status_roundtrip(void);
+void test_dsl_pack_matches_handrolled_discharge(void);
+void test_dsl_pack_matches_handrolled_charge(void);
+void test_dsl_pack_roundtrip_signed(void);
+void test_dsl_temps_matches_handrolled(void);
+void test_dsl_temps_roundtrip_negative(void);
+void test_dsl_registry_well_formed(void);
+
 // test_state_machine.cpp
 void test_fsm_start_waits_without_tsms_or_dash_chg(void);
 void test_fsm_start_waits_with_tsms_only(void);
@@ -329,6 +339,15 @@ int main(void) {
     RUN_TEST(test_ams_ok_low_during_grace);
     RUN_TEST(test_ams_ok_high_when_healthy_post_grace);
     RUN_TEST(test_ams_ok_low_when_latched);
+
+    RUN_TEST(test_dsl_status_matches_handrolled);
+    RUN_TEST(test_dsl_status_roundtrip);
+    RUN_TEST(test_dsl_pack_matches_handrolled_discharge);
+    RUN_TEST(test_dsl_pack_matches_handrolled_charge);
+    RUN_TEST(test_dsl_pack_roundtrip_signed);
+    RUN_TEST(test_dsl_temps_matches_handrolled);
+    RUN_TEST(test_dsl_temps_roundtrip_negative);
+    RUN_TEST(test_dsl_registry_well_formed);
 
     RUN_TEST(test_fsm_start_waits_without_tsms_or_dash_chg);
     RUN_TEST(test_fsm_start_waits_with_tsms_only);

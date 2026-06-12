@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x4A2  AMS_temps -- temps + DC-bus + cockpit + heartbeat.
+ * Mirrors ams::telemetry::encode_temps() in
+ * Core/Inc/app/telemetry_encoders.hpp. The int8 temp clipping and the
+ * cockpit-byte assembly stay at the CALL SITE -- the .def owns the byte
+ * layout, the struct carries the already-wire-typed values.
+ *
+ *   byte 0      min_tempC          signed int8 (clipped)
+ *   byte 1      max_tempC          signed int8
+ *   byte 2      avg_tempC          signed int8
+ *   bytes 3..4  dc_bus_V           little-endian uint16 (volts)
+ *   byte 5      tsms_dash_chg_byte cockpit-input snapshot (#246)
+ *   byte 6      tx_fail_count_lo   low byte of g_telemetry_tx_fail
+ *   byte 7      heartbeat          wraparound counter
+ *
+ * Field macro args: (name, ctype, byte_idx, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(AMS_temps, 0x4A2, 8, "AMS", 500)
+    FIELD_LE_S (min_tempC,          int8_t,   0,  8, 1, 0, "degC")
+    FIELD_LE_S (max_tempC,          int8_t,   1,  8, 1, 0, "degC")
+    FIELD_LE_S (avg_tempC,          int8_t,   2,  8, 1, 0, "degC")
+    FIELD_LE   (dc_bus_V,           uint16_t, 3, 16, 1, 0, "V")
+    FIELD_LE   (tsms_dash_chg_byte, uint8_t,  5,  8, 1, 0, "bitfield")
+    FIELD_LE   (tx_fail_count_lo,   uint8_t,  6,  8, 1, 0, "")
+    FIELD_LE   (heartbeat,          uint8_t,  7,  8, 1, 0, "")
+CAN_MSG_END(AMS_temps)
