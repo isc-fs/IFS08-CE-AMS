@@ -8,6 +8,10 @@
  *
  * Phase 2a scope: the three AMS telemetry frames (0x4A0/4A1/4A2).
  * Phase 2b adds the ECU TX matrix (0x020/0x12C/0x131..0x137).
+ * Phase 2c adds the FIXED-layout pit-diag frames (0x6C0..0x6C8). The
+ * parameterised cell/temp grids (0x680../0x6A0..) are NOT here yet --
+ * they are windowed array views selected at runtime and need a
+ * multiplexed-message representation (tracked in #365).
  */
 
 #include "ams_status.def"
@@ -23,3 +27,13 @@
 #include "acu_currents.def"
 #include "acu_tmax_module_a.def"
 #include "acu_tmax_module_b.def"
+
+#include "pit_fsm_status.def"
+#include "pit_timing.def"
+#include "pit_balance_mask_a.def"
+#include "pit_balance_mask_b.def"
+#include "pit_boot_diag.def"
+#include "pit_post_mortem.def"
+#include "pit_fw_id.def"
+#include "pit_pec_per_ic_a.def"
+#include "pit_pec_per_ic_b.def"

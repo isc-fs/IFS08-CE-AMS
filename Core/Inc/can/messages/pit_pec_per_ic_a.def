@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C7 PIT_pec_per_ic_a -- per-IC PEC counts ICs 0..7 (saturating u8). */
+CAN_MSG(PIT_pec_per_ic_a, 0x6C7, 8, "AMS", 1000)
+    FIELD_LE (pec_ic0, uint8_t, 0, 8, 1, 0, "count")
+    FIELD_LE (pec_ic1, uint8_t, 1, 8, 1, 0, "count")
+    FIELD_LE (pec_ic2, uint8_t, 2, 8, 1, 0, "count")
+    FIELD_LE (pec_ic3, uint8_t, 3, 8, 1, 0, "count")
+    FIELD_LE (pec_ic4, uint8_t, 4, 8, 1, 0, "count")
+    FIELD_LE (pec_ic5, uint8_t, 5, 8, 1, 0, "count")
+    FIELD_LE (pec_ic6, uint8_t, 6, 8, 1, 0, "count")
+    FIELD_LE (pec_ic7, uint8_t, 7, 8, 1, 0, "count")
+CAN_MSG_END(PIT_pec_per_ic_a)

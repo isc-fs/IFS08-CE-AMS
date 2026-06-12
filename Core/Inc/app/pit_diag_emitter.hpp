@@ -14,12 +14,29 @@
 #include "bms_service.hpp"
 #include "state_machine.hpp"
 
+#include "can/can_codecs.hpp"   // code-first DSL encoders (single layout source)
+
 #include <array>
 #include <cstdint>
 
 namespace ams::pit_diag {
 
 using Frame = std::array<std::uint8_t, 8>;
+
+// The fixed-layout frames (0x6C0..0x6C8) are now thin adapters over the
+// generated ifs08::encode_PIT_* -- the byte layout lives once in
+// Core/Inc/can/messages/pit_*.def. The parameterised cell/temp grid
+// frames (encode_cell_frame / encode_temp_frame) stay hand-rolled until
+// the DSL grows a multiplexed-array representation (#365). Value
+// transforms (saturation, bit assembly) stay here at the adapter; the
+// hardcoded-byte tests in test_pit_diag_emitter.cpp are the parity gate.
+namespace detail {
+[[nodiscard]] inline Frame to_frame(const std::uint8_t (&b)[8]) noexcept {
+    Frame f{};
+    for (std::uint8_t i = 0; i < 8; ++i) f[i] = b[i];
+    return f;
+}
+}  // namespace detail
 
 // ---------------------------------------------------------------------------
 // Cell-voltage frame. Each frame carries 4 cells (BE u16 mV) of the
@@ -122,20 +139,20 @@ using Frame = std::array<std::uint8_t, 8>;
                                              std::uint8_t  fault_reason = 0u,
                                              std::uint8_t  fault_detail = 0u,
                                              bool          balance_override = false) noexcept {
-    Frame f = {};
-    f[0] = fsm_state;
-    f[1] = static_cast<std::uint8_t>(mode_locked);
-    f[2] = static_cast<std::uint8_t>((balance_override ? 0x04u : 0u) |
-                                     (tsms ? 0x02u : 0u) | (dash_chg ? 0x01u : 0u));
-    f[3] = ams_ok_gpio ? 1u : 0u;
-    const std::uint16_t pec16 = (pec_err_total > 0xFFFFu)
-                                    ? 0xFFFFu
-                                    : static_cast<std::uint16_t>(pec_err_total);
-    f[4] = static_cast<std::uint8_t>((pec16 >> 8) & 0xFFu);
-    f[5] = static_cast<std::uint8_t>(pec16 & 0xFFu);
-    f[6] = fault_reason;
-    f[7] = fault_detail;
-    return f;
+    ifs08::PIT_fsm_status_t s{};
+    s.fsm_state        = fsm_state;
+    s.mode_locked      = static_cast<std::uint8_t>(mode_locked);
+    s.dash_chg         = dash_chg ? 1u : 0u;
+    s.tsms             = tsms ? 1u : 0u;
+    s.balance_override = balance_override ? 1u : 0u;
+    s.ams_ok_gpio      = ams_ok_gpio ? 1u : 0u;
+    s.pec_err_total    = (pec_err_total > 0xFFFFu)
+                             ? 0xFFFFu : static_cast<std::uint16_t>(pec_err_total);
+    s.fault_reason     = fault_reason;
+    s.fault_detail     = fault_detail;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_fsm_status(s, b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -152,22 +169,17 @@ using Frame = std::array<std::uint8_t, 8>;
 [[nodiscard]] inline Frame encode_timing(std::uint32_t bms_volt_poll_ms,
                                          std::uint32_t bms_volt_poll_max_ms,
                                          std::uint32_t temp_sweep_last_mask) noexcept {
-    Frame f = {};
     const auto clip16 = [](std::uint32_t v) -> std::uint16_t {
         return (v > 0xFFFFu) ? static_cast<std::uint16_t>(0xFFFFu)
                              : static_cast<std::uint16_t>(v);
     };
-    const std::uint16_t poll = clip16(bms_volt_poll_ms);
-    const std::uint16_t max  = clip16(bms_volt_poll_max_ms);
-    f[0] = static_cast<std::uint8_t>((poll >> 8) & 0xFFu);
-    f[1] = static_cast<std::uint8_t>(poll & 0xFFu);
-    f[2] = static_cast<std::uint8_t>((max  >> 8) & 0xFFu);
-    f[3] = static_cast<std::uint8_t>(max  & 0xFFu);
-    f[4] = static_cast<std::uint8_t>(temp_sweep_last_mask        & 0xFFu);
-    f[5] = static_cast<std::uint8_t>((temp_sweep_last_mask >>  8) & 0xFFu);
-    f[6] = static_cast<std::uint8_t>((temp_sweep_last_mask >> 16) & 0xFFu);
-    f[7] = static_cast<std::uint8_t>((temp_sweep_last_mask >> 24) & 0xFFu);
-    return f;
+    ifs08::PIT_timing_t s{};
+    s.bms_volt_poll_ms     = clip16(bms_volt_poll_ms);
+    s.bms_volt_poll_max_ms = clip16(bms_volt_poll_max_ms);
+    s.temp_sweep_last_mask = temp_sweep_last_mask;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_timing(s, b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,37 +223,37 @@ using Frame = std::array<std::uint8_t, 8>;
 // (module = b / 19, cell = b % 19).
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_balance_mask_a(const volatile std::uint32_t (&dcc_bits)[config::BmsModuleCount]) noexcept {
-    Frame f = {};
+    std::uint64_t mask = 0;
     for (std::uint8_t cell_idx = 0; cell_idx < 64 && cell_idx < 5 * 19; ++cell_idx) {
         const std::uint8_t m = cell_idx / config::CellsPerModule;
         const std::uint8_t c = cell_idx % config::CellsPerModule;
-        if (dcc_bits[m] & (1u << c)) {
-            f[cell_idx / 8u] = static_cast<std::uint8_t>(f[cell_idx / 8u] | (1u << (cell_idx % 8u)));
-        }
+        if (dcc_bits[m] & (1u << c)) mask |= (std::uint64_t{1} << cell_idx);
     }
-    return f;
+    ifs08::PIT_balance_mask_a_t s{};
+    s.dcc_mask_lo = mask;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_balance_mask_a(s, b);
+    return detail::to_frame(b);
 }
 
 [[nodiscard]] inline Frame encode_balance_mask_b(const volatile std::uint32_t (&dcc_bits)[config::BmsModuleCount],
                                                  std::uint32_t cycles_total,
                                                  std::uint32_t cycles_active) noexcept {
-    Frame f = {};
-    // Cells 64..94 -> bytes 0..3 (low 31 bits of a 32-bit field).
+    // Cells 64..94 -> bits 0..30 of a 32-bit LE field (bytes 0..3).
+    std::uint32_t mask = 0;
     for (std::uint8_t cell_idx = 64; cell_idx < 5 * 19; ++cell_idx) {
         const std::uint8_t m = cell_idx / config::CellsPerModule;
         const std::uint8_t c = cell_idx % config::CellsPerModule;
         const std::uint8_t bit_pos = cell_idx - 64u;   // 0..30
-        if (dcc_bits[m] & (1u << c)) {
-            f[bit_pos / 8u] = static_cast<std::uint8_t>(f[bit_pos / 8u] | (1u << (bit_pos % 8u)));
-        }
+        if (dcc_bits[m] & (1u << c)) mask |= (std::uint32_t{1} << bit_pos);
     }
-    const std::uint16_t ct = (cycles_total  > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(cycles_total);
-    const std::uint16_t ca = (cycles_active > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(cycles_active);
-    f[4] = static_cast<std::uint8_t>(ct & 0xFFu);
-    f[5] = static_cast<std::uint8_t>((ct >> 8) & 0xFFu);
-    f[6] = static_cast<std::uint8_t>(ca & 0xFFu);
-    f[7] = static_cast<std::uint8_t>((ca >> 8) & 0xFFu);
-    return f;
+    ifs08::PIT_balance_mask_b_t s{};
+    s.dcc_mask_hi   = mask;
+    s.cycles_total  = (cycles_total  > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(cycles_total);
+    s.cycles_active = (cycles_active > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(cycles_active);
+    std::uint8_t b[8];
+    ifs08::encode_PIT_balance_mask_b(s, b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -260,16 +272,13 @@ using Frame = std::array<std::uint8_t, 8>;
 [[nodiscard]] inline Frame encode_boot_diag(std::uint32_t jump_reason,
                                             std::uint8_t  app_init_progress,
                                             std::uint32_t fdcan1_start_result) noexcept {
-    Frame f = {};
-    f[0] = static_cast<std::uint8_t>(jump_reason         & 0xFFu);
-    f[1] = static_cast<std::uint8_t>((jump_reason >>  8) & 0xFFu);
-    f[2] = static_cast<std::uint8_t>((jump_reason >> 16) & 0xFFu);
-    f[3] = static_cast<std::uint8_t>((jump_reason >> 24) & 0xFFu);
-    f[4] = app_init_progress;
-    f[5] = static_cast<std::uint8_t>(fdcan1_start_result        & 0xFFu);
-    f[6] = static_cast<std::uint8_t>((fdcan1_start_result >>  8) & 0xFFu);
-    f[7] = static_cast<std::uint8_t>((fdcan1_start_result >> 16) & 0xFFu);
-    return f;
+    ifs08::PIT_boot_diag_t s{};
+    s.jump_reason         = jump_reason;
+    s.app_init_progress   = app_init_progress;
+    s.fdcan1_start_result = fdcan1_start_result;  // low 24 bits land on the wire
+    std::uint8_t b[8];
+    ifs08::encode_PIT_boot_diag(s, b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,21 +300,16 @@ using Frame = std::array<std::uint8_t, 8>;
 [[nodiscard]] inline Frame encode_post_mortem(std::uint32_t stack_overflow_task_addr,
                                               std::uint32_t stack_overflow_watermark,
                                               std::uint32_t malloc_failed_count) noexcept {
-    Frame f = {};
-    f[0] = (stack_overflow_task_addr != 0u) ? 1u : 0u;
-    f[1] = (stack_overflow_watermark > 0xFFu)
-               ? 0xFFu
-               : static_cast<std::uint8_t>(stack_overflow_watermark);
-    f[2] = static_cast<std::uint8_t>(stack_overflow_task_addr        & 0xFFu);
-    f[3] = static_cast<std::uint8_t>((stack_overflow_task_addr >>  8) & 0xFFu);
-    f[4] = static_cast<std::uint8_t>((stack_overflow_task_addr >> 16) & 0xFFu);
-    f[5] = static_cast<std::uint8_t>((stack_overflow_task_addr >> 24) & 0xFFu);
-    const std::uint16_t mfc = (malloc_failed_count > 0xFFFFu)
-                                  ? 0xFFFFu
-                                  : static_cast<std::uint16_t>(malloc_failed_count);
-    f[6] = static_cast<std::uint8_t>(mfc & 0xFFu);
-    f[7] = static_cast<std::uint8_t>((mfc >> 8) & 0xFFu);
-    return f;
+    ifs08::PIT_post_mortem_t s{};
+    s.stack_overflow_seen      = (stack_overflow_task_addr != 0u) ? 1u : 0u;
+    s.stack_overflow_watermark = (stack_overflow_watermark > 0xFFu)
+                                     ? 0xFFu : static_cast<std::uint8_t>(stack_overflow_watermark);
+    s.stack_overflow_task_addr = stack_overflow_task_addr;
+    s.malloc_failed_count      = (malloc_failed_count > 0xFFFFu)
+                                     ? 0xFFFFu : static_cast<std::uint16_t>(malloc_failed_count);
+    std::uint8_t b[8];
+    ifs08::encode_PIT_post_mortem(s, b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -323,16 +327,18 @@ using Frame = std::array<std::uint8_t, 8>;
                                         std::uint8_t        patch,
                                         const std::uint8_t* git_hash_4,
                                         std::uint8_t        bl_node_id) noexcept {
-    Frame f = {};
-    f[0] = major;
-    f[1] = minor;
-    f[2] = patch;
-    f[3] = git_hash_4[0];
-    f[4] = git_hash_4[1];
-    f[5] = git_hash_4[2];
-    f[6] = git_hash_4[3];
-    f[7] = bl_node_id;
-    return f;
+    ifs08::PIT_fw_id_t s{};
+    s.fw_version_major = major;
+    s.fw_version_minor = minor;
+    s.fw_version_patch = patch;
+    s.git_hash_0 = git_hash_4[0];
+    s.git_hash_1 = git_hash_4[1];
+    s.git_hash_2 = git_hash_4[2];
+    s.git_hash_3 = git_hash_4[3];
+    s.bl_node_id = bl_node_id;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_fw_id(s, b);
+    return detail::to_frame(b);
 }
 
 // ---------------------------------------------------------------------------
@@ -359,22 +365,24 @@ using Frame = std::array<std::uint8_t, 8>;
 
 [[nodiscard]] inline Frame encode_pec_err_count_a(
     const volatile std::uint32_t (&counts)[config::LtcChainLength]) noexcept {
-    Frame f = {};
-    constexpr std::uint8_t frame_a_lim =
-        (config::LtcChainLength < 8u) ? config::LtcChainLength : 8u;
-    for (std::uint8_t i = 0; i < frame_a_lim; ++i) {
-        f[i] = sat_u8(counts[i]);
-    }
-    return f;
+    ifs08::PIT_pec_per_ic_a_t s{};
+    s.pec_ic0 = sat_u8(counts[0]); s.pec_ic1 = sat_u8(counts[1]);
+    s.pec_ic2 = sat_u8(counts[2]); s.pec_ic3 = sat_u8(counts[3]);
+    s.pec_ic4 = sat_u8(counts[4]); s.pec_ic5 = sat_u8(counts[5]);
+    s.pec_ic6 = sat_u8(counts[6]); s.pec_ic7 = sat_u8(counts[7]);
+    std::uint8_t b[8];
+    ifs08::encode_PIT_pec_per_ic_a(s, b);
+    return detail::to_frame(b);
 }
 
 [[nodiscard]] inline Frame encode_pec_err_count_b(
     const volatile std::uint32_t (&counts)[config::LtcChainLength]) noexcept {
-    Frame f = {};
-    for (std::uint8_t i = 8; i < config::LtcChainLength; ++i) {
-        f[i - 8u] = sat_u8(counts[i]);
-    }
-    return f;
+    ifs08::PIT_pec_per_ic_b_t s{};
+    s.pec_ic8 = sat_u8(counts[8]);
+    s.pec_ic9 = sat_u8(counts[9]);
+    std::uint8_t b[8];
+    ifs08::encode_PIT_pec_per_ic_b(s, b);
+    return detail::to_frame(b);
 }
 
 }  // namespace ams::pit_diag
