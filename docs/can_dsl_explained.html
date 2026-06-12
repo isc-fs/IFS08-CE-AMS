@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMS — Code-first CAN DSL (Phase 2a) explained</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel2:#1c2230; --ink:#e6edf3; --muted:#9da7b3;
+    --accent:#4fd1c5; --accent2:#f6ad55; --bad:#f87171; --good:#68d391; --line:#2b3340;
+    --code:#0b0e13;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:920px;margin:0 auto;padding:40px 22px 80px}
+  h1{font-size:30px;margin:0 0 6px;letter-spacing:-.5px}
+  h2{font-size:22px;margin:42px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+  h3{font-size:17px;margin:26px 0 8px;color:var(--accent)}
+  p{margin:10px 0}
+  .sub{color:var(--muted);margin:0 0 8px}
+  code,pre{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  code{background:var(--panel2);padding:1px 6px;border-radius:5px;font-size:.86em}
+  pre{background:var(--code);border:1px solid var(--line);border-radius:10px;
+      padding:14px 16px;overflow:auto;font-size:13px;line-height:1.5}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:680px){.grid{grid-template-columns:1fr}}
+  .tag{display:inline-block;font-size:12px;font-weight:600;padding:2px 9px;border-radius:999px;
+       background:rgba(79,209,197,.14);color:var(--accent);border:1px solid rgba(79,209,197,.3)}
+  .pill{display:inline-block;font-size:12px;padding:2px 8px;border-radius:6px;background:var(--panel2);color:var(--muted);margin-right:6px}
+  .bad{color:var(--bad)} .good{color:var(--good)} .accent{color:var(--accent2)}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:14px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:var(--ink);font-weight:600}
+  .flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0}
+  .box{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:13px}
+  .arrow{color:var(--accent);font-weight:700}
+  .def{border-left:3px solid var(--accent)}
+  .callout{background:rgba(246,173,85,.08);border:1px solid rgba(246,173,85,.3);border-radius:10px;padding:14px 16px;margin:16px 0}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0}
+  .small{font-size:13px;color:var(--muted)}
+  .ok::before{content:"\2713  ";color:var(--good);font-weight:700}
+  .x::before{content:"\2717  ";color:var(--bad);font-weight:700}
+  footer{margin-top:50px;color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-top:16px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <span class="tag">PR #362 · feat/can-dsl-phase2a</span>
+  <h1>Code-first CAN DSL</h1>
+  <p class="sub">What changed, why, and how it works — a guided tour of Phase 2a.</p>
+
+  <div class="panel">
+    <strong>The one-sentence version:</strong> every CAN message's byte layout used to be written down
+    in <em>three</em> independent places that could silently disagree; now it's written
+    <em>once</em> in a <code>.def</code> file, and the C++ encoder, decoder, and DBC all come out of it.
+  </div>
+
+  <!-- ============================================================ -->
+  <h2>1 · The problem we were living with</h2>
+  <p>
+    A CAN message like <code>0x4A0 AMS_status</code> needs its byte layout known in several spots:
+    the firmware <strong>encoder</strong> (struct → 8 bytes on the wire), a <strong>decoder</strong>,
+    and the <strong>DBC file</strong> (<code>docs/dbc/ams.dbc</code>) that the ECU &amp; dashboard read to
+    understand our frames. Each of those was hand-written separately.
+  </p>
+
+  <div class="callout">
+    <strong class="accent">The silent trap.</strong> The DBC is produced by <code>tools/gen_dbc.py</code> —
+    <strong>722 lines of Python that re-declare every layout by hand</strong>. Our CI check
+    <code>"DBC matches generator"</code> only verifies <span class="pill">Python&nbsp;↔&nbsp;committed&nbsp;DBC</span>.
+    <strong>Nothing</strong> ever checked that the Python matched the actual C++ encoders.
+    So if you edited a byte in the C++ encoder and forgot the Python, <span class="bad">CI stayed green
+    while the DBC quietly started lying about the firmware</span> — and this cycle alone, 0x135, 0x4A2 and
+    0x4A0 all got edited.
+  </div>
+
+  <div class="flow">
+    <div class="box">C++ encoder<br><span class="small">telemetry_encoders.hpp</span></div>
+    <div class="box">C++ decoder</div>
+    <div class="box">Python DBC<br><span class="small">gen_dbc.py</span></div>
+    <div class="arrow">→</div>
+    <div class="box" style="border-color:var(--bad)">3 copies of the same<br>layout, no guard between<br>the C++ and the DBC</div>
+  </div>
+
+  <!-- ============================================================ -->
+  <h2>2 · The idea — one declaration, four artifacts</h2>
+  <p>
+    Declare each message's layout <strong>once</strong>, in a tiny <code>.def</code> file. Here is the
+    <em>entire</em> declaration of 0x4A0:
+  </p>
+
+<pre class="def">CAN_MSG(AMS_status, 0x4A0, 8, "AMS", 500)
+    FIELD_LE (fsm_state,            uint8_t,  0,  8, 1, 0, "enum")
+    FIELD_LE (ams_ok,               uint8_t,  1,  8, 1, 0, "bool")
+    FIELD_LE (module_online_mask,   uint8_t,  2,  8, 1, 0, "bitmask")
+    FIELD_LE (reserved_b3,          uint8_t,  3,  8, 1, 0, "")
+    FIELD_BE (min_cell_mV,          uint16_t, 4, 16, 1, 0, "mV")
+    FIELD_BE (max_cell_mV,          uint16_t, 6, 16, 1, 0, "mV")
+CAN_MSG_END(AMS_status)</pre>
+
+  <p class="small">
+    Args: <code>(name, C-type, byte index, bit length, factor, offset, unit)</code>.
+    <code>FIELD_LE</code> = little-endian, <code>FIELD_BE</code> = big-endian (Motorola, the DBC sawtooth),
+    and the signed variants <code>FIELD_LE_S</code> / <code>FIELD_BE_S</code>.
+  </p>
+
+  <p>
+    That single block is read four times by <code>can_codecs.hpp</code>, each time with different macro
+    definitions (a classic <em>X-macro</em>), producing four things that <strong>can never drift apart</strong>:
+  </p>
+
+  <div class="flow">
+    <div class="box def"><code>ams_status.def</code></div>
+    <div class="arrow">→</div>
+    <div class="box">① typed <code>struct</code></div>
+    <div class="box">② <code>encode_*()</code></div>
+    <div class="box">③ <code>decode_*()</code></div>
+    <div class="box">④ DBC <code>FieldDesc[]</code></div>
+  </div>
+
+  <p>
+    Add a field, change a width, flip endianness → you edit <strong>one line</strong> and the struct, the
+    encoder, the decoder, <em>and</em> the DBC row all move together. There is no second source of truth left
+    to forget.
+  </p>
+
+  <h3>How the X-macro passes work</h3>
+  <p>The same <code>.def</code> is <code>#include</code>d under different meanings of <code>FIELD_LE</code>:</p>
+<pre>// pass 1 — make a struct member
+#define FIELD_LE(name,ctype,byte,len,f,o,u)  ctype name {};
+
+// pass 2 — make the encoder body
+#define FIELD_LE(name,ctype,byte,len,f,o,u) \
+    can_dsl::set_le(d, 8u*(byte), len, static_cast&lt;uint64_t&gt;(in.name) &amp; MASK(len));
+
+// pass 3 — make the decoder body        // pass 4 — make a DBC descriptor row
+#define FIELD_LE(...) out.name = get_le(...);   { #name, 8u*byte, len, /*LE*/false, ... }</pre>
+
+  <!-- ============================================================ -->
+  <h2>3 · What actually changed in the firmware</h2>
+  <p>The live telemetry encoders are now <strong>thin adapters</strong> over the generated code. Same function
+     signature, so the safety task's call site didn't change a character:</p>
+
+  <div class="grid">
+    <div class="panel">
+      <h3 style="margin-top:0;color:var(--bad)">Before — hand bit-twiddling</h3>
+<pre>Frame encode_status(state, ams_ok, bms){
+  Frame f={};
+  f[0]=state;
+  f[1]=ams_ok?1:0;
+  f[2]=bms.module_online_mask;
+  f[3]=0;
+  f[4]=bms.min_cell_mV&gt;&gt;8;   // BE hi
+  f[5]=bms.min_cell_mV&amp;0xFF; // BE lo
+  f[6]=bms.max_cell_mV&gt;&gt;8;
+  f[7]=bms.max_cell_mV&amp;0xFF;
+  return f;
+}</pre>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0;color:var(--good)">After — fill struct, call generated</h3>
+<pre>Frame encode_status(state, ams_ok, bms){
+  ifs08::AMS_status_t in{};
+  in.fsm_state          = state;
+  in.ams_ok             = ams_ok?1:0;
+  in.module_online_mask = bms.module_online_mask;
+  in.min_cell_mV        = bms.min_cell_mV;
+  in.max_cell_mV        = bms.max_cell_mV;
+  uint8_t b[8];
+  ifs08::encode_AMS_status(in, b); // layout
+  return detail::to_frame(b);      // from .def
+}</pre>
+    </div>
+  </div>
+  <p class="small">
+    The byte placement (which byte, big/little-endian) is gone from here — it now lives only in the
+    <code>.def</code>. What stays is the <em>mapping</em> (which service field feeds which message field) and any
+    <em>value transform</em> (the <code>int8</code> temperature clip, the <code>AMS_OK</code> normalise, the cockpit
+    bit-packing) — those are firmware concerns, not wire-layout.
+  </p>
+
+  <!-- ============================================================ -->
+  <h2>4 · How we proved the wire didn't move</h2>
+  <p>This is a safety-relevant path (the ECU/dash contract), so the bytes <strong>must</strong> be identical.
+     Three layers of test, all green:</p>
+  <table>
+    <tr><th>Test</th><th>What it locks down</th></tr>
+    <tr><td><code>test_telemetry_encoders.cpp</code></td>
+        <td><strong>Hardcoded expected bytes</strong> (e.g. <code>f[4]==0x12</code>). These existed before the
+            change and <span class="good">still pass against the DSL-backed code</span> — that <em>is</em> the
+            proof the switch is byte-for-byte identical.</td></tr>
+    <tr><td><code>test_dsl_parity.cpp</code></td>
+        <td>Generated encoder == the field mapping, encode→decode roundtrips, registry well-formed. Covers
+            every field shape: u8, BE-u16, LE-u32, <em>signed</em>-LE-i32, <em>signed</em>-LE-i8.</td></tr>
+    <tr><td><code>test_dsl_dbc_consistency.cpp</code></td>
+        <td class="accent">The guard that never existed: every DSL descriptor must match the committed
+            <code>ams.dbc</code> at the same bit position (length / order / sign). This finally checks
+            <strong>C++ ↔ DBC</strong>.</td></tr>
+  </table>
+  <p class="small">Result: <strong>205 / 205</strong> host tests pass; firmware cross-compiles and links; flash-layout check passes.</p>
+
+  <h3>The DBC, generated from the descriptors</h3>
+  <p><code>tools/dbc_dump.cpp</code> walks the same descriptors and prints DBC — the eventual replacement for
+     <code>gen_dbc.py</code>:</p>
+<pre>BO_ 1184 AMS_status: 8 AMS
+ SG_ fsm_state   : 0|8@1+  (1,0) "enum" Vector__XXX
+ SG_ min_cell_mV : 39|16@0+ (1,0) "mV"  Vector__XXX   &lt;- 8*4+7 = 39, big-endian</pre>
+
+  <!-- ============================================================ -->
+  <h2>5 · Scope &amp; what's next</h2>
+  <p>Honesty about where this stops:</p>
+  <ul>
+    <li class="ok"><strong>Done in Phase 2a:</strong> the 3 AMS telemetry frames (0x4A0/4A1/4A2) are fully on the DSL, live, and guarded against the DBC.</li>
+    <li class="x"><strong>Not yet:</strong> <code>gen_dbc.py</code> still owns the DBC for the other ~37 messages, so the CI check is unchanged. We can't retire the Python until <em>everything</em> is ported.</li>
+  </ul>
+  <table>
+    <tr><th>Phase</th><th>Work</th></tr>
+    <tr><td><strong>2b</strong></td><td>Extend the DSL with <em>repeated/array</em> fields, then port the pit-diag stream (0x6A0..0x6C8 — 200 NTCs row-major). The one message that needs new DSL capability.</td></tr>
+    <tr><td><strong>3</strong></td><td>Port the remaining ECU-matrix frames (0x020, 0x135, 0x131..0x137…), then <strong>delete <code>gen_dbc.py</code></strong> and swap the CI check to <code>dbc_dump == committed</code> — closing C++↔DBC for the whole bus.</td></tr>
+  </table>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Files in this change</h3>
+    <table style="margin:0">
+      <tr><th>File</th><th>Role</th></tr>
+      <tr><td><code>Core/Inc/can/can_dsl.hpp</code></td><td>bit pack/unpack helpers + <code>FieldDesc</code>/<code>MsgDesc</code> types</td></tr>
+      <tr><td><code>Core/Inc/can/can_codecs.hpp</code></td><td>the four X-macro passes</td></tr>
+      <tr><td><code>Core/Inc/can/messages/*.def</code></td><td>the one-place layout per message + a 1-line registry</td></tr>
+      <tr><td><code>Core/Inc/app/telemetry_encoders.hpp</code></td><td>now thin DSL-backed adapters (was hand bit-twiddling)</td></tr>
+      <tr><td><code>tools/dbc_dump.cpp</code></td><td>DBC straight from the descriptors</td></tr>
+      <tr><td><code>tests/unit/test_dsl_*.cpp</code></td><td>parity, roundtrip, and the C++↔DBC guard</td></tr>
+    </table>
+  </div>
+
+  <footer>
+    AMS firmware · CAN DSL Phase 2a · generated for review alongside PR #362.
+    The pattern originated in the spike PR #285. Open this file in any browser — it is self-contained.
+  </footer>
+
+</div>
+</body>
+</html>
