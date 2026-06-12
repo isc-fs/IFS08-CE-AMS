@@ -1,0 +1,16 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x4A1  AMS_pack -- pack voltage + pack current.
+ * Mirrors ams::telemetry::encode_pack() in
+ * Core/Inc/app/telemetry_encoders.hpp.
+ *
+ *   bytes 0..3  pack_voltage_mV  little-endian uint32 (sum-of-cells, mV)
+ *   bytes 4..7  filtered_mA      little-endian int32  (+ discharge, - charge)
+ *
+ * Field macro args: (name, ctype, byte_idx, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(AMS_pack, 0x4A1, 8, "AMS", 500)
+    FIELD_LE   (pack_voltage_mV,  uint32_t, 0, 32, 1, 0, "mV")
+    FIELD_LE_S (filtered_mA,       int32_t, 4, 32, 1, 0, "mA")
+CAN_MSG_END(AMS_pack)
