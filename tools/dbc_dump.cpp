@@ -21,8 +21,22 @@
 #include <cstdio>
 
 int main() {
+    // DBC header boilerplate (cantools-parseable). The committed
+    // docs/dbc/ams.dbc IS this tool's output -- the CI check regenerates
+    // and diffs. Lean by design (no CM_ comments / VAL_ enum tables);
+    // DBCinator re-enriches downstream.
     std::printf("VERSION \"\"\n\n");
-    std::printf("BU_: AMS VCU ECU\n\n");
+    std::printf("NS_ :\n");
+    static const char* ns[] = {
+        "NS_DESC_","CM_","BA_DEF_","BA_","VAL_","CAT_DEF_","CAT_","FILTER",
+        "BA_DEF_DEF_","EV_DATA_","ENVVAR_DATA_","SGTYPE_","SGTYPE_VAL_",
+        "BA_DEF_SGTYPE_","BA_SGTYPE_","SIG_TYPE_REF_","VAL_TABLE_","SIG_GROUP_",
+        "SIG_VALTYPE_","SIGTYPE_VALTYPE_","BO_TX_BU_","BA_DEF_REL_","BA_REL_",
+        "BA_DEF_DEF_REL_","BU_SG_REL_","BU_EV_REL_","BU_BO_REL_","SG_MUL_VAL_",
+    };
+    for (const char* s : ns) std::printf("\t%s\n", s);
+    std::printf("\nBS_:\n\n");
+    std::printf("BU_: AMS VCU ECU UDV Pit_Tool\n\n");
 
     // Fixed-layout messages (one BO_ each).
     for (unsigned mi = 0; mi < ifs08::ALL_MSGS_COUNT; ++mi) {
@@ -30,7 +44,7 @@ int main() {
         std::printf("BO_ %u %s: %u %s\n", m.id, m.name, m.dlc, m.sender);
         for (unsigned fi = 0; fi < m.n_fields; ++fi) {
             const auto& f = m.fields[fi];
-            std::printf(" SG_ %s : %u|%u@%c%c (%g,%g) \"%s\" Vector__XXX\n",
+            std::printf(" SG_ %s : %u|%u@%c%c (%g,%g) [0|0] \"%s\" Vector__XXX\n",
                         f.name, f.start_bit, f.len,
                         f.big_endian ? '0' : '1', f.is_signed ? '-' : '+',
                         f.factor, f.offset, f.unit);

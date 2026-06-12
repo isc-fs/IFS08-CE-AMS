@@ -166,7 +166,7 @@ Core/Src/main.c CubeMX-generated      — DO NOT hand-edit; it calls our
                 (+ freertos.c)          ams_*_task_run trampolines
 tests/unit/     host Unity tests      — test_*.cpp, mocks/, CMakeLists.txt
 docs/           you are here
-tools/          gen_dbc.py (CAN DB generator), …
+tools/          dbc_dump.cpp (CAN DB generator, from the code-first DSL), …
 scripts/        check_flash_layout.py (CI flash-budget guard)
 .github/        workflows + roadmap.yaml (auto-tracking, CI, roadmap)
 ```
