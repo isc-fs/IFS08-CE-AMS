@@ -45,6 +45,7 @@ add_executable(ams_unit_tests
     test_bootloader.cpp
     test_current_service.cpp
     test_dsl_parity.cpp
+    test_dsl_dbc_consistency.cpp
     test_ltc6811_decode.cpp
     test_safety_predicates.cpp
     test_sil_scenarios.cpp
@@ -63,6 +64,12 @@ target_include_directories(ams_unit_tests PRIVATE
 )
 
 target_link_libraries(ams_unit_tests PRIVATE unity)
+
+# Path to the committed DBC so test_dsl_dbc_consistency can assert the
+# code-first descriptors match the wire contract (the C++<->DBC guard).
+target_compile_definitions(ams_unit_tests PRIVATE
+    AMS_DBC_PATH="${AMS_ROOT}/docs/dbc/ams.dbc"
+)
 
 # Same flags as the firmware target so behavior matches.
 target_compile_options(ams_unit_tests PRIVATE

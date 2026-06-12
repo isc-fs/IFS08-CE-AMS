@@ -122,6 +122,7 @@ void test_dsl_pack_roundtrip_signed(void);
 void test_dsl_temps_matches_handrolled(void);
 void test_dsl_temps_roundtrip_negative(void);
 void test_dsl_registry_well_formed(void);
+void test_dsl_descriptors_match_committed_dbc(void);
 
 // test_state_machine.cpp
 void test_fsm_start_waits_without_tsms_or_dash_chg(void);
@@ -348,6 +349,7 @@ int main(void) {
     RUN_TEST(test_dsl_temps_matches_handrolled);
     RUN_TEST(test_dsl_temps_roundtrip_negative);
     RUN_TEST(test_dsl_registry_well_formed);
+    RUN_TEST(test_dsl_descriptors_match_committed_dbc);
 
     RUN_TEST(test_fsm_start_waits_without_tsms_or_dash_chg);
     RUN_TEST(test_fsm_start_waits_with_tsms_only);

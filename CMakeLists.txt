@@ -61,6 +61,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Inc/app
+    Core/Inc          # code-first CAN DSL headers under Core/Inc/can
 )
 
 # ---------------------------------------------------------------------------
