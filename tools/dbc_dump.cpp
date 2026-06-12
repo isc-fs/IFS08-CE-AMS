@@ -29,7 +29,12 @@ int main() {
                     m.id, m.name, m.dlc, m.sender);
         for (unsigned fi = 0; fi < m.n_fields; ++fi) {
             const auto& f = m.fields[fi];
-            std::printf(" SG_ %s : %u|%u@%c%c (%g,%g) \"%s\" Vector__XXX\n",
+            // Standard DBC SG_ row: name : start|len@order+/-(factor,offset)[min|max] "unit" receiver
+            // The [min|max] bracket is mandatory -- cantools / Vector
+            // CANdb++ reject the row without it. We emit [0|0] (the
+            // "unspecified" convention) since the DSL doesn't carry
+            // physical range info today; gen_dbc.py does the same.
+            std::printf(" SG_ %s : %u|%u@%c%c (%g,%g) [0|0] \"%s\" Vector__XXX\n",
                         f.name, f.start_bit, f.len,
                         f.big_endian ? '0' : '1',
                         f.is_signed  ? '-' : '+',
