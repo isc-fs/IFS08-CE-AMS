@@ -37,3 +37,13 @@
 #include "pit_fw_id.def"
 #include "pit_pec_per_ic_a.def"
 #include "pit_pec_per_ic_b.def"
+#include "pit_ack.def"
+
+/* RX frames AMS consumes (sender = VCU / Pit_Tool). Carried here so
+ * dbc_dump covers the full wire contract; ownership moves to the
+ * sender's repo once DBCinator centralises (Phase 3 / #365). */
+#include "rx_vcu_dc_bus.def"
+#include "rx_operator_charge_request.def"
+#include "rx_operator_balance_override.def"
+#include "rx_pitdiag_cmd.def"
+#include "rx_bl_boot_trigger.def"

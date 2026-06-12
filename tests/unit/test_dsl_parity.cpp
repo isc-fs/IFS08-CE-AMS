@@ -152,9 +152,8 @@ extern "C" void test_dsl_temps_roundtrip_negative(void) {
 // Registry well-formedness
 // ===========================================================================
 extern "C" void test_dsl_registry_well_formed(void) {
-    // Phase 2a: 3 telemetry. Phase 2b: +9 ECU TX matrix. Phase 2c: +9
-    // fixed pit-diag frames (0x6C0..0x6C8) = 21.
-    TEST_ASSERT_EQUAL_UINT(21u, ifs08::ALL_MSGS_COUNT);
+    // Phase 2a: 3 telemetry. Phase 2b: +9 ECU TX matrix. Phase 2c: +9 fixed pit-diag + ack + 5 RX = 27.
+    TEST_ASSERT_EQUAL_UINT(27u, ifs08::ALL_MSGS_COUNT);
     // Spot-check the BE field's DBC start_bit convention (8*byte+7).
     bool checked = false;
     for (unsigned i = 0; i < ifs08::ALL_MSGS_COUNT; ++i) {
