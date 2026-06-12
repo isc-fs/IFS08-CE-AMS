@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x7F0 PitDiag_cmd -- magic to enable/disable the pit-diag stream. RX (Pit_Tool). */
+CAN_MSG(PitDiag_cmd, 0x7F0, 4, "Pit_Tool", 0)
+    FIELD_BE (cmd_magic, uint32_t, 0, 32, 1, 0, "magic")
+CAN_MSG_END(PitDiag_cmd)

@@ -1,0 +1,39 @@
+# The dbcinator bot. On every PR it regenerates docs/dbc/ams.dbc from the
+# firmware's code-first CAN DSL (Core/Inc/can/messages/*.def -> the
+# dbc_dump host target), pushes the result onto the PR branch as
+# dbcinator[bot] if it changed, and posts a wire-contract diff comment.
+# Fork PRs are skipped by the action (can't push back).
+#
+# All the regenerate/commit/comment plumbing lives in the reusable
+# composite action in isc-fs/IFS08-DBCinator; this repo only carries the
+# call below. The action's input defaults already match AMS
+# (dbc-path=docs/dbc/ams.dbc, cmake-source-dir=tests/unit, dump-target=dbc_dump),
+# so we only pass the App credentials.
+#
+# This replaces the interim "DBC matches code" diff check in
+# build-tests.yml as the source of truth once the action is stable.
+#
+# Pinned to a tagged release of isc-fs/IFS08-DBCinator. Bump when
+# picking up new features or bug fixes from the bot; the changelog
+# lives on the DBCinator release notes.
+
+name: dbcinator
+
+on:
+  pull_request:
+    branches: [dev, main]
+
+permissions:
+  contents: write        # bot pushes the regenerated DBC onto the PR branch
+  pull-requests: write   # bot posts the wire-contract diff comment
+
+jobs:
+  regenerate-dbc:
+    name: dbcinator (regenerate ams.dbc)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Regenerate docs/dbc/ams.dbc from the code-first DSL
+        uses: isc-fs/IFS08-DBCinator/actions/dbc-bot@v1.0.0
+        with:
+          app-id: ${{ secrets.DBCINATOR_APP_ID }}
+          private-key: ${{ secrets.DBCINATOR_PRIVATE_KEY }}

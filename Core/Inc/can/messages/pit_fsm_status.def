@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C0 PIT_fsm_status -- mirrors ams::pit_diag::encode_fsm_status().
+ * Byte 2 carries three sub-byte cockpit-input bits (FIELD_LE_BITS).
+ * Transforms (pec sat, bool normalise) stay in the adapter. */
+CAN_MSG(PIT_fsm_status, 0x6C0, 8, "AMS", 1000)
+    FIELD_LE      (fsm_state,        uint8_t,  0,  8, 1, 0, "enum")
+    FIELD_LE      (mode_locked,      uint8_t,  1,  8, 1, 0, "enum")
+    FIELD_LE_BITS (dash_chg,         uint8_t, 16,  1, 1, 0, "bool")
+    FIELD_LE_BITS (tsms,             uint8_t, 17,  1, 1, 0, "bool")
+    FIELD_LE_BITS (balance_override, uint8_t, 18,  1, 1, 0, "bool")
+    FIELD_LE      (ams_ok_gpio,      uint8_t,  3,  8, 1, 0, "bool")
+    FIELD_BE      (pec_err_total,    uint16_t, 4, 16, 1, 0, "count")
+    FIELD_LE      (fault_reason,     uint8_t,  6,  8, 1, 0, "enum")
+    FIELD_LE      (fault_detail,     uint8_t,  7,  8, 1, 0, "")
+CAN_MSG_END(PIT_fsm_status)

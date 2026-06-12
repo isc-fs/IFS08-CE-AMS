@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x002 BL_boot_trigger -- magic to jump to the CAN bootloader. RX (Pit_Tool sends). */
+CAN_MSG(BL_boot_trigger, 0x002, 4, "Pit_Tool", 0)
+    FIELD_BE (magic, uint32_t, 0, 32, 1, 0, "magic")
+CAN_MSG_END(BL_boot_trigger)

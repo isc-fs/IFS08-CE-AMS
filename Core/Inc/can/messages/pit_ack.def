@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x7F1 PitDiag_ack -- one-shot ACK after a state transition. TX (AMS sends inline). */
+CAN_MSG(PitDiag_ack, 0x7F1, 1, "AMS", 0)
+    FIELD_LE (enabled, uint8_t, 0, 8, 1, 0, "bool")
+CAN_MSG_END(PitDiag_ack)

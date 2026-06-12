@@ -1,0 +1,11 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x131  ACU_vmin_module_a -- per-module vmin, modules 0..2.
+ * Mirrors ams::acu_tx::encode_vmin_module_a().
+ */
+
+CAN_MSG(ACU_vmin_module_a, 0x131, 6, "AMS", 100)
+    FIELD_BE (vmin_module0, uint16_t, 0, 16, 1, 0, "mV")
+    FIELD_BE (vmin_module1, uint16_t, 2, 16, 1, 0, "mV")
+    FIELD_BE (vmin_module2, uint16_t, 4, 16, 1, 0, "mV")
+CAN_MSG_END(ACU_vmin_module_a)

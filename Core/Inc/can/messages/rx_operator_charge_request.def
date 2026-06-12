@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x101 Operator_charge_request -- magic-gated charge-mode request. RX (Pit_Tool). */
+CAN_MSG(Operator_charge_request, 0x101, 4, "Pit_Tool", 0)
+    FIELD_BE (magic, uint32_t, 0, 32, 1, 0, "magic")
+CAN_MSG_END(Operator_charge_request)
