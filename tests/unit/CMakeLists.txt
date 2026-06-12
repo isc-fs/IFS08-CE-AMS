@@ -71,6 +71,15 @@ target_compile_definitions(ams_unit_tests PRIVATE
     AMS_DBC_PATH="${AMS_ROOT}/docs/dbc/ams.dbc"
 )
 
+# Host tool that emits docs/dbc/ams.dbc straight from the code-first DSL
+# descriptors. Exposed as a CMake target (not just an ad-hoc compile) so
+# CI -- and the DBCinator bot's composite action (dump-tool-cmake-target,
+# IFS08-DBCinator#5) -- can build it with `cmake --build . --target dbc_dump`.
+#   ./dbc_dump > docs/dbc/ams.dbc
+add_executable(dbc_dump ${AMS_ROOT}/tools/dbc_dump.cpp)
+target_include_directories(dbc_dump PRIVATE ${AMS_ROOT}/Core/Inc)
+target_compile_features(dbc_dump PRIVATE cxx_std_17)
+
 # Same flags as the firmware target so behavior matches.
 target_compile_options(ams_unit_tests PRIVATE
     -Wall -Wextra -Wpedantic
