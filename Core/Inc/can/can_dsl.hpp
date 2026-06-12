@@ -69,6 +69,30 @@ inline int64_t sign_extend(uint64_t v, unsigned len) noexcept {
     return static_cast<int64_t>((v ^ m) - m);
 }
 
+// ---- Compile-time bit-claim masks (for the per-message overlap guard) ------
+//
+// Return the set of FRAME bit positions a field occupies, as a 64-bit
+// mask (bit = 8*byte + intra-byte position). LE is linear from `start`;
+// BE walks the DBC sawtooth identically to set_be/get_be. constexpr so
+// can_codecs.hpp's pass-5 static_assert can fold it at compile time.
+
+constexpr uint64_t bitmask_le(unsigned start, unsigned len) noexcept {
+    uint64_t m = 0;
+    for (unsigned i = 0; i < len; ++i) m |= uint64_t{1} << (start + i);
+    return m;
+}
+
+constexpr uint64_t bitmask_be(unsigned start, unsigned len) noexcept {
+    uint64_t m = 0;
+    unsigned bit = start;
+    for (unsigned i = 0; i < len; ++i) {
+        m |= uint64_t{1} << bit;
+        if ((bit & 7) == 0) bit += 15;
+        else                bit -= 1;
+    }
+    return m;
+}
+
 // ---- Runtime descriptors (read by the host dbc_dump tool) ------------------
 
 struct FieldDesc {
