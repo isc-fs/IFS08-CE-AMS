@@ -88,6 +88,22 @@ bool read_adc3_channel(std::uint32_t channel, std::uint32_t single_diff,
 extern "C" void ams_current_sensor_task_run(void *argument) {
     (void)argument;
 
+    // Re-assert the internal pull-downs on the differential pack-current
+    // inputs PF7/PF8 (S_CURRENT_P/N). CubeMX's code generator emits
+    // GPIO_NOPULL for IN-Differential ADC pins even though AMS.ioc
+    // requests GPIO_PULLDOWN, so MX_GPIO_Init / HAL_ADC_MspInit leaves
+    // them floating after every regenerate. The disconnect check below
+    // ("an open connector collapses OUT_P toward 0 V") DEPENDS on these
+    // pull-downs, so restore them here in app code where a CubeMX regen
+    // can't silently wipe them. Mode stays ANALOG; both pins are GPIOF.
+    {
+        GPIO_InitTypeDef pull = {};
+        pull.Pin  = S_CURRENT_P_Pin | S_CURRENT_N_Pin;
+        pull.Mode = GPIO_MODE_ANALOG;
+        pull.Pull = GPIO_PULLDOWN;
+        HAL_GPIO_Init(S_CURRENT_P_GPIO_Port, &pull);
+    }
+
     // Calibrate before first use. Offset + linearity for BOTH the
     // single-ended (DCDC / INP11) and differential (pack / INP3+INN3)
     // signal paths -- on STM32H7 the two have independent calibration
