@@ -9,6 +9,24 @@
 
 #include <cstdint>
 
+// ===========================================================================
+// BARE LTC6811 COMMS HARNESS (do-not-merge branch). Flip to 1 to strip the
+// ENTIRE application down to one thing: a tight loop that wakes the isoSPI
+// chain, reads it back, checks PEC, and broadcasts the raw result on CAN
+// (0x7E0/0x7E1). Every other task -- FSM, safety, relays, current, ACU,
+// BMS service -- is silenced (osThreadExit). For hardware bring-up only:
+// lets you iterate the isoSPI link with zero firmware in the way.
+//
+//   ***  NO safety, NO relays, NO FSM. Bench bring-up ONLY.  ***
+//   ***  NEVER set to 1 in a flight image.                   ***
+//
+// Chain length (# of LTCs physically on the bus) is the kChainLen constant
+// at the top of ltc_bare_task.cpp. (Can also be forced with -DAMS_LTC_BARE=ON.)
+// ===========================================================================
+#ifndef AMS_LTC_BARE
+#define AMS_LTC_BARE 0          // <-- flip to 1 for the bare-comms bench build
+#endif
+
 namespace ams::config {
 
 // ---------------------------------------------------------------------------
@@ -450,7 +468,15 @@ inline constexpr std::uint32_t AmsTelemDiagId   = 0x4A3u;  // diagnostic probes 
 inline constexpr std::uint8_t  LtcsPerModule       = 2;
 inline constexpr std::uint8_t  CellsPerLtcUpper    = 10;  // LTC_1 (top of module)
 inline constexpr std::uint8_t  CellsPerLtcLower    =  9;  // LTC_2 (bottom of module)
+#if AMS_LTC_BARE
+// BARE bench harness: clock exactly the LTCs physically on the bus so the
+// isoSPI frame length matches (read_register_group sizes by this). 1 = U3
+// only. EDIT to match your bench. With the flight value (10) the master
+// clocks an 80-byte frame onto a 1-IC bus and the read self-rejects.
+inline constexpr std::uint8_t  LtcChainLength      = 2;
+#else
 inline constexpr std::uint8_t  LtcChainLength      = 10;  // BmsModuleCount * LtcsPerModule
+#endif
 inline constexpr std::uint8_t  TempsPerLtc         = 20;  // ADG731 channels populated
 inline constexpr std::uint8_t  TempMuxChannelsUsed = 20;  // of 32 on ADG731
 

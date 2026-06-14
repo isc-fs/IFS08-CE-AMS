@@ -86,6 +86,9 @@ bool read_adc3_channel(std::uint32_t channel, std::uint32_t single_diff,
 }  // namespace
 
 extern "C" void ams_current_sensor_task_run(void *argument) {
+#if AMS_LTC_BARE
+    (void)argument; osThreadExit();   // bare LTC comms build: task inert
+#endif
     (void)argument;
 
     // Calibrate before first use. Offset + linearity for BOTH the

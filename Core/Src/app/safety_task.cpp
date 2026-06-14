@@ -396,6 +396,9 @@ void SafetyTask::run() noexcept {
 }  // namespace ams
 
 extern "C" void ams_safety_task_run(void *argument) {
+#if AMS_LTC_BARE
+    (void)argument; osThreadExit();   // bare LTC comms build: task inert
+#endif
     (void)argument;
     ams::SafetyTask::instance().run();
 }

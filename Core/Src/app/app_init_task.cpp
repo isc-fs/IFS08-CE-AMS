@@ -29,6 +29,11 @@ extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
 extern SPI_HandleTypeDef   hspi1;
 
+#if AMS_LTC_BARE
+// Bare LTC6811 comms harness (ltc_bare_task.cpp). Never returns.
+void ams_ltc_bare_run(void);
+#endif
+
 // Monotonic milestone counter incremented at each App_InitTask init
 // step. Surfaced on the pit-diag boot-diag frame (0x6C4[4]) so an
 // engineer plugged into can0 can see how far this task got even if
@@ -50,6 +55,13 @@ extern "C" volatile std::uint32_t g_fdcan1_start_result = 0xFFFFFFFFu;
 void ams_app_init_task_run(void *argument)
 {
     (void)argument;
+
+#if AMS_LTC_BARE
+    // BENCH: strip everything to a bare LTC6811 isoSPI comms loop. All
+    // other app tasks self-exit; this one never returns. No FSM, no
+    // safety, no relays -- hardware bring-up only.
+    ams_ltc_bare_run();
+#endif
 
     // Backup-domain write access -- safe to call from anywhere but
     // landing it here ensures it runs BEFORE SafetyTask first looks

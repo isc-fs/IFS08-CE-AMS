@@ -345,6 +345,9 @@ void run_temperature_poll() {
 }  // namespace
 
 extern "C" void ams_bms_poll_task_run(void *argument) {
+#if AMS_LTC_BARE
+    (void)argument; osThreadExit();   // bare LTC comms build: task inert
+#endif
     (void)argument;
 
     s_volt_timer = osTimerNew(&volt_timer_cb, osTimerPeriodic, nullptr, nullptr);

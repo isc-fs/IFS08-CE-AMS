@@ -300,6 +300,9 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
 }  // namespace
 
 extern "C" void ams_acu_can_task_run(void *argument) {
+#if AMS_LTC_BARE
+    (void)argument; osThreadExit();   // bare LTC comms build: task inert
+#endif
     (void)argument;
 
     ams::CanFrame frame;
