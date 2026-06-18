@@ -130,6 +130,24 @@ jobs:
           cmake --build build-tests -j
           ctest --test-dir build-tests --output-on-failure
 
+      - name: Regenerate ams.dbc from the tagged code-first DSL
+        # Source of truth = Core/Inc/can/messages/*.def. Regenerating
+        # here (rather than just attaching the in-tree docs/dbc/ams.dbc)
+        # binds the DBC to the EXACT firmware build that ships with this
+        # release -- a consumer downloading AMS.elf + ams.dbc from the
+        # same release is guaranteed they describe the same wire bytes.
+        # The in-tree DBC is bot-maintained on every PR, so the diff
+        # against the regen should always be empty; we fail loud if not.
+        run: |
+          cmake --build build-tests --target dbc_dump -j
+          build-tests/dbc_dump > /tmp/ams.dbc
+          if ! diff -u docs/dbc/ams.dbc /tmp/ams.dbc; then
+            echo "::error::In-tree docs/dbc/ams.dbc disagrees with the dbc_dump output at tag ${{ steps.tag.outputs.name }}"
+            echo "::error::The dbcinator bot should have kept these in sync. Investigate before publishing."
+            exit 1
+          fi
+          ls -la /tmp/ams.dbc
+
       - name: Generate release notes
         id: notes
         run: |
@@ -144,6 +162,7 @@ jobs:
             echo "- \`AMS.elf\` — debug symbols included"
             echo "- \`AMS.bin\` — raw image, flash to \`0x08020000\` (sector 1)"
             echo "- \`AMS.hex\` — Intel HEX with absolute addressing"
+            echo "- \`ams.dbc\` — Vector CAN database (76 messages) emitted from the code-first DSL at this tagged SHA. Use with cantools / Vector CANalyzer / the pit tool. Bound 1:1 to this firmware build."
             echo
             echo "## Memory layout"
             echo "- App entry point: \`0x08020000\` (sectors 1-6, 768 KB)"
@@ -192,4 +211,5 @@ jobs:
             --notes-file release-notes.md \
             build/AMS.elf \
             build/AMS.bin \
-            build/AMS.hex
+            build/AMS.hex \
+            /tmp/ams.dbc
