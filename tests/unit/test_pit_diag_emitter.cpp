@@ -365,3 +365,37 @@ extern "C" void test_pit_diag_pec_per_ic_saturates(void) {
     TEST_ASSERT_EQUAL_UINT8(0xFFu, a[2]);   // 0xFFFF saturates
     TEST_ASSERT_EQUAL_UINT8(0xFFu, a[3]);   // 0xFFFFFFFF saturates
 }
+
+// ---------------------------------------------------------------------------
+// Comms health (0x6C9, #331): two LE u32 -- FDCAN1 Bus-Off recovery count
+// (bytes 0..3) + ECU-TX-matrix enqueue failures (bytes 4..7).
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_comms_health_layout(void) {
+    const auto f = ams::pit_diag::encode_comms_health(0x11223344u, 0xAABBCCDDu);
+    TEST_ASSERT_EQUAL_UINT8(0x44, f[0]);    // fdcan1_busoff_recovery_count LE
+    TEST_ASSERT_EQUAL_UINT8(0x33, f[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x22, f[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x11, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(0xDD, f[4]);    // acu_tx_fail LE
+    TEST_ASSERT_EQUAL_UINT8(0xCC, f[5]);
+    TEST_ASSERT_EQUAL_UINT8(0xBB, f[6]);
+    TEST_ASSERT_EQUAL_UINT8(0xAA, f[7]);
+}
+
+extern "C" void test_pit_diag_comms_health_zero_when_clean(void) {
+    // A clean session (never went Bus-Off, no TX failures) is all-zero --
+    // the bench's "recovery never fired" baseline.
+    const auto f = ams::pit_diag::encode_comms_health(0u, 0u);
+    for (std::uint8_t i = 0; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0u, f[i]);
+    }
+}
+
+extern "C" void test_pit_diag_comms_health_fields_independent(void) {
+    // Recovery count set, tx_fail zero -> only bytes 0..3 populated.
+    const auto f = ams::pit_diag::encode_comms_health(0x00000005u, 0u);
+    TEST_ASSERT_EQUAL_UINT8(0x05, f[0]);
+    for (std::uint8_t i = 1; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_UINT8(0u, f[i]);
+    }
+}

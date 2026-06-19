@@ -378,4 +378,28 @@ namespace detail {
     return detail::to_frame(b);
 }
 
+// ---------------------------------------------------------------------------
+// FDCAN1 comms health (0x6C9, #331). Surfaces the FDCAN1 TX-path counters
+// that were previously RAM-only so the CAN-only HIL bench can CONFIRM a
+// Bus-Off recovery fired (count > 0 after an outage) and see TX-enqueue
+// pressure -- the AMS analogue of the bootloader's bl_health
+// fdcan_recovery_count. Both full u32 (no saturation): the recovery count
+// ticks at most ~10/s (one per FdcanBusOffRetryMs) and acu_tx_fail is a
+// monotonic enqueue-failure tally.
+//
+//   bytes 0..3  fdcan1_busoff_recovery_count  LE u32 (Stop/Start attempts;
+//                                              0 = no Bus-Off this session)
+//   bytes 4..7  acu_tx_fail                    LE u32 (ECU-TX matrix
+//                                              AddMessageToTxFifoQ failures)
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_comms_health(std::uint32_t busoff_recovery_count,
+                                               std::uint32_t acu_tx_fail) noexcept {
+    ifs08::PIT_comms_health_t s{};
+    s.fdcan1_busoff_recovery_count = busoff_recovery_count;
+    s.acu_tx_fail                  = acu_tx_fail;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_comms_health(s, b);
+    return detail::to_frame(b);
+}
+
 }  // namespace ams::pit_diag

@@ -184,6 +184,19 @@ inline constexpr std::uint32_t EcuFastTxMs           = 50;
 inline constexpr std::uint32_t EcuMidTxMs            = 100;
 inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 
+// FDCAN1 Bus-Off recovery rate-limit. On sustained TX errors the M_CAN
+// latches Bus_Off (CCCR.INIT set), which halts BOTH TX and RX -- the node
+// goes silent and stays deaf until a software Stop->Start. AcuCanTask
+// polls HAL_FDCAN_GetProtocolStatus every loop pass (a cheap PSR read)
+// and, on Bus_Off, issues a Stop/Start no more than once per
+// FdcanBusOffRetryMs. The spacing matters: the M_CAN's automatic recovery
+// rejoins only after 128*11 consecutive recessive bits (~2.8 ms of idle
+// bus at 500 kbps), so a Stop/Start every poll would keep restarting that
+// sequence and the node would never finish rejoining. 100 ms mirrors the
+// bootloader's BL_FDCAN_BUSOFF_RETRY_MS (../stm32-can-bootloader). See
+// ams::can_recovery::should_attempt_recovery and acu_can_task.cpp.
+inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
+
 // ---------------------------------------------------------------------------
 // Pit-side diagnostic stream (#247). Runtime-toggleable full-grid telemetry
 // for pit-stop debugging when the accumulator is plugged into can0 (car
@@ -220,6 +233,7 @@ inline constexpr std::uint32_t PitDiagPostMortemId       = 0x6C5u;  // stack ove
 inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + git hash[0..3] + BL node id
 inline constexpr std::uint32_t PitDiagPecPerIcAId        = 0x6C7u;  // per-IC PEC count: ICs 0..7 (saturating u8)
 inline constexpr std::uint32_t PitDiagPecPerIcBId        = 0x6C8u;  // per-IC PEC count: ICs 8..9 + reserved
+inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail (#331)
 inline constexpr std::uint8_t  PitDiagCmdDlc             = 4u;
 inline constexpr std::uint8_t  PitDiagEnableMagic[4]     = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
 inline constexpr std::uint8_t  PitDiagDisableMagic[4]    = { 0x00u, 0x00u, 0x00u, 0x00u };

@@ -79,6 +79,15 @@ void test_bootloader_trigger_wrong_dlc(void);
 void test_bootloader_trigger_each_magic_byte_flipped(void);
 void test_bootloader_trigger_trailing_bytes_ignored(void);
 
+// test_can_busoff_recovery.cpp
+void test_busoff_healthy_bus_never_attempts(void);
+void test_busoff_first_detection_attempts_immediately(void);
+void test_busoff_sustained_is_rate_limited(void);
+void test_busoff_boundary_exactly_retry_ms_attempts(void);
+void test_busoff_steady_cadence_of_attempts(void);
+void test_busoff_recovers_then_refaults_attempts_immediately(void);
+void test_busoff_tick_wrap_preserves_spacing(void);
+
 // test_safety_predicates.cpp
 void test_predicates_nominal_no_fault(void);
 void test_predicates_force_error(void);
@@ -220,6 +229,9 @@ void test_pit_diag_fw_id_layout(void);
 void test_pit_diag_pec_per_ic_a_layout(void);
 void test_pit_diag_pec_per_ic_b_layout(void);
 void test_pit_diag_pec_per_ic_saturates(void);
+void test_pit_diag_comms_health_layout(void);
+void test_pit_diag_comms_health_zero_when_clean(void);
+void test_pit_diag_comms_health_fields_independent(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
@@ -308,6 +320,14 @@ int main(void) {
     RUN_TEST(test_bootloader_trigger_wrong_dlc);
     RUN_TEST(test_bootloader_trigger_each_magic_byte_flipped);
     RUN_TEST(test_bootloader_trigger_trailing_bytes_ignored);
+
+    RUN_TEST(test_busoff_healthy_bus_never_attempts);
+    RUN_TEST(test_busoff_first_detection_attempts_immediately);
+    RUN_TEST(test_busoff_sustained_is_rate_limited);
+    RUN_TEST(test_busoff_boundary_exactly_retry_ms_attempts);
+    RUN_TEST(test_busoff_steady_cadence_of_attempts);
+    RUN_TEST(test_busoff_recovers_then_refaults_attempts_immediately);
+    RUN_TEST(test_busoff_tick_wrap_preserves_spacing);
 
     RUN_TEST(test_predicates_nominal_no_fault);
     RUN_TEST(test_predicates_force_error);
@@ -444,6 +464,9 @@ int main(void) {
     RUN_TEST(test_pit_diag_pec_per_ic_a_layout);
     RUN_TEST(test_pit_diag_pec_per_ic_b_layout);
     RUN_TEST(test_pit_diag_pec_per_ic_saturates);
+    RUN_TEST(test_pit_diag_comms_health_layout);
+    RUN_TEST(test_pit_diag_comms_health_zero_when_clean);
+    RUN_TEST(test_pit_diag_comms_health_fields_independent);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
