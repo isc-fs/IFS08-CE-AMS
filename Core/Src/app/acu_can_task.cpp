@@ -101,11 +101,10 @@ volatile std::uint32_t g_acu_rx_dropped_unknown = 0;
 volatile std::uint32_t g_acu_tx_fail            = 0;
 
 // FDCAN1 Bus-Off recovery counter: incremented once per Stop/Start
-// attempt issued by poll_fdcan1_busoff_recovery(). volatile so a future
-// pit-diag comms-health frame (or a bench debug read) can observe how
-// many times the bus was recovered this session -- the AMS analogue of
-// the bootloader's bl_health fdcan_recovery_count. Not yet on a wire
-// frame, same status as g_acu_rx_isr_drop (can_isr.cpp).
+// attempt issued by poll_fdcan1_busoff_recovery(). Surfaced on the
+// pit-diag comms-health frame (0x6C9, bytes 0..3) so the CAN-only HIL
+// bench can confirm a recovery fired without a debugger -- the AMS
+// analogue of the bootloader's bl_health fdcan_recovery_count.
 volatile std::uint32_t g_fdcan1_busoff_recovery_count = 0;
 
 // ---- FDCAN1 Bus-Off poll + recovery -------------------------------------
@@ -274,7 +273,7 @@ std::uint32_t pec_err_sum() noexcept {
 }
 
 void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
-    // 24 cell + 25 temp + 9 status = 58 frames per scan.
+    // 24 cell + 25 temp + 10 status = 59 frames per scan.
     // FDCAN1 TX FIFO depth is 16 (main.c TxFifoQueueElmtsNbr). Without
     // flow control, frames 17+ get NACKed silently and only the front
     // of the burst reaches the wire (#257). Use the blocking variant
@@ -353,6 +352,13 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                           ams::pit_diag::encode_pec_err_count_a(g_ltc_pec_err_count));
     send_or_fail_blocking(ams::config::PitDiagPecPerIcBId,
                           ams::pit_diag::encode_pec_err_count_b(g_ltc_pec_err_count));
+
+    // FDCAN1 comms health (#331). The 59th frame: Bus-Off recovery count +
+    // ECU-TX enqueue failures. Lets the CAN-only HIL bench confirm a
+    // Bus-Off recovery fired (count > 0 after an outage) without a debugger.
+    send_or_fail_blocking(ams::config::PitDiagCommsHealthId,
+                          ams::pit_diag::encode_comms_health(
+                              g_fdcan1_busoff_recovery_count, g_acu_tx_fail));
 }
 
 }  // namespace

@@ -229,6 +229,9 @@ void test_pit_diag_fw_id_layout(void);
 void test_pit_diag_pec_per_ic_a_layout(void);
 void test_pit_diag_pec_per_ic_b_layout(void);
 void test_pit_diag_pec_per_ic_saturates(void);
+void test_pit_diag_comms_health_layout(void);
+void test_pit_diag_comms_health_zero_when_clean(void);
+void test_pit_diag_comms_health_fields_independent(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
@@ -461,6 +464,9 @@ int main(void) {
     RUN_TEST(test_pit_diag_pec_per_ic_a_layout);
     RUN_TEST(test_pit_diag_pec_per_ic_b_layout);
     RUN_TEST(test_pit_diag_pec_per_ic_saturates);
+    RUN_TEST(test_pit_diag_comms_health_layout);
+    RUN_TEST(test_pit_diag_comms_health_zero_when_clean);
+    RUN_TEST(test_pit_diag_comms_health_fields_independent);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
