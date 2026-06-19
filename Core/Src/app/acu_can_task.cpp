@@ -30,6 +30,7 @@
 #include "ams_config.hpp"
 #include "bms_service.hpp"
 #include "bootloader.hpp"
+#include "can_busoff_recovery.hpp"
 #include "can_frame.hpp"
 #include "current_service.hpp"
 #include "pit_diag_emitter.hpp"
@@ -98,6 +99,63 @@ namespace {
 // Telemetry counters; volatile so a remote-debug session can read.
 volatile std::uint32_t g_acu_rx_dropped_unknown = 0;
 volatile std::uint32_t g_acu_tx_fail            = 0;
+
+// FDCAN1 Bus-Off recovery counter: incremented once per Stop/Start
+// attempt issued by poll_fdcan1_busoff_recovery(). volatile so a future
+// pit-diag comms-health frame (or a bench debug read) can observe how
+// many times the bus was recovered this session -- the AMS analogue of
+// the bootloader's bl_health fdcan_recovery_count. Not yet on a wire
+// frame, same status as g_acu_rx_isr_drop (can_isr.cpp).
+volatile std::uint32_t g_fdcan1_busoff_recovery_count = 0;
+
+// ---- FDCAN1 Bus-Off poll + recovery -------------------------------------
+//
+// The STM32H7 M_CAN latches Bus_Off after sustained TX errors (the
+// classic-CAN TEC > 255 path: transmitting into a bus with no node
+// ACKing, or a transient short). Bus_Off sets CCCR.INIT, which halts
+// BOTH TX and RX -- the AMS stops ACKing, goes silent, and does NOT
+// self-clear; only a software Stop->Start re-arms the peripheral. Today
+// the AMS survives on the bench/car only because the bus always has an
+// ACKing node so it never sustains Bus_Off -- this is the latent
+// robustness fix (mirrors IFS08-CE-ECU and the bootloader).
+//
+// Mirrors the bootloader's Bootloader_FdcanBusOffRecover
+// (../stm32-can-bootloader, #125 C1 / #174 NG-9). GetProtocolStatus is a
+// cheap PSR read, safe every loop pass; the Stop/Start only runs on an
+// actual fault and is rate-limited by ams::can_recovery (see the header).
+// Stop/Start touches neither the message-RAM RX filter nor the FDCAN_IE
+// interrupt enables, so the boot-time ConfigGlobalFilter +
+// ActivateNotification survive and interrupt-driven RX resumes
+// automatically after a rejoin -- no reconfigure needed.
+void poll_fdcan1_busoff_recovery(ams::can_recovery::BusOffState& st,
+                                 std::uint32_t now) noexcept {
+    FDCAN_ProtocolStatusTypeDef ps = {};
+    if (HAL_FDCAN_GetProtocolStatus(&hfdcan1, &ps) != HAL_OK) {
+        return;
+    }
+    if (!ams::can_recovery::should_attempt_recovery(
+            st, ps.BusOff != 0u, now, ams::config::FdcanBusOffRetryMs)) {
+        return;
+    }
+
+    // Stop -> Start clears CCCR.INIT and arms the M_CAN's automatic
+    // recovery. Stop puts the peripheral back to READY (INIT stays set);
+    // Start clears INIT and the node rejoins after 128*11 recessive bits.
+    (void)HAL_FDCAN_Stop(&hfdcan1);
+    if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
+        // CRUCIAL (#174 NG-9): a Stop/Start timeout latches
+        // hfdcan1.State = HAL_FDCAN_STATE_ERROR, after which EVERY later
+        // HAL_FDCAN_Stop/Start silently no-ops (they gate on State) --
+        // the retry would spin forever and the bus would wedge
+        // permanently deaf. Force the HAL back to READY (clearing the
+        // latched error) so the next poll's Start genuinely re-attempts
+        // the rejoin instead of no-opping.
+        hfdcan1.State     = HAL_FDCAN_STATE_READY;
+        hfdcan1.ErrorCode = HAL_FDCAN_ERROR_NONE;
+    }
+
+    ++g_fdcan1_busoff_recovery_count;
+}
 
 // Pit-diag runtime flag (#247). Toggled by RX dispatch on the
 // PitDiagCmdRxId frame; consumed by the TX scheduler below. Lives in
@@ -309,6 +367,9 @@ extern "C" void ams_acu_can_task_run(void *argument) {
     std::uint32_t last_slow_tx  = now0;
     std::uint32_t last_pit_scan = now0;
 
+    // FDCAN1 Bus-Off recovery latch (single bus, single owner: this task).
+    ams::can_recovery::BusOffState busoff_state{};
+
     for (;;) {
         const auto now           = osKernelGetTickCount();
         const auto next_fast     = last_fast_tx + ams::config::EcuFastTxMs;
@@ -359,6 +420,13 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         const auto bms = ams::BmsService::instance().snapshot();
         const auto cur = ams::CurrentService::instance().snapshot();
         const auto now2 = osKernelGetTickCount();
+
+        // ---- FDCAN1 Bus-Off poll + recovery (every loop pass) ----
+        // Runs unconditionally so it still fires while Bus_Off has the
+        // node deaf (no RX frames arrive, so the queue-get above just
+        // times out at the next TX deadline -- the loop still spins at
+        // <= EcuFastTxMs). The recovery itself is rate-limited internally.
+        poll_fdcan1_busoff_recovery(busoff_state, now2);
 
         // ---- TX scheduler ----
         if (now2 - last_fast_tx >= ams::config::EcuFastTxMs) {

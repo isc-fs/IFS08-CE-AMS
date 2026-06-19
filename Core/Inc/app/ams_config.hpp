@@ -184,6 +184,19 @@ inline constexpr std::uint32_t EcuFastTxMs           = 50;
 inline constexpr std::uint32_t EcuMidTxMs            = 100;
 inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 
+// FDCAN1 Bus-Off recovery rate-limit. On sustained TX errors the M_CAN
+// latches Bus_Off (CCCR.INIT set), which halts BOTH TX and RX -- the node
+// goes silent and stays deaf until a software Stop->Start. AcuCanTask
+// polls HAL_FDCAN_GetProtocolStatus every loop pass (a cheap PSR read)
+// and, on Bus_Off, issues a Stop/Start no more than once per
+// FdcanBusOffRetryMs. The spacing matters: the M_CAN's automatic recovery
+// rejoins only after 128*11 consecutive recessive bits (~2.8 ms of idle
+// bus at 500 kbps), so a Stop/Start every poll would keep restarting that
+// sequence and the node would never finish rejoining. 100 ms mirrors the
+// bootloader's BL_FDCAN_BUSOFF_RETRY_MS (../stm32-can-bootloader). See
+// ams::can_recovery::should_attempt_recovery and acu_can_task.cpp.
+inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
+
 // ---------------------------------------------------------------------------
 // Pit-side diagnostic stream (#247). Runtime-toggleable full-grid telemetry
 // for pit-stop debugging when the accumulator is plugged into can0 (car

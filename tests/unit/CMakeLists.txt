@@ -43,6 +43,7 @@ add_executable(ams_unit_tests
     test_balance_controller.cpp
     test_bms_service.cpp
     test_bootloader.cpp
+    test_can_busoff_recovery.cpp
     test_current_service.cpp
     test_dsl_parity.cpp
     test_dsl_dbc_consistency.cpp
