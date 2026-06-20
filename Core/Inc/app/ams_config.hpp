@@ -95,6 +95,7 @@ inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
 inline constexpr std::uint32_t BmsPollVoltMs     = 250;
 inline constexpr std::uint32_t BmsPollTempMs     = 500;
 inline constexpr std::uint32_t TelemetryPeriodMs = 500;
+inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
@@ -455,6 +456,7 @@ inline constexpr std::uint32_t AmsTelemStatusId = 0x4A0u;  // state + cell-V ext
 inline constexpr std::uint32_t AmsTelemPackId   = 0x4A1u;  // pack V + current
 inline constexpr std::uint32_t AmsTelemTempsId  = 0x4A2u;  // temp extremes + dc bus + heartbeat
 inline constexpr std::uint32_t AmsTelemDiagId   = 0x4A3u;  // diagnostic probes (#123); pure-fn encoder
+inline constexpr std::uint32_t AmsRelayStatusId = 0x4A4u;  // contactor + AMS_OK GPIO read-backs (always-on)
 
 // ---------------------------------------------------------------------------
 // LTC6811-1 + isoSPI BMS chain. New AMS PCB drives a chain of 10 LTCs

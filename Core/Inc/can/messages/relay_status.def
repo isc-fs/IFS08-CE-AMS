@@ -1,0 +1,25 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x4A4  AMS_relay_status -- always-on contactor + SDC-output snapshot.
+ *
+ * MCU-side GPIO read-backs (PB6/PB5/PB7 contactors + PB4 AMS_OK) in byte 0
+ * so an external logger sees the AIR / precharge / AMS_OK states
+ * continuously, without having to arm the pit-diag stream. Emitted at
+ * RelayStatusPeriodMs by SafetyTask. 8-byte DLC to match the rest of the
+ * 0x4A_ telemetry block (shared send_telem path); bytes 1-7 reserved for
+ * future output state. Mirrors ams::telemetry::encode_relay_status() in
+ * Core/Inc/app/telemetry_encoders.hpp.
+ *
+ * NB: these are ODR read-backs -- they confirm what the firmware is
+ * DRIVING the relay coils to, not that the contactor physically closed
+ * (same caveat as Relays::is_*_closed()).
+ *
+ * Field macro args (bits): (name, ctype, abs_bit_offset, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(AMS_relay_status, 0x4A4, 8, "AMS", 100)
+    FIELD_LE_BITS (air_negative, uint8_t, 0, 1, 1, 0, "bool")
+    FIELD_LE_BITS (air_positive, uint8_t, 1, 1, 1, 0, "bool")
+    FIELD_LE_BITS (precharge,    uint8_t, 2, 1, 1, 0, "bool")
+    FIELD_LE_BITS (ams_ok,       uint8_t, 3, 1, 1, 0, "bool")
+CAN_MSG_END(AMS_relay_status)

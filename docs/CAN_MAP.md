@@ -483,6 +483,23 @@ Flight layout:
 > flag; the equivalent diagnostics now live on the pit-diag stream
 > (`0x680..0x6C8`). The flight layout above is the only layout.
 
+### `0x4A4` — AMS relay status
+
+Standard 11-bit. DLC 8. Cadence 100 ms (`RelayStatusPeriodMs`). Always-on
+contactor + SDC-output snapshot so a datalogger can watch the AIR /
+precharge sequence without arming the pit-diag stream. All values are
+**MCU-side GPIO read-backs** (ODR): they confirm what the firmware is
+driving the coils to, not that the contactor physically closed (same
+caveat as `Relays::is_*_closed()`).
+
+| Byte | Bit | Field | Notes |
+|:---:|:---:|---|---|
+| 0 | 0 | `air_negative` | AIR− (PB6) commanded closed |
+| 0 | 1 | `air_positive` | AIR+ (PB5) commanded closed |
+| 0 | 2 | `precharge` | Precharge contactor (PB7) commanded closed |
+| 0 | 3 | `ams_ok` | AMS_OK / SDC-enable (PB4) high = AMS healthy |
+| 1-7 | — | reserved | Zero; room for future output state |
+
 ---
 
 ## RX — vehicle / charger to AMS (FDCAN1)

@@ -137,6 +137,7 @@ void SafetyTask::run() noexcept {
     std::uint32_t state_entry_tick    = last_wake;
     std::uint32_t last_state_tick     = last_wake;
     std::uint32_t last_telemetry_tick = last_wake;
+    std::uint32_t last_relay_tick     = last_wake;
     std::uint8_t  heartbeat           = 0;
 
     // DASH_CHG (PF10) is a MOMENTARY press button -- edge-detect it
@@ -389,6 +390,24 @@ void SafetyTask::run() noexcept {
             if (!send_telem(config::AmsTelemTempsId,  frame_temps))  ++g_telemetry_tx_fail;
 
             ++heartbeat;  // 8-bit wraparound is intentional
+        }
+
+        // 0x4A4 AMS_relay_status -- always-on contactor + AMS_OK GPIO
+        // read-back snapshot on its own cadence (RelayStatusPeriodMs), so an
+        // external logger can watch the AIR / precharge sequence without
+        // arming pit-diag. ODR read-backs: confirm what we drive the coils
+        // to, not that the contactor physically closed.
+        if (now - last_relay_tick >= config::RelayStatusPeriodMs) {
+            last_relay_tick = now;
+            const bool ams_ok_pin =
+                (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET);
+            const auto frame_relay = telemetry::encode_relay_status(
+                Relays::is_air_negative_closed(),
+                Relays::is_air_positive_closed(),
+                Relays::is_precharge_closed(),
+                ams_ok_pin);
+            if (!send_telem(config::AmsRelayStatusId, frame_relay))
+                ++g_telemetry_tx_fail;
         }
     }
 }
