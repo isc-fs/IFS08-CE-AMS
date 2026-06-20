@@ -326,10 +326,15 @@ inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~20
 // (50 / 0.924, residual +0.4 %) and the zero into CurrentZeroCount =
 // 2050 (raw at 0 A). The nominal ideal would be 50 / 2048; the converter
 // math is unchanged -- this just absorbs the measured ADC/VREF gain.
+//
+// Flight-carrier re-cal (2026-06-20): on the assembled-car AMS the zero
+// measured 2054 (HIL carrier was 2050) -- the offset tracks VREF+, so it
+// is board-specific. The 46 gain read back EXACT against an aux-PSU known
+// current, so only the zero moved. Re-measure per carrier.
 inline constexpr std::uint16_t AdcVrefMv          = 3300;
 inline constexpr std::uint16_t AdcMaxCount        = 4095;
 // Pack channel (differential ADC3_INP3/INN3 = PF7/PF8). HIL-commissioned.
-inline constexpr std::int32_t  CurrentZeroCount   = 2050;  // diff zero @ 0 A (HIL #348)  COMMISSION
+inline constexpr std::int32_t  CurrentZeroCount   = 2054;  // diff zero @ 0 A (flight carrier; HIL #348 was 2050)  COMMISSION
 inline constexpr std::int32_t  CurrentMvPerAmpe1  = 46;    // COMMISSION (eff 5.4 mV/A x10; HIL #348 gain trim)
 // DCDC channel (single-ended ADC3_INP11 = PC1; Allegro ACS758 @ 3.3 V).
 inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1650; // ACS758 offset = Vcc/2 @ 3.3 V  COMMISSION
