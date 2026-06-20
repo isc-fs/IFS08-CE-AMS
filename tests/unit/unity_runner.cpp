@@ -139,6 +139,7 @@ void test_fsm_start_waits_without_tsms_or_dash_chg(void);
 void test_fsm_start_waits_with_tsms_only(void);
 void test_fsm_start_waits_with_dash_chg_only(void);
 void test_fsm_start_to_precharge_on_both_inputs(void);
+void test_fsm_start_to_precharge_charger_skips_precharge(void);
 void test_fsm_precharge_reaches_target(void);
 void test_fsm_precharge_stays_below_target(void);
 void test_fsm_transition_commits_to_run_in_car_mode(void);
@@ -377,6 +378,7 @@ int main(void) {
     RUN_TEST(test_fsm_start_waits_with_tsms_only);
     RUN_TEST(test_fsm_start_waits_with_dash_chg_only);
     RUN_TEST(test_fsm_start_to_precharge_on_both_inputs);
+    RUN_TEST(test_fsm_start_to_precharge_charger_skips_precharge);
     RUN_TEST(test_fsm_precharge_reaches_target);
     RUN_TEST(test_fsm_precharge_stays_below_target);
     RUN_TEST(test_fsm_transition_commits_to_run_in_car_mode);
