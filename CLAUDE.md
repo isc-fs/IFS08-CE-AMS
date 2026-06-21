@@ -37,7 +37,7 @@ adds `-DAMS_HIL_CLEAR_ERROR_LATCH=ON` (never in a flight image).
 - **Always open PRs with `gh pr create --base dev`.** The default branch is
   `main`, so omitting `--base dev` mis-targets a release branch. `dev → main`
   is a *release* only, gated on the HIL acceptance plan
-  ([issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)).
+  ([issue #399](https://github.com/isc-fs/IFS08-CE-AMS/issues/399)).
 - **`Closes #N`** goes in the **PR body only** (parsed by
   `close-on-dev-merge.yml`), never in commit messages.
 - **Do NOT add a `Co-Authored-By: Claude` trailer** to commits in this repo.
