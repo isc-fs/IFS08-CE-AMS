@@ -130,6 +130,7 @@ void test_dsl_pack_matches_handrolled_charge(void);
 void test_dsl_pack_roundtrip_signed(void);
 void test_dsl_temps_matches_handrolled(void);
 void test_dsl_temps_roundtrip_negative(void);
+void test_dsl_relay_status_matches_handrolled(void);
 void test_dsl_registry_well_formed(void);
 void test_dsl_descriptors_match_committed_dbc(void);
 void test_dsl_array_descriptors_match_committed_dbc(void);
@@ -369,6 +370,7 @@ int main(void) {
     RUN_TEST(test_dsl_pack_roundtrip_signed);
     RUN_TEST(test_dsl_temps_matches_handrolled);
     RUN_TEST(test_dsl_temps_roundtrip_negative);
+    RUN_TEST(test_dsl_relay_status_matches_handrolled);
     RUN_TEST(test_dsl_registry_well_formed);
     RUN_TEST(test_dsl_descriptors_match_committed_dbc);
     RUN_TEST(test_dsl_array_descriptors_match_committed_dbc);
