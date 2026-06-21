@@ -3,12 +3,12 @@
 // Single point of HAL FDCAN RX-FIFO0 dispatch.
 //
 // HAL_FDCAN_RxFifo0Callback is weak in the HAL; our strong override
-// below is the one the IRQ handler reaches. Only FDCAN1 (the
-// accumulator/vehicle bus) feeds an application queue post-v1.2.0
-// (#73). FDCAN2 stays initialised by CubeMX so the bootloader can
-// take it over after reset, but the app never starts FDCAN2 nor
-// activates its RX-FIFO0 notification, so this callback only fires
-// for &hfdcan1.
+// below is the one the IRQ handler reaches. The app is FDCAN1-only:
+// only FDCAN1 (the accumulator/vehicle bus) feeds an application
+// queue (post-v1.2.0, #73). FDCAN2 has been removed from the CubeMX
+// config entirely -- the app never used it, and the bootloader
+// inits its own peripherals after the reset -- so this callback
+// only ever fires for &hfdcan1.
 
 #include "app/app_globals.h"
 #include "app/can_frame.h"

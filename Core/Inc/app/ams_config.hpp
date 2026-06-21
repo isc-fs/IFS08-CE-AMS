@@ -95,6 +95,7 @@ inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
 inline constexpr std::uint32_t BmsPollVoltMs     = 250;
 inline constexpr std::uint32_t BmsPollTempMs     = 500;
 inline constexpr std::uint32_t TelemetryPeriodMs = 500;
+inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
@@ -184,6 +185,19 @@ inline constexpr std::uint32_t EcuFastTxMs           = 50;
 inline constexpr std::uint32_t EcuMidTxMs            = 100;
 inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 
+// FDCAN1 Bus-Off recovery rate-limit. On sustained TX errors the M_CAN
+// latches Bus_Off (CCCR.INIT set), which halts BOTH TX and RX -- the node
+// goes silent and stays deaf until a software Stop->Start. AcuCanTask
+// polls HAL_FDCAN_GetProtocolStatus every loop pass (a cheap PSR read)
+// and, on Bus_Off, issues a Stop/Start no more than once per
+// FdcanBusOffRetryMs. The spacing matters: the M_CAN's automatic recovery
+// rejoins only after 128*11 consecutive recessive bits (~2.8 ms of idle
+// bus at 500 kbps), so a Stop/Start every poll would keep restarting that
+// sequence and the node would never finish rejoining. 100 ms mirrors the
+// bootloader's BL_FDCAN_BUSOFF_RETRY_MS (../stm32-can-bootloader). See
+// ams::can_recovery::should_attempt_recovery and acu_can_task.cpp.
+inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
+
 // ---------------------------------------------------------------------------
 // Pit-side diagnostic stream (#247). Runtime-toggleable full-grid telemetry
 // for pit-stop debugging when the accumulator is plugged into can0 (car
@@ -220,6 +234,7 @@ inline constexpr std::uint32_t PitDiagPostMortemId       = 0x6C5u;  // stack ove
 inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + git hash[0..3] + BL node id
 inline constexpr std::uint32_t PitDiagPecPerIcAId        = 0x6C7u;  // per-IC PEC count: ICs 0..7 (saturating u8)
 inline constexpr std::uint32_t PitDiagPecPerIcBId        = 0x6C8u;  // per-IC PEC count: ICs 8..9 + reserved
+inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail (#331)
 inline constexpr std::uint8_t  PitDiagCmdDlc             = 4u;
 inline constexpr std::uint8_t  PitDiagEnableMagic[4]     = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
 inline constexpr std::uint8_t  PitDiagDisableMagic[4]    = { 0x00u, 0x00u, 0x00u, 0x00u };
@@ -312,10 +327,15 @@ inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~20
 // (50 / 0.924, residual +0.4 %) and the zero into CurrentZeroCount =
 // 2050 (raw at 0 A). The nominal ideal would be 50 / 2048; the converter
 // math is unchanged -- this just absorbs the measured ADC/VREF gain.
+//
+// Flight-carrier re-cal (2026-06-20): on the assembled-car AMS the zero
+// measured 2054 (HIL carrier was 2050) -- the offset tracks VREF+, so it
+// is board-specific. The 46 gain read back EXACT against an aux-PSU known
+// current, so only the zero moved. Re-measure per carrier.
 inline constexpr std::uint16_t AdcVrefMv          = 3300;
 inline constexpr std::uint16_t AdcMaxCount        = 4095;
 // Pack channel (differential ADC3_INP3/INN3 = PF7/PF8). HIL-commissioned.
-inline constexpr std::int32_t  CurrentZeroCount   = 2050;  // diff zero @ 0 A (HIL #348)  COMMISSION
+inline constexpr std::int32_t  CurrentZeroCount   = 2054;  // diff zero @ 0 A (flight carrier; HIL #348 was 2050)  COMMISSION
 inline constexpr std::int32_t  CurrentMvPerAmpe1  = 46;    // COMMISSION (eff 5.4 mV/A x10; HIL #348 gain trim)
 // DCDC channel (single-ended ADC3_INP11 = PC1; Allegro ACS758 @ 3.3 V).
 inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1650; // ACS758 offset = Vcc/2 @ 3.3 V  COMMISSION
@@ -441,6 +461,7 @@ inline constexpr std::uint32_t AmsTelemStatusId = 0x4A0u;  // state + cell-V ext
 inline constexpr std::uint32_t AmsTelemPackId   = 0x4A1u;  // pack V + current
 inline constexpr std::uint32_t AmsTelemTempsId  = 0x4A2u;  // temp extremes + dc bus + heartbeat
 inline constexpr std::uint32_t AmsTelemDiagId   = 0x4A3u;  // diagnostic probes (#123); pure-fn encoder
+inline constexpr std::uint32_t AmsRelayStatusId = 0x4A4u;  // contactor + AMS_OK GPIO read-backs (always-on)
 
 // ---------------------------------------------------------------------------
 // LTC6811-1 + isoSPI BMS chain. New AMS PCB drives a chain of 10 LTCs

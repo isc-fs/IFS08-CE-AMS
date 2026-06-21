@@ -149,11 +149,30 @@ extern "C" void test_dsl_temps_roundtrip_negative(void) {
 }
 
 // ===========================================================================
+// 0x4A4  AMS_relay_status  (4 contactor/SDC read-back bits in byte 0)
+// ===========================================================================
+extern "C" void test_dsl_relay_status_matches_handrolled(void) {
+    // air_n=1, air_p=0, precharge=1, ams_ok=1 -> bits 0,2,3 set = 0x0D
+    const auto legacy =
+        ams::telemetry::encode_relay_status(true, false, true, true);
+    ifs08::AMS_relay_status_t in{};
+    in.air_negative = 1; in.air_positive = 0; in.precharge = 1; in.ams_ok = 1;
+    std::uint8_t dsl[8] = {0};
+    ifs08::encode_AMS_relay_status(in, dsl);
+    for (unsigned i = 0; i < 8; ++i) TEST_ASSERT_EQUAL_HEX8(legacy[i], dsl[i]);
+    TEST_ASSERT_EQUAL_HEX8(0x0D, legacy[0]);           // explicit bit packing
+    for (unsigned i = 1; i < 8; ++i)
+        TEST_ASSERT_EQUAL_HEX8(0x00, legacy[i]);       // bytes 1..7 reserved/zero
+}
+
+// ===========================================================================
 // Registry well-formedness
 // ===========================================================================
 extern "C" void test_dsl_registry_well_formed(void) {
-    // Phase 2a: 3 telemetry. Phase 2b: +9 ECU TX matrix. Phase 2c: +9 fixed pit-diag + ack + 5 RX = 27.
-    TEST_ASSERT_EQUAL_UINT(27u, ifs08::ALL_MSGS_COUNT);
+    // Phase 2a: 3 telemetry. Phase 2b: +9 ECU TX matrix. Phase 2c: +9 fixed
+    // pit-diag + ack + 5 RX = 27. #331: +1 pit-diag comms-health (0x6C9) = 28.
+    // relay-telemetry: +1 AMS_relay_status (0x4A4) = 29.
+    TEST_ASSERT_EQUAL_UINT(29u, ifs08::ALL_MSGS_COUNT);
     // Spot-check the BE field's DBC start_bit convention (8*byte+7).
     bool checked = false;
     for (unsigned i = 0; i < ifs08::ALL_MSGS_COUNT; ++i) {

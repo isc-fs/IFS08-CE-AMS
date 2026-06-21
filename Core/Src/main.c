@@ -52,7 +52,6 @@
 ADC_HandleTypeDef hadc3;
 
 FDCAN_HandleTypeDef hfdcan1;
-FDCAN_HandleTypeDef hfdcan2;
 
 IWDG_HandleTypeDef hiwdg1;
 
@@ -139,7 +138,6 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_IWDG1_Init(void);
-static void MX_FDCAN2_Init(void);
 void StartDefaultTask(void *argument);
 void StartAppInitTask(void *argument);
 void StartSafetyTask(void *argument);
@@ -197,7 +195,6 @@ int main(void)
   MX_ADC3_Init();
   MX_SPI1_Init();
   MX_IWDG1_Init();
-  MX_FDCAN2_Init();
   /* USER CODE BEGIN 2 */
   /* IWDG1 is started by MX_IWDG1_Init() above (CubeMX-owned), which
    * runs before osKernelStart and so satisfies the "watchdog alive in
@@ -468,59 +465,6 @@ static void MX_FDCAN1_Init(void)
 }
 
 /**
-  * @brief FDCAN2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_FDCAN2_Init(void)
-{
-
-  /* USER CODE BEGIN FDCAN2_Init 0 */
-
-  /* USER CODE END FDCAN2_Init 0 */
-
-  /* USER CODE BEGIN FDCAN2_Init 1 */
-
-  /* USER CODE END FDCAN2_Init 1 */
-  hfdcan2.Instance = FDCAN2;
-  hfdcan2.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
-  hfdcan2.Init.Mode = FDCAN_MODE_NORMAL;
-  hfdcan2.Init.AutoRetransmission = DISABLE;
-  hfdcan2.Init.TransmitPause = DISABLE;
-  hfdcan2.Init.ProtocolException = DISABLE;
-  hfdcan2.Init.NominalPrescaler = 16;
-  hfdcan2.Init.NominalSyncJumpWidth = 1;
-  hfdcan2.Init.NominalTimeSeg1 = 1;
-  hfdcan2.Init.NominalTimeSeg2 = 1;
-  hfdcan2.Init.DataPrescaler = 1;
-  hfdcan2.Init.DataSyncJumpWidth = 1;
-  hfdcan2.Init.DataTimeSeg1 = 1;
-  hfdcan2.Init.DataTimeSeg2 = 1;
-  hfdcan2.Init.MessageRAMOffset = 0;
-  hfdcan2.Init.StdFiltersNbr = 0;
-  hfdcan2.Init.ExtFiltersNbr = 0;
-  hfdcan2.Init.RxFifo0ElmtsNbr = 0;
-  hfdcan2.Init.RxFifo0ElmtSize = FDCAN_DATA_BYTES_8;
-  hfdcan2.Init.RxFifo1ElmtsNbr = 0;
-  hfdcan2.Init.RxFifo1ElmtSize = FDCAN_DATA_BYTES_8;
-  hfdcan2.Init.RxBuffersNbr = 0;
-  hfdcan2.Init.RxBufferSize = FDCAN_DATA_BYTES_8;
-  hfdcan2.Init.TxEventsNbr = 0;
-  hfdcan2.Init.TxBuffersNbr = 16;
-  hfdcan2.Init.TxFifoQueueElmtsNbr = 16;
-  hfdcan2.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
-  hfdcan2.Init.TxElmtSize = FDCAN_DATA_BYTES_8;
-  if (HAL_FDCAN_Init(&hfdcan2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN FDCAN2_Init 2 */
-
-  /* USER CODE END FDCAN2_Init 2 */
-
-}
-
-/**
   * @brief IWDG1 Initialization Function
   * @param None
   * @retval None
@@ -569,8 +513,8 @@ static void MX_SPI1_Init(void)
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
   hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
-  hspi1.Init.CLKPolarity = SPI_POLARITY_HIGH;
-  hspi1.Init.CLKPhase = SPI_PHASE_2EDGE;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
   hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_256;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
@@ -676,6 +620,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PB13 */
+  GPIO_InitStruct.Pin = GPIO_PIN_13;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF9_FDCAN2;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pins : AMS_OK_Pin RELAY_AIR_P_Pin RELAY_AIR_N_Pin RELAY_PRECHARGE_Pin */
   GPIO_InitStruct.Pin = AMS_OK_Pin|RELAY_AIR_P_Pin|RELAY_AIR_N_Pin|RELAY_PRECHARGE_Pin;

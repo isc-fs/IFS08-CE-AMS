@@ -1,0 +1,8 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6C9 PIT_comms_health -- mirrors ams::pit_diag::encode_comms_health().
+ * FDCAN1 TX-path health for the CAN-only bench: Bus-Off recovery count
+ * (#331) + ECU-TX matrix enqueue failures. Both LE u32, no saturation. */
+CAN_MSG(PIT_comms_health, 0x6C9, 8, "AMS", 1000)
+    FIELD_LE (fdcan1_busoff_recovery_count, uint32_t, 0, 32, 1, 0, "count")
+    FIELD_LE (acu_tx_fail,                  uint32_t, 4, 32, 1, 0, "count")
+CAN_MSG_END(PIT_comms_health)

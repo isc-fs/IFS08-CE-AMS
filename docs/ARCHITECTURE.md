@@ -614,6 +614,22 @@ Two primitives, nothing else.
 `AcuCanTask` and `MainTask` are sole producers on FDCAN1 TX and
 call HAL directly.
 
+`AcuCanTask` also owns **FDCAN1 Bus-Off recovery**: each loop pass it
+reads `HAL_FDCAN_GetProtocolStatus` (a cheap PSR read) and, if the M_CAN
+has latched Bus-Off (sustained TX errors → `CCCR.INIT` set → both TX and
+RX halted, no self-clear), issues a rate-limited `HAL_FDCAN_Stop`/`Start`
+to rejoin — at most once per `FdcanBusOffRetryMs` (100 ms) so the M_CAN's
+automatic recovery isn't restarted before it completes. The pure
+rate-limit policy is host-tested in
+[`can_busoff_recovery.hpp`](../Core/Inc/app/can_busoff_recovery.hpp);
+the unwedge of a `Stop`/`Start` timeout (forcing `State` back to `READY`)
+mirrors the bootloader's `Bootloader_FdcanBusOffRecover`. This is a
+robustness path, not a safety predicate — it keeps telemetry, the VCU
+heartbeat RX, and the CAN boot-trigger alive across a transient bus
+fault; a genuinely dead bus still fails safe (Car-mode `VcuStale` latches
+ERROR on schedule). It runs outside `MainTask`, so it cannot affect the
+10 ms AIR-open path (invariant 1/3).
+
 **Event groups** (managed by
 [`app_globals.cpp`](../Core/Src/app/app_globals.cpp) because
 CubeMX 6.16 doesn't emit them from .ioc):

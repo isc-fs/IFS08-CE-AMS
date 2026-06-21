@@ -103,4 +103,24 @@ namespace detail {
     return detail::to_frame(b);
 }
 
+// ---------------------------------------------------------------------------
+// 0x4A3  "AMS relay status" -- layout in
+// Core/Inc/can/messages/relay_status.def. Contactor + AMS_OK GPIO
+// read-backs; SafetyTask supplies the live pin states (Relays::is_*_closed()
+// and the AMS_OK pin) so this stays HAL-free for the host tests.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_relay_status(bool air_negative,
+                                               bool air_positive,
+                                               bool precharge,
+                                               bool ams_ok) noexcept {
+    ifs08::AMS_relay_status_t in{};
+    in.air_negative = air_negative ? 1u : 0u;
+    in.air_positive = air_positive ? 1u : 0u;
+    in.precharge    = precharge    ? 1u : 0u;
+    in.ams_ok       = ams_ok       ? 1u : 0u;
+    std::uint8_t b[8]{};   // DLC-8 frame, only byte 0 defined -> zero bytes 1..7
+    ifs08::encode_AMS_relay_status(in, b);
+    return detail::to_frame(b);
+}
+
 }  // namespace ams::telemetry
