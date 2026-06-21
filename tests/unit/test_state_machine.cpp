@@ -70,14 +70,32 @@ extern "C" void test_fsm_start_waits_with_dash_chg_only(void) {
 }
 
 extern "C" void test_fsm_start_to_precharge_on_both_inputs(void) {
+    // Car mode: classic resistor precharge (AIR- + precharge close).
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
     in.tsms    = true;
     in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+// Charger mode SKIPS the precharge resistor: AIR- closes but the precharge
+// contactor does NOT (the charger voltage-matches; AIR+ closes on the
+// 0x101-fresh proceed). Keeps charge current out of the transient-rated
+// resistor that sits in parallel with AIR+.
+extern "C" void test_fsm_start_to_precharge_charger_skips_precharge(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms    = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE (out.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ClosePrecharge);
 }
 
 // ---------------------------------------------------------------------------

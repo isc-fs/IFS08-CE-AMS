@@ -152,16 +152,28 @@ struct Output {
     switch (in.current) {
     case State::Start: {
         // Leave Start on a DASH_CHG press (rising edge) while TSMS (the
-        // held master switch) is on. Same gate for both car and charger;
-        // SafetyTask decides which by looking at the VCU 0x100 freshness
-        // + the operator charge request (0x101) at this exact moment and
-        // captures it into in.mode_locked, consumed on the way out of
-        // Transition. The press is edge-detected so the operator must
-        // deliberately press -- not merely hold a level -- to energise.
+        // held master switch) is on. SafetyTask has already locked the mode
+        // for THIS iteration (safety_task.cpp), so in.mode_locked is Car or
+        // Charger here -- never Undecided on a real transition. The press is
+        // edge-detected so the operator must deliberately press -- not merely
+        // hold a level -- to energise.
+        //
+        // Charger SKIPS the precharge resistor: the charger voltage-matches
+        // its output to the pack BEFORE asserting the 0x101 request, so
+        // closing AIR+ onto it has no inrush. The precharge contactor sits in
+        // PARALLEL with AIR+, so closing it while the charger sources current
+        // would route the full charge current through the transient-rated
+        // resistor. Charger therefore closes only AIR- here and AIR+ on the
+        // proceed; the resistor never enters the charge loop. Car keeps the
+        // resistor precharge to soft-charge the inverter DC-link. Undecided
+        // (shouldn't reach here) falls back to the conservative resistor path.
         if (in.tsms && in.dash_chg_edge) {
-            return { State::Precharge,
-                     events::safety::CloseAirN |
-                     events::safety::ClosePrecharge };
+            const std::uint32_t connect =
+                (in.mode_locked == Mode::Charger)
+                    ? events::safety::CloseAirN
+                    : (events::safety::CloseAirN |
+                       events::safety::ClosePrecharge);
+            return { State::Precharge, connect };
         }
         return { State::Start, 0u };
     }

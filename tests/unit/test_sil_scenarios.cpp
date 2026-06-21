@@ -185,7 +185,10 @@ extern "C" void test_sil_charger_path(void) {
     auto out = h.step();
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
-    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
+    // Charger SKIPS the precharge resistor (it voltage-matches before
+    // asserting 0x101); AIR- closes, the precharge contactor does NOT --
+    // keeps charge current out of the transient-rated resistor.
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ClosePrecharge);
 
     // 0x101 stays fresh (charger still connected) -> proceed next step.
     h.advance(20);

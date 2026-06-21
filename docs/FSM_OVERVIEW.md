@@ -82,7 +82,7 @@ every 10 ms, independent of the 20 ms FSM cadence (see §12).
 | # | State | Meaning | AIR− | AIR+ | Precharge |
 |---|-------|---------|------|------|-----------|
 | 0 | `Start` | Idle. Pack present, AIRs open. Waiting for operator inputs. | open | open | open |
-| 1 | `Precharge` | AIR− + Precharge closed. DC link charging through the precharge resistor. | CLOSED | open | CLOSED |
+| 1 | `Precharge` | AIR− closed. **Car:** precharge closed → DC link charges through the resistor. **Charger:** precharge stays open (resistor skipped — charger voltage-matches). | CLOSED | open | CLOSED (Car) / open (Charger) |
 | 2 | `Transition` | AIR+ just closed, Precharge just opened. One-step passthrough to Run / Charge. | CLOSED | CLOSED | open |
 | 3 | `Run` | Live, in the car. Terminal until reset/fault. | CLOSED | CLOSED | open |
 | 4 | `Charge` | Live, on the charging station. Terminal until reset/fault. Balancing eligible here. | CLOSED | CLOSED | open |
@@ -287,7 +287,11 @@ offline/stale, current over-limit, VCU stale) latch on the first tick.
 
 ```cpp
 if (in.tsms && in.dash_chg_edge) {
-    return { State::Precharge, CloseAirN | ClosePrecharge };
+    const std::uint32_t connect =
+        (in.mode_locked == Mode::Charger)
+            ? CloseAirN                       // charger: skip the resistor
+            : (CloseAirN | ClosePrecharge);   // car: resistor precharge
+    return { State::Precharge, connect };
 }
 return { State::Start, 0u };
 ```
@@ -295,8 +299,14 @@ return { State::Start, 0u };
 - **Trigger:** TSMS *held* (level) **AND** a DASH_CHG *press* (rising edge), in
   both Car and Charger. The press is edge-detected, so the operator must
   deliberately press — not merely hold a level — to energise.
-- **Action:** AIR− closes + Precharge closes → current flows through the
-  precharge resistor into the DC link.
+- **Action (Car):** AIR− closes + Precharge closes → current flows through the
+  precharge resistor into the inverter DC link.
+- **Action (Charger):** AIR− closes **only** — the precharge resistor is
+  *skipped*. The charger voltage-matches its output to the pack before it
+  asserts `0x101`, so closing AIR+ on the proceed has no inrush; and since the
+  precharge contactor sits in **parallel with AIR+**, closing it while the
+  charger sources current would route the full charge current through the
+  transient-rated resistor. Charger keeps the resistor out of the charge loop.
 - **Mode capture is external.** `SafetyTask` locks `mode_locked` *before* calling
   `fsm::step()` on this exact iteration (see §3), so the FSM body sees the mode
   already locked when `Start → Precharge` fires.
@@ -440,7 +450,7 @@ stateDiagram-v2
     boot_check --> Start : ErrorLatch clear
     boot_check --> Error : ErrorLatch set (BKP1R magic survives reset)
 
-    Start --> Precharge : tsms (held) AND dash_chg edge (press) / CloseAirN + ClosePrecharge ; mode locked by SafetyTask
+    Start --> Precharge : tsms (held) AND dash_chg edge (press) / CloseAirN (+ ClosePrecharge in Car) ; mode locked by SafetyTask
 
     Precharge --> Transition : Car: dc_bus >= 95% pack_V ; Charger: fresh 0x101 request / CloseAirP + OpenPrecharge
     Precharge --> Error : now - entry > PrechargeMaxMs (5000)
@@ -642,8 +652,8 @@ Covers the pure `fsm::step` transitions:
 
 - **Start gating (edge-aware):** stays in Start without TSMS or without the
   DASH_CHG edge; with TSMS only; with the edge only. Fires `Start → Precharge`
-  (with `CloseAirN | ClosePrecharge`) only when TSMS is held AND the DASH_CHG
-  edge is present.
+  (with `CloseAirN`, plus `ClosePrecharge` in Car mode) only when TSMS is held
+  AND the DASH_CHG edge is present.
 - **Precharge (Car):** reaches target → Transition (`CloseAirP | OpenPrecharge`);
   stays below target.
 - **Precharge (Charger):** `test_fsm_precharge_charger_proceeds_on_fresh_request`
