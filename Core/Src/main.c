@@ -31,6 +31,7 @@
 #include "app/can_frame.h"
 #include "app/current_task.h"
 #include "app/safety_task.h"
+#include "app/sd_logger_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
 
@@ -55,8 +56,6 @@ ADC_HandleTypeDef hadc3;
 FDCAN_HandleTypeDef hfdcan1;
 
 IWDG_HandleTypeDef hiwdg1;
-
-SD_HandleTypeDef hsd1;
 
 SPI_HandleTypeDef hspi1;
 
@@ -104,6 +103,13 @@ const osThreadAttr_t CurrentSensorTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
+/* Definitions for SdLoggerTask */
+osThreadId_t SdLoggerTaskHandle;
+const osThreadAttr_t SdLoggerTask_attributes = {
+  .name = "SdLoggerTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for acu_rx_queue */
 osMessageQueueId_t acu_rx_queueHandle;
 const osMessageQueueAttr_t acu_rx_queue_attributes = {
@@ -141,13 +147,13 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_IWDG1_Init(void);
-static void MX_SDMMC1_SD_Init(void);
 void StartDefaultTask(void *argument);
 void StartAppInitTask(void *argument);
 void StartSafetyTask(void *argument);
 void StartBmsPollTask(void *argument);
 void StartAcuCanTask(void *argument);
 void StartCurrentSensorTask(void *argument);
+void StartSdLoggerTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -199,7 +205,6 @@ int main(void)
   MX_ADC3_Init();
   MX_SPI1_Init();
   MX_IWDG1_Init();
-  MX_SDMMC1_SD_Init();
   MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   /* IWDG1 is started by MX_IWDG1_Init() above (CubeMX-owned), which
@@ -268,6 +273,9 @@ int main(void)
 
   /* creation of CurrentSensorTask */
   CurrentSensorTaskHandle = osThreadNew(StartCurrentSensorTask, NULL, &CurrentSensorTask_attributes);
+
+  /* creation of SdLoggerTask */
+  SdLoggerTaskHandle = osThreadNew(StartSdLoggerTask, NULL, &SdLoggerTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -496,37 +504,6 @@ static void MX_IWDG1_Init(void)
   /* USER CODE BEGIN IWDG1_Init 2 */
 
   /* USER CODE END IWDG1_Init 2 */
-
-}
-
-/**
-  * @brief SDMMC1 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_SDMMC1_SD_Init(void)
-{
-
-  /* USER CODE BEGIN SDMMC1_Init 0 */
-
-  /* USER CODE END SDMMC1_Init 0 */
-
-  /* USER CODE BEGIN SDMMC1_Init 1 */
-
-  /* USER CODE END SDMMC1_Init 1 */
-  hsd1.Instance = SDMMC1;
-  hsd1.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
-  hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
-  hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
-  hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd1.Init.ClockDiv = 3;
-  if (HAL_SD_Init(&hsd1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN SDMMC1_Init 2 */
-
-  /* USER CODE END SDMMC1_Init 2 */
 
 }
 
@@ -792,6 +769,22 @@ void StartCurrentSensorTask(void *argument)
   /* Unreachable: ams_current_sensor_task_run() never returns. */
   for(;;) { osDelay(1); }
   /* USER CODE END StartCurrentSensorTask */
+}
+
+/* USER CODE BEGIN Header_StartSdLoggerTask */
+/**
+* @brief Function implementing the SdLoggerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSdLoggerTask */
+void StartSdLoggerTask(void *argument)
+{
+  /* USER CODE BEGIN StartSdLoggerTask */
+  ams_sd_logger_task_run(argument);
+  /* Unreachable: ams_sd_logger_task_run() never returns. */
+  for(;;) { osDelay(1); }
+  /* USER CODE END StartSdLoggerTask */
 }
 
 /**

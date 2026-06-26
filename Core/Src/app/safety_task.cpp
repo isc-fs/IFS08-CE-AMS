@@ -33,8 +33,12 @@
 #include "vehicle_service.hpp"
 #include "watchdog.hpp"
 
+#include "app/sd_logger_task.h"
+
 #include "cmsis_os2.h"
 #include "main.h"
+
+#include <cstring>
 
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
@@ -138,6 +142,7 @@ void SafetyTask::run() noexcept {
     std::uint32_t last_state_tick     = last_wake;
     std::uint32_t last_telemetry_tick = last_wake;
     std::uint32_t last_relay_tick     = last_wake;
+    std::uint32_t last_log_tick       = last_wake;
     std::uint8_t  heartbeat           = 0;
 
     // DASH_CHG (PF10) is a MOMENTARY press button -- edge-detect it
@@ -408,6 +413,43 @@ void SafetyTask::run() noexcept {
                 ams_ok_pin);
             if (!send_telem(config::AmsRelayStatusId, frame_relay))
                 ++g_telemetry_tx_fail;
+        }
+
+        // ---------------- Datalogging sample (every LogSamplePeriodMs) ----------------
+        // Best-effort hand-off to SdLoggerTask via the wait-free ring, built
+        // from THIS tick's already-taken snapshots. sd_log_push() never blocks
+        // and never faults -- a full ring (SD stall / #406 log-pull) just drops
+        // the record. Off the safety path entirely; the only cost on the 10 ms
+        // loop is a bounded ~590 B struct copy at 4 Hz.
+        if (now - last_log_tick >= config::LogSamplePeriodMs) {
+            last_log_tick = now;
+            // Static scratch: keep the 632 B record off the SafetyTask stack
+            // (it already holds a ~620 B bms_snap). Single-writer, fully
+            // overwritten every pass before push -- no concurrency concern.
+            static LogRecord rec{};
+            rec.tick_ms             = now;
+            rec.pack_mV             = bms_snap.pack_voltage_mV;
+            rec.pack_current_raw_mA = cur_snap.raw_mA;
+            rec.pack_current_mA     = cur_snap.filtered_mA;
+            rec.dcdc_current_mA     = cur_snap.dcdc_filtered_mA;
+            rec.min_cell_mV         = bms_snap.min_cell_mV;
+            rec.max_cell_mV         = bms_snap.max_cell_mV;
+            rec.dc_bus_V            = veh_snap.dc_bus_V;
+            rec.min_tempC           = bms_snap.min_tempC;
+            rec.max_tempC           = bms_snap.max_tempC;
+            rec.avg_tempC           = bms_snap.avg_tempC;
+            rec.fsm_state           = g_state_telemetry;
+            rec.mode                = g_mode_locked_telemetry;
+            rec.fault_reason        = g_fault_reason_telemetry;
+            rec.fault_detail        = g_fault_detail_telemetry;
+            rec.module_online_mask  = bms_snap.module_online_mask;
+            rec.ams_ok              = (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin)
+                                       == GPIO_PIN_SET) ? 1u : 0u;
+            rec.tsms                = tsms ? 1u : 0u;
+            rec.dash_chg            = dash_chg ? 1u : 0u;
+            std::memcpy(rec.cell_mV,    bms_snap.cell_mV,    sizeof rec.cell_mV);
+            std::memcpy(rec.cell_tempC, bms_snap.cell_tempC, sizeof rec.cell_tempC);
+            sd_log_push(rec);
         }
     }
 }
