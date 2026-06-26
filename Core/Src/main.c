@@ -20,6 +20,7 @@
 #include "main.h"
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -54,6 +55,8 @@ ADC_HandleTypeDef hadc3;
 FDCAN_HandleTypeDef hfdcan1;
 
 IWDG_HandleTypeDef hiwdg1;
+
+SD_HandleTypeDef hsd1;
 
 SPI_HandleTypeDef hspi1;
 
@@ -138,6 +141,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_IWDG1_Init(void);
+static void MX_SDMMC1_SD_Init(void);
 void StartDefaultTask(void *argument);
 void StartAppInitTask(void *argument);
 void StartSafetyTask(void *argument);
@@ -195,6 +199,8 @@ int main(void)
   MX_ADC3_Init();
   MX_SPI1_Init();
   MX_IWDG1_Init();
+  MX_SDMMC1_SD_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   /* IWDG1 is started by MX_IWDG1_Init() above (CubeMX-owned), which
    * runs before osKernelStart and so satisfies the "watchdog alive in
@@ -494,6 +500,37 @@ static void MX_IWDG1_Init(void)
 }
 
 /**
+  * @brief SDMMC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SDMMC1_SD_Init(void)
+{
+
+  /* USER CODE BEGIN SDMMC1_Init 0 */
+
+  /* USER CODE END SDMMC1_Init 0 */
+
+  /* USER CODE BEGIN SDMMC1_Init 1 */
+
+  /* USER CODE END SDMMC1_Init 1 */
+  hsd1.Instance = SDMMC1;
+  hsd1.Init.ClockEdge = SDMMC_CLOCK_EDGE_RISING;
+  hsd1.Init.ClockPowerSave = SDMMC_CLOCK_POWER_SAVE_DISABLE;
+  hsd1.Init.BusWide = SDMMC_BUS_WIDE_4B;
+  hsd1.Init.HardwareFlowControl = SDMMC_HARDWARE_FLOW_CONTROL_DISABLE;
+  hsd1.Init.ClockDiv = 3;
+  if (HAL_SD_Init(&hsd1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SDMMC1_Init 2 */
+
+  /* USER CODE END SDMMC1_Init 2 */
+
+}
+
+/**
   * @brief SPI1 Initialization Function
   * @param None
   * @retval None
@@ -602,6 +639,7 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -614,6 +652,12 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LTC6820_CS_GPIO_Port, LTC6820_CS_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : MICROSD_DET_Pin */
+  GPIO_InitStruct.Pin = MICROSD_DET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(MICROSD_DET_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : TSMS_Pin DASH_CHG_Pin */
   GPIO_InitStruct.Pin = TSMS_Pin|DASH_CHG_Pin;
