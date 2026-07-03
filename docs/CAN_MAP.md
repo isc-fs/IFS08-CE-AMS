@@ -19,8 +19,16 @@ switching (all frames classic).
 
 | Bus | Role | Frame format | Filter |
 |---|---|---|---|
-| **FDCAN1** | Accumulator / vehicle / telemetry | Standard only (extended rejected at HW filter since #236) | Accept all unmatched standard into FIFO0; reject extended; reject remote |
-| **FDCAN2** | Bootloader-only post-v1.2.0 | Standard | Initialised by CubeMX but never started by the app. The bootloader (`isc-fs/stm32-can-bootloader`) claims FDCAN2 after a magic-reset jump for the flash workflow. |
+| **FDCAN1** | Accumulator / vehicle / telemetry / bootloader-trigger | Standard only (extended rejected at HW filter since #236) | Accept all unmatched standard into FIFO0; reject extended; reject remote |
+
+**The app is FDCAN1-only.** FDCAN2 was dropped from the AMS CubeMX
+project in #388 (`a885bf5`) — there is no `MX_FDCAN2_Init` and no
+`hfdcan2` handle; the sole residue is the PB13 pin still muxed to
+`GPIO_AF9_FDCAN2` (unused). The in-band reboot trigger (`0x002`) rides on
+FDCAN1 alongside everything else (see below). The
+`isc-fs/stm32-can-bootloader` is a **separate sector-0 image** that brings
+up its own CAN peripheral from scratch after the magic-reset jump — the
+AMS app does not leave any peripheral configured for it.
 
 ---
 
@@ -308,59 +316,25 @@ old logs can find the cross-reference.
 Legacy 2-byte unsigned current frame. Removed; `0x135` is the successor.
 Kept as a doc anchor for log-archaeology.
 
-### `0x500` — current warning, 80%–100% of `C_MAX`
+### `0x500` / `0x501` / `0x502` — current warning / over-limit / normal **[RESERVED — not emitted]**
 
-| Field | Value |
-|---|---|
-| Direction | TX |
-| Bus | FDCAN1 |
-| ID type | Standard |
-| DLC | 1 |
-| Payload | 0x00 (placeholder) |
-| Trigger | `0.8 · C_MAX < current < C_MAX` |
+`AcuTxCurrentWarnId` (`0x500`), `AcuTxCurrentOverLimitId` (`0x501`), and
+`AcuTxCurrentNormalId` (`0x502`) are declared in `ams_config.hpp:180–182`
+but marked **reserved for future use** (comment at `ams_config.hpp:177–179`,
+alongside the retired `0x450`). **No current firmware emits them** —
+`acu_can_task.cpp` transmits only `0x135` for current. There is no
+threshold/warning/recovery current frame on the wire today; these IDs are
+placeholders for a future warning stream. (Historically these were
+`class_curent.cpp` frames; that legacy file is gone.)
 
-Source: `class_curent.cpp:99`.
+### `0x40D – 0x412` — temperature forwarding (charger mode only) **[RETIRED — FDCAN2 drop + isoSPI]**
 
-### `0x501` — current over-limit alert
-
-| Field | Value |
-|---|---|
-| Direction | TX |
-| Bus | FDCAN1 |
-| ID type | Standard |
-| DLC | 2 |
-| Trigger | `current > C_MAX` (single shot, counter increments) |
-
-Source: `class_curent.cpp:105`.
-
-### `0x502` — current normal (recovery)
-
-| Field | Value |
-|---|---|
-| Direction | TX |
-| Bus | FDCAN1 |
-| ID type | Standard |
-| DLC | 2 |
-| Payload | 0x00 |
-| Trigger | current drops below threshold, repeated 5× for redundancy |
-
-Source: `class_curent.cpp:124`.
-
-### `0x40D – 0x412` — temperature forwarding (charger mode only)
-
-| Field | Value |
-|---|---|
-| Direction | TX (AMS forwards raw FDCAN2 RX onto FDCAN1) |
-| Bus | FDCAN1 |
-| ID type | Extended |
-| DLC | 8 |
-| Trigger | `flag_charger == 1` |
-
-Frames are passed through unmodified for the charger to consume. IDs are
-shifted from `0x401–0x406` (FDCAN2 RX) into the `0x40D–0x412` range.
-
-Source: `BMS_MOD::parse()` `class_bms.cpp:170`,
-`Temperatures_MOD::parse()` `class_temperatures.cpp:86,99`.
+This charger-mode passthrough forwarded raw **FDCAN2** temperature RX onto
+FDCAN1 as extended-ID frames. It no longer exists: FDCAN2 was dropped
+(#388, `a885bf5`), so there is no FDCAN2 RX to forward, and temperatures now
+come from the LTC6811-1 isoSPI chain (`docs/BMS_LTC6811.md`) rather than
+CAN. Nothing in the current build emits `0x40D–0x412`. (The legacy
+`class_bms.cpp` / `class_temperatures.cpp` source is gone.)
 
 ---
 
@@ -581,18 +555,13 @@ FSM Start→Precharge transition now requires `TSMS` held **and** a
 momentary button edge-detected at the 10 ms cadence in `safety_task.cpp`
 (#305). Run/Charge are sustained by TSMS alone.
 
-### `0x401 – 0x406` — accumulator temperature sensors
+### `0x401 – 0x406` — accumulator temperature sensors **[RETIRED — FDCAN2 drop + isoSPI]**
 
-| Field | Value |
-|---|---|
-| Direction | RX (temp module → AMS) |
-| Bus | FDCAN2 (not FDCAN1 — VERIFY in legacy) |
-| ID type | Standard |
-| DLC | 8 |
-| Encoding | int8 °C per byte |
-| Total | 38 sensors across 6 frames |
-
-Source: `Temperatures_MOD::parse()` `class_temperatures.cpp:73–134`.
+On-CAN temperature RX rode the legacy **FDCAN2** bus, which no longer
+exists (#388, `a885bf5`). No current firmware consumes `0x401–0x406`:
+accumulator temperatures are read over the LTC6811-1 isoSPI chain
+(`docs/BMS_LTC6811.md`), not CAN. (The legacy `class_temperatures.cpp`
+parser is gone.)
 
 ### `0x18FF50E7` — charger detected **[RETIRED — fix/48]**
 
@@ -611,21 +580,23 @@ re-evaluates.
 Not from the legacy AMS — added in the refactor for in-system firmware
 update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-bootloader).
 
-> Moved from FDCAN2 to FDCAN1 in v1.2.0 (#73). FDCAN2 stays the
-> bootloader's working bus after reset, but the in-band reboot
-> trigger now rides on the accumulator/vehicle bus alongside
-> everything MingoCAN already sends.
+> Moved from FDCAN2 to FDCAN1 in v1.2.0 (#73). The in-band reboot
+> trigger rides on the accumulator/vehicle bus (FDCAN1) alongside
+> everything MingoCAN already sends. The AMS app is FDCAN1-only
+> (FDCAN2 dropped in #388, `a885bf5`); the stm32-can-bootloader is a
+> separate sector-0 image that brings up its own CAN peripheral after
+> the reset — the app does not leave anything configured for it.
 
 ### `0x002` — request reboot into bootloader
 
 | Field | Value |
 |---|---|
 | Direction | RX (host → AMS) |
-| Bus | **FDCAN1** (accumulator bus; the bootloader takes FDCAN2 over after the reset) |
+| Bus | **FDCAN1** (accumulator bus; the sector-0 bootloader brings up its own CAN after the reset) |
 | ID type | Standard 11-bit, very high arbitration priority |
 | DLC | 4 |
 | Payload | `{0xB0, 0x07, 0xAD, 0x11}` -- all 4 bytes must match exactly |
-| Effect | `AcuCanTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting flash commands on FDCAN2. |
+| Effect | `AcuCanTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The sector-0 bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting flash commands on the CAN peripheral it brings up. |
 | Failure modes | Wrong bus, wrong ID, wrong DLC, or any byte of the payload differing → frame silently dropped, no reboot. |
 
 Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`BlBootReqCanId`, `BlBootReqPayload`, `BlBootReqDlc`).
@@ -658,9 +629,12 @@ For each TX/RX frame above, the refactor must:
 
 Open coordination items with the VCU team:
 
-- [ ] Widen `0x450` payload to signed 16-bit mA.
-- [ ] Confirm `0x600` bus assignment (FDCAN1 vs FDCAN2).
-- [ ] Confirm `0x401–0x406` bus assignment.
+- [x] ~~Widen `0x450` payload to signed 16-bit mA.~~ Done differently:
+      `0x450` retired, `0x135` carries signed 16-bit deciamps (fix/53).
+- [x] ~~Confirm `0x600` bus assignment.~~ Retired (fix/48); replaced by the
+      TSMS/DASH_CHG GPIOs. The app is FDCAN1-only (FDCAN2 dropped, #388).
+- [x] ~~Confirm `0x401–0x406` bus assignment.~~ Retired; accumulator
+      temperatures now arrive over LTC6811-1 isoSPI, not CAN.
 - [ ] Agree on a new pack-status frame on FDCAN1 at 100 ms cadence with
       voltage / current / state / fault word packed together (planned for
       Phase 4, feat/12).

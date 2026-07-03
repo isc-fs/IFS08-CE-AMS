@@ -25,8 +25,8 @@ the instant anything goes out of bounds.
   a daisy-chain of LTC6811 monitors (via an LTC6820 bridge on SPI1), plus
   the pack current from an analog shunt read differentially on ADC3
   (PF7/PF8).
-- **Drives** — three contactors (AIR−, AIR+, precharge) on GPIO PB5/6/7,
-  and the `AMS_OK` leg of the shutdown circuit (SDC) on PB4.
+- **Drives** — three contactors — AIR− (PB6), AIR+ (PB5), precharge (PB7)
+  — and the `AMS_OK` leg of the shutdown circuit (SDC) on PB4.
 - **Kills** — a 10 ms safety supervisor evaluates a set of fault
   predicates every tick; any breach latches `Error`, opens every
   contactor, and drops `AMS_OK`. The latch is sticky across resets.
@@ -77,7 +77,7 @@ git checkout dev
 cmake -B build-tests -S tests/unit
 cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
-#   → expect "182 Tests 0 Failures".
+#   → expect all tests passing, 0 failures.
 
 # 2) Cross-compile the firmware.
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
@@ -124,7 +124,7 @@ Three ideas do most of the work:
 3. **Pure-logic core.** The FSM ([`state_machine.hpp`](../Core/Inc/app/state_machine.hpp)),
    the fault predicates ([`safety_predicates.hpp`](../Core/Inc/app/safety_predicates.hpp)),
    and the CAN/LTC encoders are HAL-free pure functions — which is why
-   there are 182 host unit tests with no hardware or RTOS mocked.
+   the full host unit-test suite runs with no hardware or RTOS mocked.
 
 ---
 
@@ -194,7 +194,7 @@ Full detail is in [`README.md`](../README.md) and
   message fills its description — make it good.
 - **PRs target `dev`.** Put `Closes #<issue>` in the body. A `dev → main`
   PR is a *release* and only happens after the HIL acceptance gate
-  ([issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)) is
+  ([issue #399](https://github.com/isc-fs/IFS08-CE-AMS/issues/399)) is
   green on the same SHA.
 - **Touching the safety supervisor, relays, FSM, or a predicate?** Label
   the PR `safety-critical` — it carries a higher review bar (two reviews,

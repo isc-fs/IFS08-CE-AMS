@@ -66,9 +66,11 @@ Nominal (ideal) calibration:
 > **0.924× (7.6 % low)** with a **+0.6 A** zero (6-boot spread 0.1 A).
 > Folding that effective ADC/VREF gain into the COMMISSION constants:
 > **`CurrentMvPerAmpe1 = 46`** (50 / 0.924, residual +0.4 %) and
-> **`CurrentZeroCount = 2050`** (raw at 0 A) → the over-current trip
-> lands at **200 A real** and telemetry is accurate. Re-measure on each
-> new carrier; the gain is board-specific (VREF+ tolerance).
+> **`CurrentZeroCount = 2054`** (raw at 0 A, flight carrier — HIL #348
+> was 2050) → the over-current trip lands at **200 A real** and
+> telemetry is accurate. The zero offset tracks VREF+ and is
+> board-specific, so re-measure it on each new carrier (the gain is a
+> VREF+ tolerance term too).
 - **Sign convention**: discharge → `OUT_P` above `OUT_N` → raw above
   mid-scale → positive mA. Charge does the opposite.
 - **Observable range**: the differential pair spans ≈ `±Vref`, well
@@ -105,7 +107,7 @@ by a few LSB; calibrate before v1.0.0.
 ### 2.3 Absolute limit
 
 `CurrentMaxMa` defaults to 200 000 mA (200 A). With the differential
-front-end this threshold maps to a raw code (`2050 + ~571 ≈ 2621`) well
+front-end this threshold maps to a raw code (`2054 + ~571 ≈ 2625`) well
 inside `0…4095`, so the predicate `|filtered_mA| > CurrentMaxMa` is now a
 **real, reachable** over-current trip (no longer defeated by an 82.5 A
 clip). Keep it at the FS-rules value unless a tighter pack limit applies.
@@ -396,16 +398,8 @@ touching the IWDG constants.
 
 ## 6. Fan duty cycles
 
-`FanDuty[]` in `safety_task.cpp` (MainTask's anonymous namespace):
-
-| State | Default % | Tune by |
-|---|---|---|
-| Run    | 40 | thermal soak test at peak discharge |
-| Charge | 75 | thermal soak test at max charge rate |
-
-Increase the Run duty if the pack hits `CellOverTempC − 5°C` during a 22-
-minute autocross run. The 75 % charge default is conservative; you
-can drop to 60 % if the charger is itself temperature-limited.
+Cooling fans are wired permanently on (fan PWM retired in fix/48; see
+`main.c`). There is no firmware fan-duty constant to commission.
 
 ---
 
@@ -416,7 +410,12 @@ vehicle:
 
 1. Cold-boot from VBAT-only → AIRs read open via clamp meter
 2. Press start button with healthy pack → reach `Run` within 2 s
-3. Charger plug-in from `Run` → `Charge`, fan to 75 %
+3. From `Start` with the VCU `0x100` heartbeat absent and a fresh `0x101`
+   charge request, press DASH_CHG (TSMS held) → mode locks Charger →
+   `Precharge` (AIR− only, precharge resistor skipped) → `Transition` →
+   `Charge`; confirm AIR+ closes and the precharge contactor never closes.
+   (Charge cannot be entered from `Run` — mode is locked at Start→Precharge
+   and never re-evaluated.)
 4. Force-open any BMS module (pull its isoSPI cable from the chain) →
    `Error` within `BmsStaleMs + one V-poll period`, AIRs open, backup
    register flag set

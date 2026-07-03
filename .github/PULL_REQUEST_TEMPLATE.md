@@ -42,7 +42,7 @@ Closes #
 
 <!-- What did you run? Tick all that apply. -->
 
-- [ ] Unit tests pass locally (`cmake --build build && ctest`)
+- [ ] Unit tests pass locally (`cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-dir build-tests`)
 - [ ] SIL integration tests pass
 - [ ] HIL build green (`/hil-build <subdir>` once available)
 - [ ] Bench-tested on hardware

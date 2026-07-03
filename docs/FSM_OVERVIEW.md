@@ -501,7 +501,8 @@ fsm::Mode  mode_locked = fsm::Mode::Undecided;
 > **HIL build deliberately violates the sticky-latch invariant.** On flight
 > builds the ErrorLatch is sticky — once set, only physical backup-domain power
 > loss clears it. Under `-DAMS_HIL_CLEAR_ERROR_LATCH` the latch is wiped on every
-> boot (VBAT-backed BKP1R outlives bench power cycles for tens of seconds).
+> boot (the VDD-fed BKP1R holds only briefly on residual rail charge across a
+> bench power cycle, so the explicit clear is belt-and-braces).
 > **Never compile the latch-clear flag into a flight image.**
 
 DASH_CHG edge tracking is seeded at boot from the live PF10 level so a button
@@ -557,7 +558,7 @@ sequenceDiagram
   Note over Boot,EL: power cycle / reset
 
   Boot->>EL: ErrorLatch::is_set?
-  EL-->>Boot: yes (magic in VBAT-backed BKP)
+  EL-->>Boot: yes (magic in VDD-backed BKP, survives warm reset)
   Boot->>ST: seed state = Error
   ST->>ST: Relays::open_all (redundant)
 ```
@@ -571,10 +572,10 @@ There are **two paths into Error**, both of which set the latch:
   `Error`, `SafetyTask` sets the latch and, if no predicate reason was recorded,
   stamps `g_fault_reason_telemetry = 12` (`FsmError`).
 
-VBAT keeps the backup domain alive across software resets, watchdog resets, and
-brown-outs (so long as the VBAT cap holds). Only **full backup-domain power
-loss** clears the latch in flight. On the bench, `App_InitTask` wipes it on every
-boot under the HIL latch-clear flag.
+The VDD-fed backup domain keeps the flag across warm resets (software / NVIC,
+watchdog, reset-pin) but **NOT** across a full LV power-cycle or a VDD-collapsing
+brown-out, which clear it (no VBAT, #324). On the bench, `App_InitTask` wipes it
+on every boot under the HIL latch-clear flag.
 
 ---
 
@@ -642,8 +643,8 @@ bits 3:2 `mode_locked`, bit 1 TSMS readback, bit 0 DASH_CHG live level.
 
 ## 13. Unit-test coverage
 
-All tests run host-side (Unity), no FreeRTOS/HAL dependency. **182 host tests**
-total across the suite; the FSM-specific files below were reworked for the
+All tests run host-side (Unity), no FreeRTOS/HAL dependency. **~218 host tests
+on `dev`** across the suite; the FSM-specific files below were reworked for the
 edge-detect / mode-specific-precharge behaviour.
 
 ### `tests/unit/test_state_machine.cpp`
@@ -684,6 +685,9 @@ End-to-end scenario harness driving multi-step runs:
   request hits `PrechargeMaxMs` → Error.
 - `test_sil_tsms_drop_in_run_rearms` — TSMS drop in Run de-energises to Start, then re-arms, with
   all `Open*` bits.
+- `test_sil_bus_collapse_in_run_rearms` — sustained DC-bus collapse in Run (AIRs
+  opened externally, #330) de-energises to Start (all `Open*`, no `ForceError`),
+  then re-arms and re-runs precharge from scratch.
 
 (The predicate, debounce, AMS_OK, and ErrorLatch logic are additionally covered
 by their own dedicated unit-test files in `tests/unit/`.)
