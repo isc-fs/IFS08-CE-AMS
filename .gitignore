@@ -69,7 +69,8 @@ CMakeUserPresets.json
 
 # Editor / IDE local config
 .clangd
-.vscode/
+.vscode/*
+!.vscode/settings.json
 .idea/
 
 # PCB files (schematics, layouts, gerbers). The firmware repo is not
