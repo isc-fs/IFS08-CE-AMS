@@ -1,0 +1,21 @@
+{
+    // ── ISC MingoCAN flasher — how to build + flash THIS repo. ──
+    // Committed (this is the one shared .vscode file — see .gitignore) so
+    // every AMS clone builds + flashes from the VS Code extension with no
+    // per-dev setup. Your CAN adapter (iscFs.interface / iscFs.channel) is
+    // PER-MACHINE — keep it in your USER settings, NOT here.
+    "iscFs.nodeId": "0x2",
+    "iscFs.buildCommand": "cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake && cmake --build build",
+    "iscFs.firmwareArtifact": "build/AMS.elf",
+
+    // ── STM32CubeCLT editor tooling. ──
+    "cmake.cmakePath": "cube-cmake",
+    "cmake.configureArgs": ["-DCMAKE_COMMAND=cube-cmake"],
+    "cmake.preferredGenerators": ["Ninja"],
+    "stm32cube-ide-clangd.path": "cube",
+    "stm32cube-ide-clangd.arguments": [
+        "starm-clangd",
+        "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-gcc*",
+        "--query-driver=${env:CUBE_BUNDLE_PATH}/gnu-tools-for-stm32/14.3.1+st.2/bin/arm-none-eabi-g++*"
+    ]
+}
