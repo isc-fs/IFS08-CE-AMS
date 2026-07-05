@@ -20,7 +20,7 @@ conventions that go beyond "open a feat branch and PR to dev".
 | What is the current phase plan? | [`ROADMAP.md`](ROADMAP.md) (auto-generated) |
 | Source of truth for the roadmap | [`.github/roadmap.yaml`](.github/roadmap.yaml) |
 | Day-to-day Git flow | [`README.md`](README.md) |
-| Bench acceptance criteria for a release | HIL plan — [issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317) |
+| Bench acceptance criteria for a release | HIL plan — [issue #399](https://github.com/isc-fs/IFS08-CE-AMS/issues/399) (v1.6.2; supersedes #317) |
 
 ---
 
@@ -61,11 +61,12 @@ Required for merge:
 
 1. **`Closes #N` line in the body**, referencing the tracking issue. The
    `close-on-dev-merge.yml` workflow needs it to auto-close on merge.
-2. **CI green** — firmware cross-compile, 182 host unit + SIL tests, and the "DBC matches generator" check.
+2. **CI green** — firmware cross-compile, the full host unit + SIL suite, and the "DBC matches code (dbc_dump)" check.
 3. **One approving review** from another team member.
 4. **`safety-critical` label** if the PR touches `MainTask`
    (the consolidated safety + FSM + telemetry task in
-   `safety_task.cpp`), `RelayDriver`, the FSM, or any safety
+   `safety_task.cpp`), `Relays` (`relay_driver.{hpp,cpp}` —
+   contactors + AMS_OK), the FSM, or any safety
    predicate. PRs with this label need explicit confirmation that
    `docs/ARCHITECTURE.md` invariants still hold.
 
@@ -86,15 +87,33 @@ Required for merge:
 
 ## Adding a new CAN frame
 
-1. Add the `constexpr` ID, DLC, and any related thresholds to
-   `Core/Inc/app/ams_config.hpp`.
-2. Add encode/decode free functions in the relevant encoder header
-   (`telemetry_encoders.hpp`, `acu_tx_encoders.hpp`) or the per-service
-   file that owns the frame (e.g. `vehicle_service.cpp` for an RX frame).
-3. Add a unit test in `tests/unit/` covering encode/decode round-trip and
-   edge cases.
-4. Update `docs/CAN_MAP.md` with the new entry.
-5. If the frame talks to the VCU, label the PR `protocol` and
+The wire layout is code-first: there is exactly **one** place each frame's
+byte layout is written down — its `.def` descriptor — from which the
+struct, encoder, decoder, and DBC row are all generated. Don't author the
+layout in the encoder headers.
+
+1. Add (or edit) the frame's `.def` descriptor under
+   `Core/Inc/can/messages/` — the single source of truth for the ID, DLC,
+   and every field — and register it in
+   `Core/Inc/can/messages/all_messages.inc`. (Any related thresholds or a
+   period constant still go in `Core/Inc/app/ams_config.hpp`.)
+2. If a firmware call site needs it, add a **thin adapter** in the
+   relevant encoder header (`Core/Inc/app/telemetry_encoders.hpp`,
+   `Core/Inc/app/acu_tx_encoders.hpp`) that maps service fields into the
+   generated `ifs08::*_t` struct and calls the generated `ifs08::encode_*`.
+   RX handlers still live in the per-service file that owns the frame
+   (e.g. `vehicle_service.cpp` for an RX frame).
+3. Add a unit test in `tests/unit/` covering the encode/decode round-trip
+   and hardcoded-byte parity.
+4. Regenerate and commit the DBC. The `DBC matches code (dbc_dump)` CI
+   check — plus the `dbcinator` bot — enforces `docs/dbc/ams.dbc` against
+   the descriptors; a stale DBC fails CI. Regenerate with:
+   ```bash
+   c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump \
+     && /tmp/dbc_dump > docs/dbc/ams.dbc
+   ```
+5. Update `docs/CAN_MAP.md` with the new entry.
+6. If the frame talks to the VCU, label the PR `protocol` and
    confirm the change with the VCU team before merging.
 
 > The BMS no longer rides on CAN since v1.2.0 — BMS work goes through
@@ -131,10 +150,10 @@ Required for merge:
 
 1. Confirm the task is necessary — prefer adding a method to an existing
    service first. Tasks cost stack and context-switch overhead.
-2. Update `docs/ARCHITECTURE.md` § 2 (task table) with priority, period,
+2. Update `docs/ARCHITECTURE.md` § 3 (task table) with priority, period,
    and role.
-3. Update `docs/ARCHITECTURE.md` § 4 if the task introduces a new queue
-   or event flag.
+3. Update `docs/ARCHITECTURE.md` § 8 (inter-task signalling) if the task
+   introduces a new queue or event flag.
 4. Implement in `Core/Src/app/<name>_task.cpp` with an
    `extern "C"` entry point in `freertos.cpp`.
 5. Use `osDelayUntil` for periodic tasks, `osMessageQueueGet` /
@@ -171,7 +190,7 @@ This is the only file in the repo with a hard review bar.
 
 ## C++ rules (short version)
 
-Full rules in `docs/ARCHITECTURE.md` § 11. Highlights:
+Full rules in `docs/ARCHITECTURE.md` § 10. Highlights:
 
 - No exceptions, no RTTI, no `std::string`, no `std::vector`, no
   `<iostream>`, no `<thread>`.

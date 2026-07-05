@@ -1,7 +1,8 @@
 # AMS firmware architecture
 
-Target hardware: STM32H733ZGTx (Cortex-M7 @ 264 MHz core, 1 MB Flash,
-~1 MB RAM). RTOS: FreeRTOS via CMSIS-RTOS v2 (1000 Hz tick).
+Target hardware: STM32H733ZGTx (Cortex-M7 @ 528 MHz core, 264 MHz
+AHB/HCLK, 1 MB Flash, ~1 MB RAM). RTOS: FreeRTOS via CMSIS-RTOS v2
+(1000 Hz tick).
 Language: C++17 for application code (no exceptions, no RTTI, no
 thread-safe statics) on top of CubeMX-generated C for the HAL/RTOS
 boilerplate.
@@ -91,7 +92,7 @@ Everything else exists to enforce these:
 
 ## 2. Build model
 
-CubeMX 6.16 generates a **CMake-based** project (not Eclipse-managed-
+CubeMX 6.17 generates a **CMake-based** project (not Eclipse-managed-
 make). The boundary between generated and hand-written code:
 
 ```mermaid
@@ -118,7 +119,7 @@ flowchart LR
 
 C++ code never modifies the generated `main.c`. Instead it provides
 `extern "C"` trampolines (`ams_safety_task_run`,
-`ams_state_task_run`, etc.) that the CubeMX-preserved
+`ams_bms_poll_task_run`, etc.) that the CubeMX-preserved
 `USER CODE BEGIN … END` blocks call. Every regen keeps the
 trampolines.
 
@@ -130,23 +131,22 @@ system toolchain (Clang on macOS, GCC on Linux/CI).
 ## 3. Task architecture
 
 **6 live tasks** post-refactor/19 (PRs #119 + #120 + #121), plus
-CMSIS `defaultTask` and the FreeRTOS timer-service daemon. The
-collapsed `StateTask` and `TelemetryTask` thread handles are still
-declared by CubeMX-generated `MX_FREERTOS_Init` for compatibility,
-but their entry points immediately `osThreadExit()` — TCB and stack
-return to the heap, no CPU consumed.
+CMSIS `defaultTask` and the FreeRTOS timer-service daemon. Task,
+queue, and mutex creation lives in `main()` (CubeMX emits it directly
+into `main.c`, not into an `MX_FREERTOS_Init` function). The collapsed
+`StateTask` and `TelemetryTask` were fully removed in refactor/19 — no
+thread is created for them and neither handle nor entry point survives
+in the generated set (their empty header stubs were deleted too; § 12).
 
 | Task | Priority (enum / value) | Period | Stack (words) | Implementation |
 |---|---|---|---|---|
 | `App_InitTask` | High (40) | once | 512 | [`app_init_task.cpp`](../Core/Src/app/app_init_task.cpp) |
 | `MainTask` *(thread name still "SafetyTask")* | Realtime (48) | 10 ms | 512 | [`safety_task.cpp`](../Core/Src/app/safety_task.cpp) |
-| `BmsPollTask` | Normal (24) | 250 ms / 500 ms (isoSPI poll + balance WRCFGA) | 256 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
+| `BmsPollTask` | Normal (24) | 250 ms / 500 ms (isoSPI poll + balance WRCFGA) | 1024 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
 | `AcuCanTask` | AboveNormal (32) | RX-queue-driven (FDCAN1; dispatches boot-trigger 0x002) | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
 | `CurrentSensorTask` | AboveNormal (32) | 50 ms | 256 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
 | `defaultTask` | Low (8) | — | 128 | (CMSIS placeholder) |
 | Timer service | Normal | callback-driven | 256 | FreeRTOS daemon |
-| `StateTask` *(retired)* | High (40) | n/a | 1024 | self-exiting stub; logic now in `MainTask` |
-| `TelemetryTask` *(retired)* | Low (8) | n/a | 512 | self-exiting stub; logic now in `MainTask` |
 
 ### MainTask body
 
@@ -158,7 +158,7 @@ for (;;) {
     snapshot bms / current / vehicle
     fault = error_latched || evaluate_fault(...)
     if (fault) {
-        if (!error_latched) latch (open relays + set ErrorLatch + fan off)
+        if (!error_latched) latch (open relays + drop AMS_OK + set ErrorLatch)
         refresh watchdog                       // stay alive for diag
     } else {
         every 20 ms: fsm::step() → apply relay actions inline
@@ -220,11 +220,10 @@ bound.
 flowchart TD
   subgraph HW[STM32H733]
     FDCAN1[FDCAN1 RX/TX<br/>ACU + bootloader-trigger]
-    FDCAN2[FDCAN2<br/>bootloader-claimed post-reset only]
-    SPI1[SPI1 master + PA4 CS<br/>via LTC6820]
+    FDCAN2[FDCAN2<br/>dropped #388, unused]
+    SPI1[SPI1 master + PB9 CS<br/>LTC6820_CS via LTC6820]
     ADC1[ADC3 diff ch3 PF7/PF8<br/>+ SE ch11 PC1 DCDC]
-    GPIOB[GPIOB<br/>PB4 AMS_OK<br/>PB5/6/7 relays]
-    TIM17[TIM17_CH1 PB9 fan]
+    GPIOB[GPIOB<br/>PB4 AMS_OK<br/>PB5 AIR+ / PB6 AIR- / PB7 Precharge]
     FDCAN1TX[FDCAN1 TX telemetry<br/>0x4A0/0x4A1/0x4A2]
     IWDG[IWDG1 ~100 ms]
   end
@@ -258,7 +257,6 @@ flowchart TD
   end
 
   FDCAN1 --> RX1 --> acu_rx --> AcuT --> VehSvc
-  AcuT -.charger.-> CurSvc
   AcuT -- "boot-trigger 0x002 → request_reboot" --> FDCAN1
 
   SPI1 <-->|"ADCV/RDCV* (V)<br/>WRCOMM+STCOMM+ADAX+RDAUXA (T)<br/>WRCFGA (balance)"| Chain
@@ -270,7 +268,6 @@ flowchart TD
   BmsSvc & CurSvc & VehSvc --> MainT
 
   MainT -- relays (inline) --> GPIOB
-  MainT -- fan duty --> TIM17
   MainT -- refresh --> IWDG
   MainT --> FDCAN1TX
 
@@ -285,7 +282,7 @@ flowchart TD
   classDef safe  fill:#ef4444,stroke:#7f1d1d,color:#fef2f2
   classDef dim   fill:#475569,stroke:#1e293b,color:#cbd5e1
 
-  class FDCAN1,SPI1,ADC1,GPIOB,TIM17,FDCAN1TX,IWDG hw
+  class FDCAN1,SPI1,ADC1,GPIOB,FDCAN1TX,IWDG hw
   class FDCAN2 dim
   class LTC,MUX chain
   class RX1 isr
@@ -306,8 +303,8 @@ What changed from pre-refactor/19:
   state, atomic 32-bit accesses. Old `bms_mutex` / `current_mutex` /
   `vehicle_mutex` handles still declared by CubeMX but unused.
 - **No `safety_events` event group consumer.** FSM output bitmask
-  is consumed inline by MainTask. Handle still declared by CubeMX
-  but unused.
+  is consumed inline by MainTask. Handle still created in
+  `ams_app_globals_init` (app_globals.cpp) but unused.
 - **One realtime task instead of two-cooperating-tasks.**
   Safety + FSM + Telemetry collapsed; no ping-pong, no priority
   race surface.
@@ -315,8 +312,9 @@ What changed from pre-refactor/19:
   safety predicate is HIL-agnostic — same code on flight and bench.
 
 Arrows are direction of value flow. The only direct GPIO writes
-happen in `MainTask` (relays + watchdog + fan) and `App_InitTask`
-(one-shot driver bring-up + LTC chain wakeup / length discovery).
+happen in `MainTask` (relays + `AMS_OK` + watchdog) and `App_InitTask`
+(one-shot driver bring-up + LTC chain wakeup / length discovery). The
+fan is hard-wired permanently on (fix/48) — no PWM, no GPIO drive.
 
 The BMS transport is now isoSPI end-to-end; see
 [`BMS_LTC6811.md`](BMS_LTC6811.md) for the LTC6811-1 wire protocol,
@@ -524,7 +522,7 @@ sequenceDiagram
   HW->>main: Reset_Handler then SystemInit
   main->>main: HAL_Init, SystemClock_Config
   main->>HW: MX_GPIO_Init (relays driven low, PB4-7)
-  main->>HW: MX_ADC1/3, MX_FDCAN1/2, MX_TIM17, MX_USART2, MX_SPI1
+  main->>HW: MX_FDCAN1, MX_USART2, MX_ADC3, MX_SPI1
   main->>HW: MX_IWDG1_Init (IWDG alive pre-scheduler)
   main->>main: osKernelInitialize + create queues, tasks
   main->>main: osKernelStart
@@ -539,13 +537,13 @@ sequenceDiagram
     end
     init->>init: osThreadExit
   and
-    Main->>Main: ErrorLatch::init + Fan::init
+    Main->>Main: ErrorLatch::init
     Main->>Main: boot in Error if ErrorLatch::is_set
     Note over Main: For t < SafetyBootGraceMs (2 s)<br/>data-presence/freshness predicates suppressed.<br/>A sticky ErrorLatch still boots into Error.
     loop every 10 ms (osDelayUntil)
       Main->>Main: snapshot bms/current/vehicle
       alt fault detected
-        Main->>HW: latch (Relays::open_all + ErrorLatch::set + fan off)
+        Main->>HW: latch (Relays::open_all + drop AMS_OK + ErrorLatch::set)
         Main->>HW: HAL_IWDG_Refresh (stay alive for diag)
       else clean path
         Main->>Main: every 20 ms: fsm::step → apply relay actions inline
@@ -560,8 +558,8 @@ sequenceDiagram
 
 `App_InitTask` self-deletes once peripheral bring-up is done; its
 TCB and stack return to the heap. The retired `StateTask` and
-`TelemetryTask` thread entry points also call `osThreadExit()`
-immediately, so their stacks return to the heap on boot too.
+`TelemetryTask` were removed entirely in refactor/19 — no thread is
+created for them, so there is nothing to exit or reclaim.
 
 ---
 
@@ -573,16 +571,17 @@ struct. **Single-writer / many-reader**, lock-free.
 | Service | Writer | Readers |
 |---|---|---|
 | [`BmsService`](../Core/Inc/app/bms_service.hpp) | `BmsPollTask` (LTC6811 isoSPI sweeps; `update_from_ltc_response` + `update_temperature`) | MainTask, AcuCanTask, BalanceController |
-| [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (ADC), `AcuCanTask` (charger flag) | MainTask, BmsPollTask |
-| [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `AcuCanTask` | MainTask |
+| [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (ADC: `update_from_adc` + `update_dcdc_from_adc`) | MainTask, AcuCanTask |
+| [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `AcuCanTask` (VCU `0x100` heartbeat + operator `0x101` charge-mode request) | MainTask |
 
 Concurrency model: Cortex-M7 32-bit aligned loads/stores are atomic.
 Multi-field reads from a non-writer task can briefly observe a
 mid-update snapshot — the predicate + telemetry are tolerant of
 one-cycle staleness (any inconsistency causes at worst one extra
 predicate evaluation that corrects on the next 10 ms iteration).
-The mutex handles (`bms_mutexHandle` etc.) are still declared by
-CubeMX in `MX_FREERTOS_Init` but no one acquires them anymore;
+The mutex handles (`bms_mutexHandle` etc.) are still created by
+CubeMX in `main()` (CubeMX emits `osMutexNew` inline there, not in an
+`MX_FREERTOS_Init` function) but no one acquires them anymore;
 cleanup deferred to a future `.ioc` pass.
 
 `BmsState` shape:
@@ -632,7 +631,7 @@ ERROR on schedule). It runs outside `MainTask`, so it cannot affect the
 
 **Event groups** (managed by
 [`app_globals.cpp`](../Core/Src/app/app_globals.cpp) because
-CubeMX 6.16 doesn't emit them from .ioc):
+CubeMX 6.17 doesn't emit them from .ioc):
 
 | Group | Bit | Set by | Cleared by |
 |---|---|---|---|
@@ -642,8 +641,8 @@ CubeMX 6.16 doesn't emit them from .ioc):
 The `safety_events` event group was retired in refactor/19 phase 3
 (PR #120): the FSM's relay-action bitmask is now consumed inline by
 `MainTask` in the same iteration the FSM produced it. The handle is
-still declared by CubeMX (`MX_FREERTOS_Init`) but no one reads or
-writes it; cleanup deferred to a future `.ioc` pass.
+still created in `ams_app_globals_init` (app_globals.cpp, alongside
+`bms_events`) but no one reads or writes it; cleanup deferred.
 
 ---
 
@@ -662,11 +661,12 @@ The 768 KB ceiling is enforced both at link time (`STM32H733XG_FLASH.ld`
 `build-tests.yml` rejects any image that lands in sector 0 or
 overflows sector 6).
 
-FreeRTOS heap (`configTOTAL_HEAP_SIZE = 32 768`): ~14.7 KB used,
-~18 KB free. Newlib reentrant structs account for ~1 KB. Three
-load-bearing tasks (`App_InitTask`, `MainTask`) were originally
-planned as `Static` allocation; CubeMX UI workflow makes that
-brittle, so they ship `Dynamic` for now. Heap has enough headroom
+FreeRTOS heap (`configTOTAL_HEAP_SIZE = 65 536`, i.e. 64 KB): task
+TCBs + stacks (`BmsPollTask` alone is 1024 words) come out of `heap_4`,
+with comfortable headroom left free. Newlib reentrant structs account
+for ~1 KB. The load-bearing tasks (`App_InitTask`, `MainTask`) were
+originally planned as `Static` allocation; CubeMX UI workflow makes
+that brittle, so they ship `Dynamic` for now. Heap has enough headroom
 that this is fine; revisitable post-commissioning.
 
 ---
@@ -717,10 +717,10 @@ separate harness):
 
 | Layer | Files | Coverage |
 |---|---|---|
-| Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine`, `test_bootloader`, `test_ltc6811_decode`, `test_telemetry_encoders`, `test_balance_controller`, `test_acu_tx_encoders`, `test_pit_diag_emitter` | LTC6811 PEC15 + register decoders + chain-length walker, ADG731 channel packing, balancing policy, BMS / current / vehicle service decode + freshness (incl. the `0x101` charge-request magic gate), ADC scaling, each safety predicate in isolation (incl. the cell V/T debounce and VcuStale Car-only gate), every FSM transition (incl. DASH_CHG momentary edge, Charger `0x101`-fresh proceed, `PrechargeMaxMs` timeout), telemetry + pit-diag encoders, boot-trigger frame matcher |
+| Unit (single-step) | `test_bms_service`, `test_current_service`, `test_vehicle_service`, `test_safety_predicates`, `test_state_machine`, `test_bootloader`, `test_ltc6811_decode`, `test_telemetry_encoders`, `test_balance_controller`, `test_acu_tx_encoders`, `test_pit_diag_emitter`, `test_can_busoff_recovery`, `test_dsl_parity`, `test_dsl_dbc_consistency` | LTC6811 PEC15 + register decoders + chain-length walker, ADG731 channel packing, balancing policy, BMS / current / vehicle service decode + freshness (incl. the `0x101` charge-request magic gate), ADC scaling, each safety predicate in isolation (incl. the cell V/T debounce and VcuStale Car-only gate), every FSM transition (incl. DASH_CHG momentary edge, Charger `0x101`-fresh proceed, `PrechargeMaxMs` timeout), telemetry + pit-diag encoders, FDCAN1 Bus-Off recovery rate-limit policy (§ 8), the code-first CAN DSL parity + DBC consistency, boot-trigger frame matcher |
 | SIL (multi-step) | `test_sil_scenarios` | nominal Car startup → Run, BMS dropout → Error, charger path (one press + fresh `0x101`) → Charge, stale-`0x101` mid-precharge → timeout → Error, TSMS-drop → Start → re-arm (non-latching) |
 
-**182 / 182 PASS on every push** via
+**The full host suite passes on every push** via
 `.github/workflows/build-tests.yml`, which also cross-compiles the
 firmware with `arm-none-eabi-gcc` and reports flash/RAM sizes in
 the run summary.
@@ -749,6 +749,7 @@ IFS08-CE-AMS/
 │   │   ├── FreeRTOSConfig.h, main.h, stm32h7xx_*.h
 │   │   └── app/                     # HAND-WRITTEN
 │   │       ├── acu_can_task.h
+│   │       ├── acu_tx_encoders.hpp     # ACU-bound frame encoders
 │   │       ├── ams_config.hpp       # ALL constexpr (incl. LTC/NTC tunables)
 │   │       ├── ams_events.hpp       # event-group bits
 │   │       ├── app_globals.h
@@ -757,20 +758,20 @@ IFS08-CE-AMS/
 │   │       ├── bms_poll_task.h
 │   │       ├── bms_service.hpp
 │   │       ├── bootloader.hpp
+│   │       ├── can_busoff_recovery.hpp # pure FDCAN1 Bus-Off rate-limit policy
 │   │       ├── can_frame.{h,hpp}
 │   │       ├── current_service.hpp
 │   │       ├── current_task.h
 │   │       ├── error_latch.hpp
-│   │       ├── fan.hpp
 │   │       ├── ltc6811.hpp          # pure-logic LTC6811 wire layer (#67)
 │   │       ├── ltc6820.hpp          # SPI/CS isoSPI master wrapper (#68)
+│   │       ├── pit_diag_emitter.hpp    # pit-diag frame emitter
 │   │       ├── relay_driver.hpp
 │   │       ├── safety_predicates.hpp
 │   │       ├── safety_task.{h,hpp}      # MainTask body lives here (rename pending)
 │   │       ├── scoped_mutex.hpp         # orphaned since refactor/19 phase 1
 │   │       ├── state_machine.hpp
-│   │       ├── state_task.h             # stub; logic merged into MainTask in #120
-│   │       ├── telemetry_task.h         # stub; logic merged into MainTask in #120
+│   │       ├── telemetry_encoders.hpp   # telemetry frame encoders (0x4A0..)
 │   │       ├── vehicle_service.hpp
 │   │       └── watchdog.{h,hpp}
 │   ├── Src/
@@ -789,14 +790,11 @@ IFS08-CE-AMS/
 │   │       ├── current_service.cpp
 │   │       ├── current_task.cpp
 │   │       ├── error_latch.cpp
-│   │       ├── fan.cpp
 │   │       ├── firmware_info.cpp
 │   │       ├── ltc6811.cpp           # PEC15 + register-group decoders + WRCFGA
 │   │       ├── ltc6820.cpp           # HAL_SPI wrapper, wakeup, STCOMM
 │   │       ├── relay_driver.cpp
-│   │       ├── safety_task.cpp          # MainTask (safety + FSM + telemetry + fan)
-│   │       ├── state_task.cpp           # stub: osThreadExit() — retired in #120
-│   │       ├── telemetry_task.cpp       # stub: osThreadExit() — retired in #120
+│   │       ├── safety_task.cpp          # MainTask (safety + FSM + telemetry)
 │   │       ├── vehicle_service.cpp
 │   │       └── watchdog.cpp
 │   └── Startup/startup_stm32h733zgtx.s
@@ -822,7 +820,7 @@ IFS08-CE-AMS/
 │   └── unit/
 │       ├── CMakeLists.txt            # host CMake (FetchContent Unity)
 │       ├── mocks/                    # cmsis_os2 stub for host
-│       ├── test_*.cpp                # 182 host tests (Unity)
+│       ├── test_*.cpp                # host tests (Unity)
 │       └── unity_runner.cpp
 └── .github/
     ├── roadmap.yaml                  # phase plan

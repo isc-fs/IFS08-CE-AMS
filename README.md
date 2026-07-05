@@ -11,8 +11,11 @@ C++17 application code.
 In one paragraph: the AMS monitors every cell in the high-voltage pack
 (95 cells across 5 BMS_LITE modules), drives the AIRs and precharge
 relay, decides when it's safe to leave the pre-charge state, runs the
-balancing FETs while charging, and shuts the pack down within ~10 ms
-the moment any safety threshold is crossed. It talks to the VCU over
+balancing FETs while charging, and shuts the pack down on the next
+10 ms safety tick for immediate faults (over-current, BMS/VCU loss,
+forced error) — cell voltage/temperature excursions are debounced
+~300 ms (`CellFaultConfirmTicks`) before latching Error, to reject a
+transient torn snapshot read. It talks to the VCU over
 FDCAN1 and to the BMS over isoSPI (LTC6820 → daisy-chained LTC6811-1
 monitors). One single-timeline MainTask runs safety + FSM + telemetry
 on tick-gated cadences; three auxiliary tasks own the BMS poll, the
@@ -33,7 +36,7 @@ flowchart LR
     subgraph AMS[AMS STM32H733]
         SPI[SPI1 + LTC6820 master]
         ADC[ADC3 ch3 PF7<br/>pack current]
-        Relays[AIR-, AIR+, Precharge<br/>PB5/PB6/PB7]
+        Relays[AIR+ PB5, AIR- PB6<br/>Precharge PB7]
         AmsOk[AMS_OK PB4]
     end
 
@@ -77,11 +80,11 @@ first — it sequences everything below. The full set:
 | [`docs/FSM_OVERVIEW.md`](docs/FSM_OVERVIEW.md) | Gate-by-gate safety FSM: states, the Car/Charger mode lock, TSMS/DASH_CHG inputs, per-state transitions, on-wire byte values. | Before changing the FSM or writing bench tests for it. |
 | [`docs/DEEP_DIVE.md`](docs/DEEP_DIVE.md) | End-to-end codebase walkthrough — every task, service, and subsystem mapped to source. | When you want the whole picture in one pass. |
 | [`docs/BMS_LTC6811.md`](docs/BMS_LTC6811.md) | LTC6811 / LTC6820 / ADG731 wire protocol, register groups, cell + NTC slot maps, PEC15, balancing CFGR layout. | Before touching anything under `Core/{Inc,Src}/app/{ltc6811,ltc6820,bms_*,balance_*}.{h,hpp,cpp}`. |
-| [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Vehicle / charger / boot-trigger CAN wire protocol on FDCAN1 (FDCAN2 is bootloader-only since v1.2.0). | Before touching anything CAN-side. |
+| [`docs/CAN_MAP.md`](docs/CAN_MAP.md) | Vehicle / charger / boot-trigger CAN wire protocol on FDCAN1 (the app is FDCAN1-only; FDCAN2 was dropped from the CubeMX project — the bootloader is a separate sector-0 image that brings up its own CAN). | Before touching anything CAN-side. |
 | [`docs/COMMISSIONING.md`](docs/COMMISSIONING.md) | Bench + on-vehicle calibration of every `COMMISSION`-tagged constant in `ams_config.hpp`. | Before flashing the first time, and any time you adjust a threshold. |
 | [`docs/COMMISSIONING_CHECKLIST.md`](docs/COMMISSIONING_CHECKLIST.md) | One-page sign-off sheet — every `COMMISSION` constant with default, units, what to measure, and tick-boxes. | The record for the bench commissioning session, before tagging a release. |
 | [`docs/HIL_BUILD.md`](docs/HIL_BUILD.md) | The `AMS_HIL_CLEAR_ERROR_LATCH` build flag — what it does (auto-wipes the sticky ErrorLatch on boot), why, and why it must never reach a flight build. | When setting up the HIL bench rig. |
-| HIL acceptance plan ([issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)) | The living hardware-in-the-loop test matrix (blocks A–G) that gates a `dev → main` release. Lives as a GitHub issue because it evolves every release. | Before signing off a release tag. |
+| HIL acceptance plan ([issue #399](https://github.com/isc-fs/IFS08-CE-AMS/issues/399)) | The living hardware-in-the-loop test matrix (v1.6.2; supersedes #317) that gates a `dev → main` release. Lives as a GitHub issue because it evolves every release. | Before signing off a release tag. |
 | [`ROADMAP.md`](ROADMAP.md) | Auto-generated phase plan + branch status badges. | When you want to know what's next or what shipped. |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Branch / PR / label conventions, "how to add a CAN frame" / "how to add a new task" recipes, C++ rules. | Before you open your first PR. |
 
@@ -97,7 +100,7 @@ cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake
 cmake --build build
 # Output: build/AMS.elf — flash via the stm32-can-bootloader (CAN) flow.
 
-# Host unit tests (182 tests, ~0.5 s)
+# Host unit tests (full Unity suite, ~0.5 s)
 cmake -B build-tests -S tests/unit
 cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
@@ -316,7 +319,7 @@ permanent record.
 When `dev` holds a set of validated changes that are ready for the
 car, a responsible team member opens a Pull Request from `dev` into
 `main`. This only happens after full firmware validation (the HIL
-acceptance gate — [issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)
+acceptance gate — [issue #399](https://github.com/isc-fs/IFS08-CE-AMS/issues/399)
 — green on the same firmware SHA).
 
 ---

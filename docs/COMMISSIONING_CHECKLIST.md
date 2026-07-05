@@ -1,4 +1,4 @@
-# Commissioning checklist — AMS v1.6.0
+# Commissioning checklist — AMS v1.6.2
 
 One-page sign-off sheet for every `COMMISSION`-tagged constant in
 [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp). These are
@@ -8,7 +8,7 @@ Procedures are in [`COMMISSIONING.md`](COMMISSIONING.md); this sheet is the
 checklist + record.
 
 > **Workflow:** measure → set the value in `ams_config.hpp` → rebuild →
-> re-run the affected host tests + the relevant HIL row (#317) → tick the
+> re-run the affected host tests + the relevant HIL row (#399) → tick the
 > box and record the final value, who, and the date. **🔒 = safety-gating**
 > (feeds a predicate that opens the AIRs / latches Error, or a contactor
 > sequence). Two of these (`BusCollapse*`) also move HIL row **C-049**.
@@ -42,7 +42,7 @@ over-current trip.**
 
 | Constant | Default | Unit | How to determine | Final | ✓ |
 |---|---|---|---|---|---|
-| `CurrentZeroCount` | 2050 | ADC counts | Zero-current differential code (pack open / 0 A). HIL-commissioned (#348, ideal 2048). Record the actual mid-scale offset per carrier. | | ☐ |
+| `CurrentZeroCount` | 2054 | ADC counts | Zero-current differential code (pack open / 0 A). HIL-commissioned (#348) at 2050; flight-carrier re-cal (2026-06-20, e729f1f) moved it to 2054 — the offset tracks VREF+, so it is board-specific (ideal 2048). Record the actual mid-scale offset per carrier. | | ☐ |
 | `CurrentMvPerAmpe1` | 46 | 0.1·mV/A | Sensitivity ×10. HIL-commissioned (#348): ideal 50 (5 mV/A) trimmed for a measured 0.924× ADC/VREF gain → trip at 200 A real. Re-measure per carrier. | | ☐ |
 | `CurrentMaxMa` | 200000 | mA | Over-current trip = pack/fuse continuous rating (− margin). Now genuinely reachable on this HW rev. | | ☐ |
 
@@ -57,11 +57,20 @@ Hall sensor single-ended on `PC1` (ADC3_INP11), ratiometric @ 3.3 V →
 | Constant | Default | Unit | How to determine | Final | ✓ |
 |---|---|---|---|---|---|
 | `PrechargeRatio`*¹ | 0.95 | fraction | DC bus must reach this × pack before AIR+ closes. 0.95–0.98 typical. | | ☐ |
-| `PrechargeMaxMs` | 5000 | ms | **Above** the measured worst-case healthy precharge time, **below** the precharge resistor's transient/pulse-energy rating. | | ☐ |
+| `PrechargeMaxMs` | 5000 | ms | **Car mode:** **above** the measured worst-case healthy resistor-precharge time, **below** the precharge resistor's transient/pulse-energy rating. **Charger mode** skips the resistor (see note), so here it's the failsafe ceiling on how long the FSM waits for a fresh `0x101` before latching Error. Set for the tighter of the two. | | ☐ |
 | `BusCollapsePercent` | 50 | % of pack | **Above** worst-case loaded sag of `dc_bus_V` vs cell-sum (so hard accel/regen never false-trips), **high enough** to fire before a no-precharge reclose is damaging. Measure both, set between. **→ moves HIL C-049.** | | ☐ |
 | `BusCollapseConfirmTicks` | 20 (~200 ms) | 10-ms ticks | Long enough to reject one anomalous `0x100`; short enough to trip before a released cockpit shutdown recloses the AIRs. | | ☐ |
 
 *¹ `PrechargeRatio` isn't formally `COMMISSION`-tagged but is bench-confirmed in §3 — verify it for this pack.*
+
+> **Charger mode skips the resistor** (58f56c1): on Start→Precharge the FSM
+> closes only AIR− (emits `CloseAirN`; Car emits `CloseAirN | ClosePrecharge`),
+> so the resistor never enters the charge loop — the charger voltage-matches
+> its output before asserting `0x101`. Charger's precharge-complete criterion
+> is `0x101` freshness (`charge_requested`), not the resistor-thermal-bounded
+> `dc_bus_V` ramp (`precharge_target_reached`) used in Car mode. So
+> `PrechargeRatio` / `BusCollapse*` sag margins are Car-mode concerns; the
+> Charger path is gated only by 0x101 freshness + `PrechargeMaxMs`.
 
 ## 4. NTC thermistor model  🔒 (feeds cell-temp)  (`COMMISSIONING.md` §3)
 
@@ -102,11 +111,12 @@ resistor dissipation + module airflow.
 
 | Field | Value |
 |---|---|
-| Firmware version / SHA | `1.6.0` / `__________` |
+| Firmware version / SHA | `1.6.2` / `__________` |
 | Pack / accumulator s/n | `__________` |
 | Commissioned by | `__________` |
 | Date | `__________` |
 | All boxes ticked, host tests green, affected HIL rows re-run | ☐ |
 
-After sign-off: tag **v1.6.0** and open the `dev → main` release PR (this
-also unblocks the host pit-diag release, #321).
+After sign-off: tag the release (current: **v1.6.2**) and open the
+`dev → main` release PR (this also unblocks the host pit-diag release,
+#321).
