@@ -14,6 +14,7 @@
 #include "ams_config.hpp"
 #include "app_globals.h"
 #include "error_latch.hpp"
+#include "fw_health.hpp"
 #include "ltc6811.hpp"
 #include "ltc6820.hpp"
 #include "relay_driver.hpp"
@@ -56,6 +57,13 @@ void ams_app_init_task_run(void *argument)
     // at the latch (SafetyTask::run() also calls it; idempotent).
     ams::ErrorLatch::init();
     g_app_init_progress = 1u;   // post-ErrorLatch::init
+
+    // Firmware-health boot capture (#411): latch the RCC reset cause and the
+    // sticky last-fault sentinel (BKP3) into RAM for the 0x6CA health frame,
+    // then clear the RCC flags + BKP3 so a clean next boot reports PowerOn /
+    // None. Runs after ErrorLatch::init -- backup-domain access is enabled.
+    ams::fw_health::capture_reset_cause();
+    ams::fw_health::latch_boot_fault();
 
 #if defined(AMS_HIL_CLEAR_ERROR_LATCH)
     // HIL-only: wipe any stale ErrorLatch on boot so a fault latched in

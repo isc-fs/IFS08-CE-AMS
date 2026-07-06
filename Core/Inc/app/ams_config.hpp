@@ -235,6 +235,12 @@ inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + 
 inline constexpr std::uint32_t PitDiagPecPerIcAId        = 0x6C7u;  // per-IC PEC count: ICs 0..7 (saturating u8)
 inline constexpr std::uint32_t PitDiagPecPerIcBId        = 0x6C8u;  // per-IC PEC count: ICs 8..9 + reserved
 inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail (#331)
+// UNGATED firmware-health frame (#411): always-on 1 Hz, NEVER gated by the
+// pit-diag arm (0x7F0). ID sits right after the gated 0x6C0..0x6C9 block but
+// is emitted regardless of arm state -- parity with ECU 0x704 for passive
+// liveness ("is the AMS app alive?" without transmitting an arm frame).
+inline constexpr std::uint32_t FwHealthId                = 0x6CAu;
+inline constexpr std::uint32_t FwHealthPeriodMs          = 1000u;  // 1 Hz
 inline constexpr std::uint8_t  PitDiagCmdDlc             = 4u;
 inline constexpr std::uint8_t  PitDiagEnableMagic[4]     = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
 inline constexpr std::uint8_t  PitDiagDisableMagic[4]    = { 0x00u, 0x00u, 0x00u, 0x00u };
@@ -429,7 +435,7 @@ inline constexpr std::uint8_t  BlBootReqDlc        = 4;
 // as the boot magic and error latch).
 //
 // Slot 0: BL boot-request magic. Slot 1: AMS ErrorLatch. Slot 2:
-// jump reason. Slot 3+ reserved for future use.
+// jump reason. Slot 3: last-fault sentinel (#411). Slot 4+ reserved.
 inline constexpr std::uint32_t BkpJumpReasonReg = 2;
 
 enum class JumpReason : std::uint32_t {
@@ -437,6 +443,25 @@ enum class JumpReason : std::uint32_t {
     CanTrigger     = 0x4A554D50u,  // 'JUMP' -- MingoCAN sent the boot frame
     FaultLatch     = 0x46415554u,  // 'FAUT' -- safety supervisor forced it
     ManualRequest  = 0x4D414E55u,  // 'MANU' -- operator-issued, no fault
+};
+
+// --- Firmware-health frame (0x6CA, #411) -----------------------------------
+// Slot 3 holds the last-fault sentinel: the HardFault handler stamps a
+// LastFault code here, the 0x6CA health frame surfaces it on byte [7], and a
+// clean boot clears it. Same backup-domain persistence as slots 0-2 (survives
+// IWDG / NVIC reset, cleared on POR).
+inline constexpr std::uint32_t BkpLastFaultReg = 3;
+
+// reset_cause byte [5] -- mirrors the ECU 0x704 reset_cause enum exactly.
+enum class ResetCause : std::uint8_t {
+    Unknown = 0u, PowerOn = 1u, Pin = 2u, Software = 3u,
+    Iwdg = 4u, Wwdg = 5u, LowPower = 6u,
+};
+
+// last_fault byte [7] sentinel, latched in BkpLastFaultReg across a reset.
+// 0 = clean; the rest map the HardFault / RTOS-hook fault classes.
+enum class LastFault : std::uint8_t {
+    None = 0u, HardFault = 1u, StackOverflow = 2u, MallocFail = 3u, AssertFail = 4u,
 };
 
 // AMS node ID on the stm32-can-bootloader multi-node bus. Must match

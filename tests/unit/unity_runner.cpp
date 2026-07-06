@@ -235,6 +235,11 @@ void test_pit_diag_comms_health_layout(void);
 void test_pit_diag_comms_health_zero_when_clean(void);
 void test_pit_diag_comms_health_fields_independent(void);
 
+// test_fw_health.cpp
+void test_fw_health_reset_cause_priority(void);
+void test_fw_health_encode_layout(void);
+void test_fw_health_encode_clamps_heap(void);
+
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
 void test_balance_single_hot_cell_in_charge(void);
@@ -471,6 +476,10 @@ int main(void) {
     RUN_TEST(test_pit_diag_comms_health_layout);
     RUN_TEST(test_pit_diag_comms_health_zero_when_clean);
     RUN_TEST(test_pit_diag_comms_health_fields_independent);
+
+    RUN_TEST(test_fw_health_reset_cause_priority);
+    RUN_TEST(test_fw_health_encode_layout);
+    RUN_TEST(test_fw_health_encode_clamps_heap);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);

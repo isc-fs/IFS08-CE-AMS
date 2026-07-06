@@ -86,7 +86,11 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  /* #411: stamp the last-fault sentinel (RTC BKP3) before we spin, so the
+   * next boot's 0x6CA health frame reports the crash. C-linkage shim over the
+   * C++ fw_health module; a bare backup-register write, fault-context safe. */
+  extern void ams_fw_health_record_hardfault(void);
+  ams_fw_health_record_hardfault();
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {

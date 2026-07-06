@@ -26,6 +26,7 @@
 #include "bms_service.hpp"
 #include "current_service.hpp"
 #include "error_latch.hpp"
+#include "fw_health.hpp"
 #include "relay_driver.hpp"
 #include "safety_predicates.hpp"
 #include "state_machine.hpp"
@@ -161,6 +162,9 @@ void SafetyTask::run() noexcept {
         osDelayUntil(last_wake);
 
         const std::uint32_t now = osKernelGetTickCount();
+
+        // MainTask stepped this 10 ms tick -> control-task liveness (#411).
+        ams::fw_health::poke(ams::fw_health::MainStepped);
 
         // ---------------- Snapshot inputs once per iteration ----------------
         const auto bms_snap = BmsService::instance().snapshot();

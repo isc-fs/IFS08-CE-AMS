@@ -1,0 +1,15 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x6CA AMS_fw_health -- ungated 1 Hz firmware-health frame (#411). Mirrors
+ * the ECU's 0x704 byte-for-byte so shared tooling (can-flasher `pit-diag
+ * listen`, the VS Code health traffic-light) can read AMS liveness WITHOUT
+ * arming pit-diag (0x7F0). Emitted from AcuCanTask regardless of arm state,
+ * so a passive listener sees it the instant the board powers up. Distinct
+ * from the *gated* 0x6C9 PIT_comms_health -- this one is always-on. */
+CAN_MSG(AMS_fw_health, 0x6CA, 8, "AMS", 1000)
+    FIELD_BE (free_heap,     uint16_t, 0, 16, 1, 0, "bytes")
+    FIELD_BE (min_free_heap, uint16_t, 2, 16, 1, 0, "bytes")
+    FIELD_LE (task_liveness, uint8_t,  4,  8, 1, 0, "bitfield")
+    FIELD_LE (reset_cause,   uint8_t,  5,  8, 1, 0, "enum")
+    FIELD_LE (uptime_s,      uint8_t,  6,  8, 1, 0, "seconds")
+    FIELD_LE (last_fault,    uint8_t,  7,  8, 1, 0, "sentinel")
+CAN_MSG_END(AMS_fw_health)

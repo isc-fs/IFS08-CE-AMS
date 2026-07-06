@@ -172,7 +172,8 @@ extern "C" void test_dsl_registry_well_formed(void) {
     // Phase 2a: 3 telemetry. Phase 2b: +9 ECU TX matrix. Phase 2c: +9 fixed
     // pit-diag + ack + 5 RX = 27. #331: +1 pit-diag comms-health (0x6C9) = 28.
     // relay-telemetry: +1 AMS_relay_status (0x4A4) = 29.
-    TEST_ASSERT_EQUAL_UINT(29u, ifs08::ALL_MSGS_COUNT);
+    // fw-health (#411): +1 AMS_fw_health (0x6CA, ungated) = 30.
+    TEST_ASSERT_EQUAL_UINT(30u, ifs08::ALL_MSGS_COUNT);
     // Spot-check the BE field's DBC start_bit convention (8*byte+7).
     bool checked = false;
     for (unsigned i = 0; i < ifs08::ALL_MSGS_COUNT; ++i) {
