@@ -23,6 +23,7 @@
 #include "app/app_globals.h"
 #include "balance_controller.hpp"
 #include "bms_service.hpp"
+#include "fw_health.hpp"
 #include "ltc6811.hpp"
 #include "ltc6820.hpp"
 #include "state_machine.hpp"
@@ -363,6 +364,9 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
     for (;;) {
         const std::uint32_t evt = osEventFlagsWait(
             bms_eventsHandle, All, osFlagsWaitAny, osWaitForever);
+
+        // BmsPollTask woke to service an isoSPI poll -> housekeeping liveness (#411).
+        ams::fw_health::poke(ams::fw_health::Housekeeping);
 
         if ((evt & osFlagsError) != 0u) {
             // Event group went away; back off and keep waiting. The

@@ -64,6 +64,14 @@ BO_ 1188 AMS_relay_status: 8 AMS
  SG_ precharge : 2|1@1+ (1,0) [0|0] "bool" Vector__XXX
  SG_ ams_ok : 3|1@1+ (1,0) [0|0] "bool" Vector__XXX
 
+BO_ 1738 AMS_fw_health: 8 AMS
+ SG_ free_heap : 7|16@0+ (1,0) [0|0] "bytes" Vector__XXX
+ SG_ min_free_heap : 23|16@0+ (1,0) [0|0] "bytes" Vector__XXX
+ SG_ task_liveness : 32|8@1+ (1,0) [0|0] "bitfield" Vector__XXX
+ SG_ reset_cause : 40|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ uptime_s : 48|8@1+ (1,0) [0|0] "seconds" Vector__XXX
+ SG_ last_fault : 56|8@1+ (1,0) [0|0] "sentinel" Vector__XXX
+
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -581,6 +589,7 @@ BA_ "GenMsgCycleTime" BO_ 1184 500;
 BA_ "GenMsgCycleTime" BO_ 1185 500;
 BA_ "GenMsgCycleTime" BO_ 1186 500;
 BA_ "GenMsgCycleTime" BO_ 1188 100;
+BA_ "GenMsgCycleTime" BO_ 1738 1000;
 BA_ "GenMsgCycleTime" BO_ 32 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 305 100;

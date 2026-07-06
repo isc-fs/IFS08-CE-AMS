@@ -34,6 +34,7 @@
 #include "can_frame.hpp"
 #include "current_service.hpp"
 #include "pit_diag_emitter.hpp"
+#include "fw_health.hpp"
 #include "state_machine.hpp"
 #include "vehicle_service.hpp"
 
@@ -361,6 +362,22 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               g_fdcan1_busoff_recovery_count, g_acu_tx_fail));
 }
 
+// Ungated firmware-health frame (#411). 1 Hz, emitted REGARDLESS of the
+// pit-diag arm, so a passive `pit-diag listen` sees AMS liveness (heap, task
+// liveness, reset cause, uptime, last fault -- ECU 0x704 parity) with the
+// stream off. Non-blocking send: a full TX FIFO just bumps g_acu_tx_fail
+// (itself surfaced on 0x6C9) rather than stalling the task.
+void tx_fw_health() noexcept {
+    send_or_fail(ams::config::FwHealthId,
+                 ams::pit_diag::encode_fw_health(
+                     ams::fw_health::free_heap(),
+                     ams::fw_health::min_free_heap(),
+                     ams::fw_health::sample_liveness(),
+                     ams::fw_health::reset_cause(),
+                     ams::fw_health::uptime_s(),
+                     ams::fw_health::last_fault()));
+}
+
 }  // namespace
 
 extern "C" void ams_acu_can_task_run(void *argument) {
@@ -372,6 +389,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
     std::uint32_t last_mid_tx   = now0;
     std::uint32_t last_slow_tx  = now0;
     std::uint32_t last_pit_scan = now0;
+    std::uint32_t last_fw_health_tx = now0;   // ungated 1 Hz health (#411)
 
     // FDCAN1 Bus-Off recovery latch (single bus, single owner: this task).
     ams::can_recovery::BusOffState busoff_state{};
@@ -422,6 +440,9 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             }
         }
 
+        // AcuCanTask serviced its RX queue this pass -> CAN-RX liveness (#411).
+        ams::fw_health::poke(ams::fw_health::CanRx);
+
         // ---- Snapshot service state once per loop iteration ----
         const auto bms = ams::BmsService::instance().snapshot();
         const auto cur = ams::CurrentService::instance().snapshot();
@@ -437,6 +458,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         // ---- TX scheduler ----
         if (now2 - last_fast_tx >= ams::config::EcuFastTxMs) {
             tx_currents(cur);
+            ams::fw_health::poke(ams::fw_health::CanTx);   // TX path alive (#411)
             last_fast_tx = now2;
         }
         if (now2 - last_mid_tx >= ams::config::EcuMidTxMs) {
@@ -457,6 +479,12 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             (now2 - last_pit_scan >= ams::config::PitDiagScanPeriodMs)) {
             tx_pit_diag_scan(bms);
             last_pit_scan = now2;
+        }
+
+        // ---- Ungated firmware-health (#411): 1 Hz, no arm gate ----
+        if (now2 - last_fw_health_tx >= ams::config::FwHealthPeriodMs) {
+            tx_fw_health();
+            last_fw_health_tx = now2;
         }
     }
 }
