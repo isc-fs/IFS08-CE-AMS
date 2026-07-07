@@ -61,6 +61,15 @@ void HAL_SD_MspInit(SD_HandleTypeDef *hsd) {
 
     g.Pin = GPIO_PIN_2;
     HAL_GPIO_Init(GPIOD, &g);
+
+    // #408: the FatFs diskio reads via HAL_SD_ReadBlocks_DMA and blocks on a
+    // queue posted from the Rx-complete callback, which runs in the SDMMC1 ISR.
+    // Enable that IRQ or the DMA transfer never completes -> f_mount returns
+    // FR_DISK_ERR with hsd1.ErrorCode=0 (it simply never finishes). Priority 5 =
+    // FreeRTOS-syscall-safe (== configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+    // matches FDCAN1_IT0); the callback does an ISR-safe osMessageQueuePut.
+    HAL_NVIC_SetPriority(SDMMC1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(SDMMC1_IRQn);
 }
 
 void HAL_SD_MspDeInit(SD_HandleTypeDef *hsd) {
@@ -70,6 +79,12 @@ void HAL_SD_MspDeInit(SD_HandleTypeDef *hsd) {
                            GPIO_PIN_11 | GPIO_PIN_12);
     HAL_GPIO_DeInit(GPIOD, GPIO_PIN_2);
 }
+
+// SDMMC1 completion ISR -- routes to the HAL, which fires the FatFs BSP Rx/Tx-
+// complete callbacks that post READ_CPLT_MSG/WRITE_CPLT_MSG to the SD_read /
+// SD_write message queue. Not emitted by CubeMX (SDMMC1 init is decoupled, #407),
+// so DMA transfers would otherwise never complete (#408).
+void SDMMC1_IRQHandler(void) { HAL_SD_IRQHandler(&hsd1); }
 }
 
 namespace {

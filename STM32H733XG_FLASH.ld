@@ -245,6 +245,16 @@ SECTIONS
   PROVIDE( __bss_start = __tbss_start );
   PROVIDE( __bss_size = __bss_end - __bss_start );
 
+  /* #408: DMA-reachable buffers -- the SDMMC IDMA cannot access DTCM, so the SD
+     bounce buffer (sd_diskio scratch[]) lives here in AXI SRAM (D1). */
+  .sd_dma (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.sd_dma)
+    *(.sd_dma*)
+    . = ALIGN(32);
+  } >RAM_D1
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack (NOLOAD) :
   {

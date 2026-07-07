@@ -84,7 +84,7 @@ See BSP_SD_ErrorCallback() and BSP_SD_AbortCallback() below
 * transfer data
 */
 /* USER CODE BEGIN enableScratchBuffer */
-/* #define ENABLE_SCRATCH_BUFFER */
+#define ENABLE_SCRATCH_BUFFER   /* #408: bounce SD-DMA through AXI SRAM (scratch placed in RAM_D1); the SDMMC IDMA cannot reach DTCM, where the FatFs buffers live */
 /* USER CODE END enableScratchBuffer */
 
 /* Private variables ---------------------------------------------------------*/
@@ -92,7 +92,7 @@ See BSP_SD_ErrorCallback() and BSP_SD_AbortCallback() below
 #if defined (ENABLE_SD_DMA_CACHE_MAINTENANCE)
 ALIGN_32BYTES(static uint8_t scratch[BLOCKSIZE]); // 32-Byte aligned for cache maintenance
 #else
-__ALIGN_BEGIN static uint8_t scratch[BLOCKSIZE] __ALIGN_END;
+__ALIGN_BEGIN static uint8_t scratch[BLOCKSIZE] __ALIGN_END __attribute__((section(".sd_dma")));  /* #408: RAM_D1 so the SDMMC IDMA can reach it (DTCM is unreachable) */
 #endif
 #endif
 /* Disk status */
@@ -271,7 +271,7 @@ DRESULT SD_read(BYTE lun, BYTE *buff, DWORD sector, UINT count)
   }
 
 #if defined(ENABLE_SCRATCH_BUFFER)
-  if (!((uint32_t)buff & 0x1F))
+  if (((uint32_t)buff >= 0x24000000U) && !((uint32_t)buff & 0x1F))  /* #408: fast path only for IDMA-reachable (D1 SRAM+) aligned buffers; DTCM falls to the scratch bounce */
   {
 #endif
     /* Fast path cause destination buffer is correctly aligned */
@@ -434,7 +434,7 @@ DRESULT SD_write(BYTE lun, const BYTE *buff, DWORD sector, UINT count)
   }
 
 #if defined(ENABLE_SCRATCH_BUFFER)
-  if (!((uint32_t)buff & 0x1F))
+  if (((uint32_t)buff >= 0x24000000U) && !((uint32_t)buff & 0x1F))  /* #408: fast path only for IDMA-reachable (D1 SRAM+) aligned buffers; DTCM falls to the scratch bounce */
   {
 #endif
 #if (ENABLE_SD_DMA_CACHE_MAINTENANCE == 1)
