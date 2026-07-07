@@ -32,6 +32,59 @@ extern "C" {
 // definition to avoid a duplicate symbol.
 SD_HandleTypeDef hsd1;
 extern char SDPath[4];          // FatFs logical drive, set by MX_FATFS_Init
+
+// SDMMC1 low-level bring-up. HAL_SD_Init() calls this from f_mount (via the
+// FatFs BSP); with MX_SDMMC1_SD_Init decoupled (#407) nothing else configures
+// the peripheral, so the HAL's __weak default would run instead -- and it is
+// empty. That left RCC_AHB3ENR.SDMMC1EN clear and PC8-12/PD2 unconfigured, so
+// the peripheral never shifted CMD0 out (no CMDSENT) and every mount timed out
+// in SDMMC_GetCmdError regardless of the card (#408). Enabling the bus clock +
+// pins here is the missing piece; the kernel clock source (SDMMCSEL=PLL2R) is
+// already set by PeriphCommonClock_Config at boot. Called lazily at mount, so
+// an absent card still cannot stall boot (#407-safe). KEEP the pin map in sync
+// with AMS.ioc SDMMC1 (PC8=D0 PC9=D1 PC10=D2 PC11=D3 PC12=CK, PD2=CMD, AF12).
+void HAL_SD_MspInit(SD_HandleTypeDef *hsd) {
+    if (hsd->Instance != SDMMC1) return;
+
+    __HAL_RCC_SDMMC1_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    __HAL_RCC_GPIOD_CLK_ENABLE();
+
+    GPIO_InitTypeDef g = {0};
+    g.Mode      = GPIO_MODE_AF_PP;
+    g.Pull      = GPIO_NOPULL;              // external 47k pull-ups on MAIN_LITE
+    g.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
+    g.Alternate = GPIO_AF12_SDMMC1;
+
+    g.Pin = GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 | GPIO_PIN_11 | GPIO_PIN_12;
+    HAL_GPIO_Init(GPIOC, &g);
+
+    g.Pin = GPIO_PIN_2;
+    HAL_GPIO_Init(GPIOD, &g);
+
+    // #408: the FatFs diskio reads via HAL_SD_ReadBlocks_DMA and blocks on a
+    // queue posted from the Rx-complete callback, which runs in the SDMMC1 ISR.
+    // Enable that IRQ or the DMA transfer never completes -> f_mount returns
+    // FR_DISK_ERR with hsd1.ErrorCode=0 (it simply never finishes). Priority 5 =
+    // FreeRTOS-syscall-safe (== configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY,
+    // matches FDCAN1_IT0); the callback does an ISR-safe osMessageQueuePut.
+    HAL_NVIC_SetPriority(SDMMC1_IRQn, 5, 0);
+    HAL_NVIC_EnableIRQ(SDMMC1_IRQn);
+}
+
+void HAL_SD_MspDeInit(SD_HandleTypeDef *hsd) {
+    if (hsd->Instance != SDMMC1) return;
+    __HAL_RCC_SDMMC1_CLK_DISABLE();
+    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_8 | GPIO_PIN_9 | GPIO_PIN_10 |
+                           GPIO_PIN_11 | GPIO_PIN_12);
+    HAL_GPIO_DeInit(GPIOD, GPIO_PIN_2);
+}
+
+// SDMMC1 completion ISR -- routes to the HAL, which fires the FatFs BSP Rx/Tx-
+// complete callbacks that post READ_CPLT_MSG/WRITE_CPLT_MSG to the SD_read /
+// SD_write message queue. Not emitted by CubeMX (SDMMC1 init is decoupled, #407),
+// so DMA transfers would otherwise never complete (#408).
+void SDMMC1_IRQHandler(void) { HAL_SD_IRQHandler(&hsd1); }
 }
 
 namespace {
