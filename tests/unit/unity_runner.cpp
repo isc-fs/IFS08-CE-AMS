@@ -257,6 +257,18 @@ void test_sil_charger_stale_request_times_out(void);
 void test_sil_tsms_drop_in_run_rearms(void);
 void test_sil_bus_collapse_in_run_rearms(void);
 
+// test_datalogging.cpp
+void test_logring_empty_pop_false(void);
+void test_logring_fifo_order(void);
+void test_logring_fills_and_drops_newest(void);
+void test_logring_wraparound_fifo(void);
+void test_logring_size_tracking(void);
+void test_logcsv_header_column_count(void);
+void test_logcsv_row_matches_header_columns(void);
+void test_logcsv_row_scalar_values(void);
+void test_logcsv_row_cell_and_temp_values(void);
+void test_logcsv_truncation_returns_zero(void);
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -495,6 +507,17 @@ int main(void) {
     RUN_TEST(test_sil_charger_stale_request_times_out);
     RUN_TEST(test_sil_tsms_drop_in_run_rearms);
     RUN_TEST(test_sil_bus_collapse_in_run_rearms);
+
+    RUN_TEST(test_logring_empty_pop_false);
+    RUN_TEST(test_logring_fifo_order);
+    RUN_TEST(test_logring_fills_and_drops_newest);
+    RUN_TEST(test_logring_wraparound_fifo);
+    RUN_TEST(test_logring_size_tracking);
+    RUN_TEST(test_logcsv_header_column_count);
+    RUN_TEST(test_logcsv_row_matches_header_columns);
+    RUN_TEST(test_logcsv_row_scalar_values);
+    RUN_TEST(test_logcsv_row_cell_and_temp_values);
+    RUN_TEST(test_logcsv_truncation_returns_zero);
 
     return UNITY_END();
 }

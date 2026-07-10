@@ -20,6 +20,7 @@
 #include "main.h"
 #include "FreeRTOS.h"
 #include "cmsis_os2.h"
+#include "fatfs.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -30,6 +31,7 @@
 #include "app/can_frame.h"
 #include "app/current_task.h"
 #include "app/safety_task.h"
+#include "app/sd_logger_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
 
@@ -101,6 +103,13 @@ const osThreadAttr_t CurrentSensorTask_attributes = {
   .stack_size = 256 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
+/* Definitions for SdLoggerTask */
+osThreadId_t SdLoggerTaskHandle;
+const osThreadAttr_t SdLoggerTask_attributes = {
+  .name = "SdLoggerTask",
+  .stack_size = 1024 * 4,
+  .priority = (osPriority_t) osPriorityLow,
+};
 /* Definitions for acu_rx_queue */
 osMessageQueueId_t acu_rx_queueHandle;
 const osMessageQueueAttr_t acu_rx_queue_attributes = {
@@ -144,6 +153,7 @@ void StartSafetyTask(void *argument);
 void StartBmsPollTask(void *argument);
 void StartAcuCanTask(void *argument);
 void StartCurrentSensorTask(void *argument);
+void StartSdLoggerTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -195,6 +205,7 @@ int main(void)
   MX_ADC3_Init();
   MX_SPI1_Init();
   MX_IWDG1_Init();
+  MX_FATFS_Init();
   /* USER CODE BEGIN 2 */
   /* IWDG1 is started by MX_IWDG1_Init() above (CubeMX-owned), which
    * runs before osKernelStart and so satisfies the "watchdog alive in
@@ -262,6 +273,9 @@ int main(void)
 
   /* creation of CurrentSensorTask */
   CurrentSensorTaskHandle = osThreadNew(StartCurrentSensorTask, NULL, &CurrentSensorTask_attributes);
+
+  /* creation of SdLoggerTask */
+  SdLoggerTaskHandle = osThreadNew(StartSdLoggerTask, NULL, &SdLoggerTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -602,6 +616,7 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -614,6 +629,12 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(LTC6820_CS_GPIO_Port, LTC6820_CS_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin : MICROSD_DET_Pin */
+  GPIO_InitStruct.Pin = MICROSD_DET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(MICROSD_DET_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : TSMS_Pin DASH_CHG_Pin */
   GPIO_InitStruct.Pin = TSMS_Pin|DASH_CHG_Pin;
@@ -748,6 +769,22 @@ void StartCurrentSensorTask(void *argument)
   /* Unreachable: ams_current_sensor_task_run() never returns. */
   for(;;) { osDelay(1); }
   /* USER CODE END StartCurrentSensorTask */
+}
+
+/* USER CODE BEGIN Header_StartSdLoggerTask */
+/**
+* @brief Function implementing the SdLoggerTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartSdLoggerTask */
+void StartSdLoggerTask(void *argument)
+{
+  /* USER CODE BEGIN StartSdLoggerTask */
+  ams_sd_logger_task_run(argument);
+  /* Unreachable: ams_sd_logger_task_run() never returns. */
+  for(;;) { osDelay(1); }
+  /* USER CODE END StartSdLoggerTask */
 }
 
 /**

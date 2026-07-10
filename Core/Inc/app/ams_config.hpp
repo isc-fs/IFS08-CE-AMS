@@ -98,6 +98,44 @@ inline constexpr std::uint32_t TelemetryPeriodMs = 500;
 inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)
 
 // ---------------------------------------------------------------------------
+// Datalogging to microSD (SDMMC1 + FatFs). Strictly off the safety path:
+// SdLoggerTask (low priority) owns the card; SafetyTask only pushes a
+// LogRecord into a lock-free ring every LogSamplePeriodMs. Best-effort -- a
+// missing/failed card or a full ring degrades to "no log", NEVER a fault and
+// never a blocking call on the 10 ms loop. The boot-path SDMMC init is
+// decoupled (CubeMX: MX_SDMMC1_SD_Init not auto-called) so an absent card
+// can't brick the node -- see AMS #407. Logger: Core/Src/app/sd_logger_task.cpp.
+// ---------------------------------------------------------------------------
+
+// SafetyTask captures a record this often. 250 ms = 4 Hz, matched to the
+// BmsPollVoltMs voltage poll so every sample carries a FRESH cell-voltage
+// frame (no oversampling of the 2-4 Hz BMS data; design option B). ~6 KB/s
+// of full per-cell CSV. Must be a multiple of SafetyPeriodMs.
+inline constexpr std::uint32_t LogSamplePeriodMs = 250;
+
+// Lock-free ring depth (LogRecords). Each record now carries the FULL
+// 95-cell + 200-temp matrices (~620 B), so the ring is ~10 KB of BSS at
+// depth 16. MUST be a power of two. 16 @ 4 Hz ~= 4 s of buffer; the
+// shared-SD-mutex-with-yielding (#406 pull) lets the logger drain between
+// the extractor's reads, so the ring rarely saturates. Bump if RAM allows.
+inline constexpr std::uint32_t LogRingCapacity   = 16;
+
+// SdLoggerTask drain cadence, and how often it f_syncs the active file
+// (bounds data lost on a power-cut to <= LogSyncPeriodMs of samples).
+inline constexpr std::uint32_t LogDrainPeriodMs  = 50;
+inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
+
+// Seal (rotate) the active file once it reaches this size. Bounded, rotated
+// files make #406 listing / CRC / resume / "only new logs" tractable.
+inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~4 min/file at full per-cell rows)
+
+// 8.3 names (LFN off in ffconf.h; no RTC wall-clock -- #406/#407). The active
+// file is written as ".TMP" and renamed to ".CSV" on seal, so the extractor
+// only ever sees finished logs. Index is a rotation counter, not a timestamp.
+inline constexpr char          LogActiveNameFmt[] = "LOG%04lu.TMP";
+inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
+
+// ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
 // the encode/decode helpers in can_frame.hpp.
 // ---------------------------------------------------------------------------
