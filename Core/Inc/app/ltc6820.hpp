@@ -18,8 +18,8 @@
 //   Pins:      PA5 = SPI1_SCK   AF5
 //              PA6 = SPI1_MISO  AF5
 //              PA7 = SPI1_MOSI  AF5
-//              PA4 = GPIO_Output, label LTC6820_CS, default HIGH
-//   Mode:      CPOL = HIGH, CPHA = 2-edge   (SPI Mode 3)
+//              PB9 = GPIO_Output, label LTC6820_CS, default HIGH
+//   Mode:      CPOL = LOW, CPHA = 1-edge    (SPI Mode 0)
 //   Format:    MSB first, 8-bit data
 //   Baud:      <= 1 MHz  (LTC6820 datasheet figure 10 caps SCK at 1 MHz
 //              for full daisy-chain operation; we run at ~500 Hz to
