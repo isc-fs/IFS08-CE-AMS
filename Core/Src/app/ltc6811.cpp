@@ -126,9 +126,14 @@ bool decode_aux_voltage_group(const std::uint8_t*           bytes_8,
 }
 
 std::array<std::uint8_t, 6> pack_adg731_select(std::uint8_t channel) noexcept {
-    // ADG731 selection byte: EN | x | A4..A0 | x
-    const std::uint8_t data = static_cast<std::uint8_t>(
-        0x80u | ((channel & 0x1Fu) << 1));
+    // ADG731 selection byte (datasheet Rev.B Fig.3 + Table II), MSB..LSB:
+    //   DB7 EN   DB6 CS   DB5 X   DB4..DB0 A4..A0
+    // EN is ACTIVE-LOW: EN=1 forces ALL SWITCHES OFF; EN=0 + CS=0 selects the
+    // switch addressed by A4..A0 (= channel 0..31). So the byte is just the
+    // 5-bit address with EN/CS/X = 0. (Prior code set EN=1 and shifted the
+    // address into DB5..DB1 -> the mux stayed fully disabled, every channel
+    // floated to VREF2 / read 'open'.)
+    const std::uint8_t data = static_cast<std::uint8_t>(channel & 0x1Fu);
 
     std::array<std::uint8_t, 6> p = {};
     // Slot 0 -- send the byte, drive CSBM LOW during transmission and

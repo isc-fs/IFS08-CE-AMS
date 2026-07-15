@@ -232,15 +232,15 @@ extern "C" void test_ltc6811_build_write_frame_short_buffer_safe(void) {
 // pack_adg731_select
 // ---------------------------------------------------------------------------
 
-// Channel 5, enabled: data byte = 0x80 | (5 << 1) = 0x8A
+// Channel 5: data byte = addr 5 (EN=0 enable, CS=0, A4..A0 in DB4..DB0) = 0x05.
 // Slot 0 should drop CSBM LOW (ICOM=8) and release HIGH after (FCOM=9).
 extern "C" void test_ltc6811_pack_adg731_channel_5(void) {
     const auto p = pack_adg731_select(5);
 
-    // Slot 0 high byte: ICOM=8 | data_hi=0x8 -> 0x88
-    TEST_ASSERT_EQUAL_HEX8(0x88, p[0]);
-    // Slot 0 low byte:  data_lo=0xA | FCOM=9 -> 0xA9
-    TEST_ASSERT_EQUAL_HEX8(0xA9, p[1]);
+    // Slot 0 high byte: ICOM=8 | data_hi=0x0 -> 0x80
+    TEST_ASSERT_EQUAL_HEX8(0x80, p[0]);
+    // Slot 0 low byte:  data_lo=0x5 | FCOM=9 -> 0x59
+    TEST_ASSERT_EQUAL_HEX8(0x59, p[1]);
     // Slots 1, 2 marked "no transmission" (ICOM=0xF / FCOM=0xF)
     TEST_ASSERT_EQUAL_HEX8(0xF0, p[2]);
     TEST_ASSERT_EQUAL_HEX8(0x0F, p[3]);
@@ -248,18 +248,18 @@ extern "C" void test_ltc6811_pack_adg731_channel_5(void) {
     TEST_ASSERT_EQUAL_HEX8(0x0F, p[5]);
 }
 
-// Channel 0, enabled: data byte = 0x80
+// Channel 0: data byte = 0x00 (addr 0, EN/CS=0 -> S1 on)
 extern "C" void test_ltc6811_pack_adg731_channel_0(void) {
     const auto p = pack_adg731_select(0);
-    TEST_ASSERT_EQUAL_HEX8(0x88, p[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x80, p[0]);   // ICOM=8, hi=0x0
     TEST_ASSERT_EQUAL_HEX8(0x09, p[1]);   // data_lo=0, FCOM=9
 }
 
-// Channel 31, enabled: data byte = 0x80 | (31 << 1) = 0xBE
+// Channel 31: data byte = 0x1F (addr 31 -> S32 on)
 extern "C" void test_ltc6811_pack_adg731_channel_31(void) {
     const auto p = pack_adg731_select(31);
-    TEST_ASSERT_EQUAL_HEX8(0x8B, p[0]);   // ICOM=8, hi=0xB
-    TEST_ASSERT_EQUAL_HEX8(0xE9, p[1]);   // lo=0xE, FCOM=9
+    TEST_ASSERT_EQUAL_HEX8(0x81, p[0]);   // ICOM=8, hi=0x1
+    TEST_ASSERT_EQUAL_HEX8(0xF9, p[1]);   // lo=0xF, FCOM=9
 }
 
 // Channel field is only 5 bits wide. Anything above 31 must mask to

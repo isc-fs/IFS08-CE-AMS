@@ -154,13 +154,15 @@ void build_write_frame(std::uint16_t                       cmd,
 //
 // The 32:1 mux on each BMS_LITE board is wired to the LTC's GPIO/COMM
 // port (DIN / SCLK / SYNC bit-banged through WRCOMM + STCOMM). To
-// select channel N (0..31) with the mux enabled, we transmit one
-// 8-bit word:
+// select channel N (0..31) we transmit one 8-bit word (datasheet Rev.B
+// Fig.3 + Table II), MSB..LSB:
 //
-//   bit 7 (MSB)  EN          1 = mux active, 0 = all switches off
-//   bit 6        don't-care  0
-//   bits 5..1    A4..A0      channel 0..31
-//   bit 0        don't-care  0
+//   DB7  EN       ACTIVE-LOW: 0 = enable addressed switch, 1 = ALL OFF
+//   DB6  CS       0 = accept this write (1 = retain previous switch)
+//   DB5  X        don't-care
+//   DB4..DB0  A4..A0   channel 0..31
+//
+// i.e. the byte is simply the 5-bit address (EN/CS/X = 0).
 //
 // The LTC6811's COMM register is 6 bytes packed as 3 transmit "slots".
 // Each slot has the form
