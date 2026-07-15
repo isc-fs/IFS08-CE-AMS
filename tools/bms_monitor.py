@@ -36,11 +36,13 @@ IC_CELL_IDS = [
 ]
 IC_LABELS = ["IC0 (bottom)", "IC1 (second)", "IC2 (third)", "IC3 (fourth)"]
 ID_IC1_RAW = 0x7BF          # IC1 RDCFGA raw (6 data + 2 PEC) — all 0xFF = no return on first hop
-# Per-IC temperature block: TEMP_BASE + ic*8 + frame(0..6); each frame
-# [ctr, base_channel, 3x mV LE] = the muxed NTC-divider voltage per channel.
+# Per-IC temperature block: TEMP_BASE + ic*TEMP_STRIDE + frame; each frame
+# [ctr, base_addr, 3x mV LE] = the muxed divider voltage per ADG731 address.
+# Full 32-output map: addr 0-9 & 16-25 = NTC_1..20, the rest are NC (float).
 TEMP_BASE = 0x740
-TEMPS_PER_IC = 20           # ADG731 channels swept per LTC
-TEMP_FRAMES = (TEMPS_PER_IC + 2) // 3   # 7 frames of 3
+TEMP_STRIDE = 16            # per-IC ID stride (fits 11 frames)
+TEMPS_PER_IC = 32          # full ADG731 sweep (S1..S32 = addr 0..31)
+TEMP_FRAMES = (TEMPS_PER_IC + 2) // 3   # 11 frames of 3
 FRESH_S = 2.0               # frames older than this are treated as stale
 
 # --- NTC conversion (Fenghua CMFB103F3950FANT, 10k / B25/50=3950) ---
@@ -158,7 +160,7 @@ def decode(frames, now):
     def temps(pos):
         tvals = [None] * TEMPS_PER_IC
         for f in range(TEMP_FRAMES):
-            e = fresh(TEMP_BASE + pos * 8 + f)
+            e = fresh(TEMP_BASE + pos * TEMP_STRIDE + f)
             if e and len(e[0]) >= 8:
                 d = e[0]
                 base = d[1]
@@ -237,17 +239,17 @@ def draw(scr, snap, count, stale, err):
         y += 1
         t = ic["temps"]
         nt = sum(1 for v in t if v not in (None, 0))
-        put(y, 2, f"NTC divider mV (ch 1-20)  [{nt}/20]", WARN)
+        put(y, 2, f"mux divider mV — 32 (addr 0-31)  [{nt}/32]", WARN)
         y += 1
         for k, v in enumerate(t):
-            row, col = y + k // 10, 2 + (k % 10) * 6
+            row, col = y + k // 16, 2 + (k % 16) * 6
             put(row, col, (f"{v:>5}" if v is not None else "    ."),
                 OK if (v not in (None, 0)) else DIM)
         y += 3
-        put(y, 2, "NTC temp °C", OK)
+        put(y, 2, "mux temp °C  (NTC at addr 0-9,16-25)", OK)
         y += 1
         for k, v in enumerate(t):
-            row, col = y + k // 10, 2 + (k % 10) * 6
+            row, col = y + k // 16, 2 + (k % 16) * 6
             put(row, col, f"{fmt_c(v):>5}", OK if v_to_temp(v) is not None else DIM)
         y += 3
 
@@ -313,15 +315,15 @@ def render_plain(snap, count, stale, color):
             L.append(f"  min {s[0]}  max {s[1]}  spread {s[2]} mV  ({s[3]} cells)")
         t = ic["temps"]
         nt = sum(1 for v in t if v not in (None, 0))
-        L.append(f"  {yel}NTC divider mV (ch 1-20)  [{nt}/20 present]{rst}")
-        for r0 in (0, 10):
-            L.append("    " + " ".join(
+        L.append(f"  {yel}mux divider mV — all 32 (addr 0-15 / 16-31)  [{nt}/32 non-zero]{rst}")
+        for r0 in (0, 16):
+            L.append(f"   {r0:>2}:" + " ".join(
                 (f"{t[k]:>4}" if t[k] is not None else "   .")
-                for k in range(r0, min(r0 + 10, TEMPS_PER_IC))))
-        L.append(f"  {g}NTC temp °C{rst}")
-        for r0 in (0, 10):
-            L.append("    " + " ".join(
-                fmt_c(t[k]) for k in range(r0, min(r0 + 10, TEMPS_PER_IC))))
+                for k in range(r0, min(r0 + 16, TEMPS_PER_IC))))
+        L.append(f"  {g}mux temp °C — NTCs at addr 0-9 & 16-25 (else NC → open){rst}")
+        for r0 in (0, 16):
+            L.append(f"   {r0:>2}:" + " ".join(
+                fmt_c(t[k]) for k in range(r0, min(r0 + 16, TEMPS_PER_IC))))
     return "\n".join(L)
 
 

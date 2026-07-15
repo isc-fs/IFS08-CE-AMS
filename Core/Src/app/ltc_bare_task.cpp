@@ -61,9 +61,11 @@ constexpr std::uint8_t kWakeBursts = 6;
 
 constexpr std::uint32_t kCanIdStatus  = 0x7E0;  // RDCFGA / PEC summary
 constexpr std::uint32_t kCanIdVoltage = 0x7E1;  // decoded cell mV
-// Per-IC temperature block: ID = kCanIdTempBase + ic*8 + (channel/3), 7 frames
-// of 3 channels each. IC0 0x740.., IC1 0x748.., IC2 0x750.., IC3 0x758..
-constexpr std::uint32_t kCanIdTempBase = 0x740;  // 20 NTC-divider mV per IC
+// Per-IC temperature block: ID = kCanIdTempBase + ic*16 + (addr/3), 11 frames
+// of 3 = the full 32 ADG731 mux positions. IC0 0x740.., IC1 0x750.., IC2
+// 0x760.., IC3 0x770.. (stride 16 leaves room for 11 frames per IC).
+constexpr std::uint32_t kCanIdTempBase = 0x740;  // 32 mux-divider mV per IC
+constexpr std::uint8_t  kMuxChannels   = 32;     // full ADG731 sweep (S1..S32)
 
 bool can_send8(std::uint32_t id, const std::uint8_t data[8]) noexcept {
     FDCAN_TxHeaderTypeDef tx = {};
@@ -220,19 +222,20 @@ extern "C" void ams_ltc_bare_run(void) {
         read_send_group(cmd_rdcvc, {0x7E5u, 0x7B5u, 0x7C5u, 0x7D5u});                 // C: cells 7-9
         read_send_group(cmd_rdcvd, {0x7E6u, 0x7B6u, 0x7C6u, 0x7D6u});                 // D: cells 10-12
 
-        // --- (3) Temperature sweep via the ADG731 mux, EVERY IC ----------
-        // Per channel: WRCOMM(select) broadcast to all ICs -> STCOMM (shift
-        // U3's GPIO port out to each mux) -> settle -> ADAX(GPIO1) -> RDAUXA.
-        // One sweep drives every IC's mux in lockstep, so a single RDAUXA
-        // reads AUX1 (temps_mux = the muxed NTC divider, NTC + 6.8k pull-up
-        // to Vref2) for ALL ICs at once. We now decode + report each IC, not
-        // just IC0. Channels per config::Adg731ChannelMap (addr 0-9, 16-25).
-        // Per-IC block: kCanIdTempBase + ic*8 + (channel/3), [ctr, base, 3x mV LE].
-        std::uint16_t temp_mv[kChainLen][ams::config::TempsPerLtc] = {};
-        for (std::uint8_t i = 0; i < ams::config::TempsPerLtc; ++i) {
+        // --- (3) FULL ADG731 mux map (all 32 outputs), EVERY IC ----------
+        // Sweep ALL 32 mux addresses (S1..S32 = addr 0..31), not just the 20
+        // wired NTC channels, so the bench maps every output. Per address:
+        // WRCOMM(select) broadcast to all ICs -> STCOMM -> settle -> ADAX(GPIO1)
+        // -> RDAUXA. One sweep drives every IC's mux in lockstep; a single
+        // RDAUXA reads AUX1 (temps_mux = muxed NTC divider, NTC + 6.8k pull-up
+        // to Vref2) for ALL ICs. Populated NTC addresses read a real divider
+        // voltage; unused / NC addresses float to ~Vref2. Flight NTC map =
+        // config::Adg731ChannelMap (addr 0-9 -> NTC_1..10, 16-25 -> NTC_11..20).
+        // Per-IC block: kCanIdTempBase + ic*16 + (addr/3), [ctr, base, 3x mV LE].
+        std::uint16_t temp_mv[kChainLen][kMuxChannels] = {};
+        for (std::uint8_t addr = 0; addr < kMuxChannels; ++addr) {
             ams_watchdog_refresh();  // sweep is long -- keep the dog fed
-            const auto sel = ams::ltc6811::pack_adg731_select(
-                                 ams::config::Adg731ChannelMap[i]);
+            const auto sel = ams::ltc6811::pack_adg731_select(addr);  // raw addr 0..31
             std::uint8_t mux_payload[kChainLen][6];
             for (std::uint8_t ic = 0; ic < kChainLen; ++ic)
                 for (std::uint8_t k = 0; k < 6u; ++k) mux_payload[ic][k] = sel[k];
@@ -246,17 +249,17 @@ extern "C" void ams_ltc_bare_run(void) {
             for (std::uint8_t ic = 0; ic < kChainLen; ++ic) {
                 std::array<std::uint16_t, 3> av{};
                 if (ams::ltc6811::decode_aux_voltage_group(&aux[ic * 8u], av))
-                    temp_mv[ic][i] = av[0];  // AUX1 = temps_mux for this IC
+                    temp_mv[ic][addr] = av[0];  // AUX1 = temps_mux for this IC
             }
         }
         for (std::uint8_t ic = 0; ic < kChainLen && ic < 4u; ++ic)
-        for (std::uint8_t base = 0; base < ams::config::TempsPerLtc; base += 3) {
+        for (std::uint8_t base = 0; base < kMuxChannels; base += 3) {
             std::uint8_t tf[8] = { counter, base, 0u, 0u, 0u, 0u, 0u, 0u };
-            for (std::uint8_t j = 0; j < 3u && (base + j) < ams::config::TempsPerLtc; ++j) {
+            for (std::uint8_t j = 0; j < 3u && (base + j) < kMuxChannels; ++j) {
                 tf[2 + j * 2] = static_cast<std::uint8_t>(temp_mv[ic][base + j] & 0xFFu);
                 tf[3 + j * 2] = static_cast<std::uint8_t>(temp_mv[ic][base + j] >> 8);
             }
-            can_send8(kCanIdTempBase + ic * 8u + (base / 3u), tf);
+            can_send8(kCanIdTempBase + ic * 16u + (base / 3u), tf);
         }
 
         // PEC self-test: echo the EXACT command+PEC bytes the firmware
