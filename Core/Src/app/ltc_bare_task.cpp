@@ -43,8 +43,9 @@ namespace {
 
 // === EDIT ME ===========================================================
 // Number of LTC6811-1 ICs physically on the isoSPI bus. Driven by
-// config::LtcChainLength (set to 1 under AMS_LTC_BARE in ams_config.hpp --
-// edit it there). read_register_group() sizes/clocks by that same constant,
+// config::LtcChainLength (set under AMS_LTC_BARE in ams_config.hpp to match
+// the ICs on your bench). read_register_group() sizes/clocks by that same
+// constant,
 // so this MUST equal it or the reads self-reject on the buffer guard.
 constexpr std::uint8_t kChainLen = ams::config::LtcChainLength;
 // Poll cadence. Lower for a faster scope-trigger rate; keep < ~80 ms so
@@ -169,10 +170,14 @@ extern "C" void ams_ltc_bare_run(void) {
         }
 
         // --- (2) ADCV + read ALL 4 cell-voltage groups, EVERY IC ---------
-        // Per IC, per group: [ctr, decode-ok, cellX..Z mV LE]. CAN IDs:
-        //   IC0 (chain pos 0): 0x7E1(1-3) 0x7E4(4-6) 0x7E5(7-9) 0x7E6(10-12)
-        //   IC1 (chain pos 1): 0x7B1      0x7B4      0x7B5      0x7B6
-        // (decode_cell_voltage_group decodes one 8-byte IC segment.)
+        // Per IC, per group: [ctr, decode-ok, cellX..Z mV LE]. Per-IC CAN
+        // IDs (chain pos 0..3 = IC0..IC3):
+        //   A(1-3)   IC0 0x7E1  IC1 0x7B1  IC2 0x7C1  IC3 0x7D1
+        //   B(4-6)   IC0 0x7E4  IC1 0x7B4  IC2 0x7C4  IC3 0x7D4
+        //   C(7-9)   IC0 0x7E5  IC1 0x7B5  IC2 0x7C5  IC3 0x7D5
+        //   D(10-12) IC0 0x7E6  IC1 0x7B6  IC2 0x7C6  IC3 0x7D6
+        // (decode_cell_voltage_group decodes one 8-byte IC segment; ICs
+        //  past pos 3 are still read + PEC-counted, just not broadcast.)
         bus.wakeup();  // re-wake right before ADCV so a marginal downstream
                        // IC is freshly READY (REFUP) for the conversion+read
         bus.send_command(cmd_adcv.data());
@@ -180,7 +185,7 @@ extern "C" void ams_ltc_bare_run(void) {
 
         const auto read_send_group =
             [&](const std::array<std::uint8_t, 4>& cmd,
-                std::uint32_t id_ic0, std::uint32_t id_ic1,
+                const std::array<std::uint32_t, 4>& ids,
                 std::uint32_t raw_ic1_id = 0u) {
                 std::uint8_t cv[8u * kChainLen] = {};
                 bus.read_register_group(cmd.data(), cv, sizeof(cv));
@@ -203,13 +208,14 @@ extern "C" void ams_ltc_bare_run(void) {
                         static_cast<std::uint8_t>(mv[2] & 0xFFu),
                         static_cast<std::uint8_t>(mv[2] >> 8),
                     };
-                    can_send8(ic == 0u ? id_ic0 : id_ic1, f);
+                    if (static_cast<std::size_t>(ic) < ids.size())
+                        can_send8(ids[ic], f);   // first 4 ICs get their own frame
                 }
             };
-        read_send_group(cmd_rdcva, kCanIdVoltage, 0x7B1u, 0x7BEu);  // A: 1-3 (+raw IC1)
-        read_send_group(cmd_rdcvb, 0x7E4u,        0x7B4u);          // B: cells 4-6
-        read_send_group(cmd_rdcvc, 0x7E5u,        0x7B5u);          // C: cells 7-9
-        read_send_group(cmd_rdcvd, 0x7E6u,        0x7B6u);          // D: cells 10-12
+        read_send_group(cmd_rdcva, {kCanIdVoltage, 0x7B1u, 0x7C1u, 0x7D1u}, 0x7BEu);  // A: 1-3 (+raw IC1)
+        read_send_group(cmd_rdcvb, {0x7E4u, 0x7B4u, 0x7C4u, 0x7D4u});                 // B: cells 4-6
+        read_send_group(cmd_rdcvc, {0x7E5u, 0x7B5u, 0x7C5u, 0x7D5u});                 // C: cells 7-9
+        read_send_group(cmd_rdcvd, {0x7E6u, 0x7B6u, 0x7C6u, 0x7D6u});                 // D: cells 10-12
 
         // --- (3) Temperature sweep via the ADG731 mux --------------------
         // Per channel: WRCOMM(select) -> STCOMM (shift out U3's GPIO port to

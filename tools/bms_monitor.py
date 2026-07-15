@@ -26,9 +26,16 @@ import can  # noqa: E402
 
 # --- bare-harness CAN map (Core/Src/app/ltc_bare_task.cpp) ---
 ID_STATUS = 0x7E0           # [0]loop [1]expected [2]pec_clean [3]spi_ok [4..7]IC0 CFG
-IC0_CELL_IDS = [0x7E1, 0x7E4, 0x7E5, 0x7E6]   # cells 1-3, 4-6, 7-9, 10-12
-IC1_CELL_IDS = [0x7B1, 0x7B4, 0x7B5, 0x7B6]
-ID_IC1_RAW = 0x7BF          # IC1 RDCFGA raw (6 data + 2 PEC) — all 0xFF = no return
+# Per-IC cell-frame IDs, chain pos 0..3 = IC0..IC3. Each row: [A(1-3), B(4-6),
+# C(7-9), D(10-12)]. Mirrors ltc_bare_task.cpp read_send_group().
+IC_CELL_IDS = [
+    [0x7E1, 0x7E4, 0x7E5, 0x7E6],   # IC0
+    [0x7B1, 0x7B4, 0x7B5, 0x7B6],   # IC1
+    [0x7C1, 0x7C4, 0x7C5, 0x7C6],   # IC2
+    [0x7D1, 0x7D4, 0x7D5, 0x7D6],   # IC3
+]
+IC_LABELS = ["IC0 (bottom)", "IC1 (second)", "IC2 (third)", "IC3 (fourth)"]
+ID_IC1_RAW = 0x7BF          # IC1 RDCFGA raw (6 data + 2 PEC) — all 0xFF = no return on first hop
 FRESH_S = 2.0               # frames older than this are treated as stale
 
 
@@ -85,10 +92,13 @@ def decode(frames, now):
                 vals += [None, None, None]
         return ok, vals
 
-    snap["ic0_ok"], snap["ic0_cells"] = cells(IC0_CELL_IDS)
-    snap["ic1_ok"], snap["ic1_cells"] = cells(IC1_CELL_IDS)
+    ics = []
+    for ids in IC_CELL_IDS:
+        ok, vals = cells(ids)
+        ics.append({"ok": ok, "cells": vals, "noreturn": False})
     raw = fresh(ID_IC1_RAW)
-    snap["ic1_noreturn"] = bool(raw and all(b == 0xFF for b in raw[0]))
+    ics[1]["noreturn"] = bool(raw and all(b == 0xFF for b in raw[0]))
+    snap["ics"] = ics
     return snap
 
 
@@ -129,15 +139,17 @@ def draw(scr, snap, count, stale, err):
         put(y, 2, "PEC-clean: -- / --   (no status frame)", DIM)
     y += 3
 
-    for label, okkey, cellkey in (("IC0  (bottom)", "ic0_ok", "ic0_cells"),
-                                  ("IC1  (second)", "ic1_ok", "ic1_cells")):
-        ok = snap[okkey]
+    n_show = snap["expected"] if snap.get("have_status") and snap["expected"] else len(snap["ics"])
+    n_show = min(n_show, len(snap["ics"]))
+    for pos in range(n_show):
+        ic = snap["ics"][pos]
+        ok = ic["ok"]
         okstr = "YES" if ok else ("NO" if ok is not None else "--")
-        put(y, 2, f"{label}   decode_ok: {okstr}", (OK if ok else BAD) | curses.A_BOLD)
-        if cellkey == "ic1_cells" and snap["ic1_noreturn"]:
+        put(y, 2, f"{IC_LABELS[pos]}   decode_ok: {okstr}", (OK if ok else BAD) | curses.A_BOLD)
+        if ic["noreturn"]:
             put(y, 40, "NO RETURN (all 0xFF)", BAD | curses.A_BOLD)
         y += 1
-        cells = snap[cellkey]
+        cells = ic["cells"]
         for i, v in enumerate(cells):
             row, col = y + i // 4, 2 + (i % 4) * 14
             txt = f"c{i + 1:<2} {v:>5}" if v is not None else f"c{i + 1:<2}   ---"
@@ -193,13 +205,15 @@ def render_plain(snap, count, stale, color):
                  f"IC0 CFG: {' '.join(f'{b:02X}' for b in snap['ic0_cfg'])}")
     else:
         L.append("PEC-clean: --/--  (no status frame)")
-    for label, okkey, cellkey in (("IC0 (bottom)", "ic0_ok", "ic0_cells"),
-                                  ("IC1 (second)", "ic1_ok", "ic1_cells")):
-        ok = snap[okkey]
+    n_show = snap["expected"] if snap.get("have_status") and snap["expected"] else len(snap["ics"])
+    n_show = min(n_show, len(snap["ics"]))
+    for pos in range(n_show):
+        ic = snap["ics"][pos]
+        ok = ic["ok"]
         tag = "YES" if ok else ("NO" if ok is not None else "--")
-        extra = "  NO RETURN (all 0xFF)" if (cellkey == "ic1_cells" and snap["ic1_noreturn"]) else ""
-        L.append(f"{(g if ok else r)}{label}  decode_ok:{tag}{rst}{extra}")
-        cells = snap[cellkey]
+        extra = "  NO RETURN (all 0xFF)" if ic["noreturn"] else ""
+        L.append(f"{(g if ok else r)}{IC_LABELS[pos]}  decode_ok:{tag}{rst}{extra}")
+        cells = ic["cells"]
         row = "  " + "  ".join(f"c{i+1:>2}{'.' if v is None else ''}{v if v is not None else '---':>5}"
                                for i, v in enumerate(cells))
         L.append(row)
