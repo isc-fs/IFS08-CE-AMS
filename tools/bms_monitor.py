@@ -43,6 +43,64 @@ TEMPS_PER_IC = 20           # ADG731 channels swept per LTC
 TEMP_FRAMES = (TEMPS_PER_IC + 2) // 3   # 7 frames of 3
 FRESH_S = 2.0               # frames older than this are treated as stale
 
+# --- NTC conversion (Fenghua CMFB103F3950FANT, 10k / B25/50=3950) ---
+# Divider: NTC (lower leg to GND) + RPULL up to VREF2; LTC6811 reads V_aux.
+#   R_NTC = RPULL * V_aux / (VREF2 - V_aux),  then R -> °C via the table below.
+# RT_KOHM = datasheet 阻温特性表 CENTER resistances (kΩ), -40..+120 °C @ 1 °C
+# (docs/ntc_rt_table.csv). Interpolated, NOT a single-β fit — β=3950 is >50%
+# wrong at -40 °C. VREF2 nominal 3.0 V (each LTC's own; ~3005-3008 on the bench).
+RPULL_KOHM = 6.8
+VREF2_MV = 3000.0
+RT_START_C = -40
+RT_KOHM = [
+    264.279, 250.344, 237.13, 224.603, 212.733, 201.487, 190.836, 180.75, 171.201, 162.163,
+    153.61, 145.516, 137.858, 130.614, 123.761, 117.28, 111.149, 105.351, 99.867, 94.681,
+    89.776, 85.137, 80.75, 76.6, 72.676, 68.963, 65.451, 62.129, 58.986, 56.012,
+    53.198, 50.534, 48.013, 45.627, 43.368, 41.229, 39.204, 37.285, 35.468, 33.747,
+    32.116, 30.57, 29.105, 27.716, 26.399, 25.15, 23.965, 22.842, 21.776, 20.764,
+    19.783, 18.892, 18.026, 17.204, 16.423, 15.681, 14.976, 14.306, 13.669, 13.063,
+    12.487, 11.939, 11.418, 10.921, 10.449, 10, 9.571, 9.164, 8.775, 8.405,
+    8.052, 7.716, 7.396, 7.09, 6.798, 6.52, 6.255, 6.002, 5.76, 5.529,
+    5.309, 5.098, 4.897, 4.704, 4.521, 4.345, 4.177, 4.016, 3.863, 3.716,
+    3.588, 3.44, 3.311, 3.188, 3.069, 2.956, 2.848, 2.744, 2.644, 2.548,
+    2.457, 2.369, 2.284, 2.204, 2.126, 2.051, 1.98, 1.911, 1.845, 1.782,
+    1.721, 1.663, 1.606, 1.552, 1.5, 1.45, 1.402, 1.356, 1.312, 1.269,
+    1.228, 1.188, 1.15, 1.113, 1.078, 1.044, 1.011, 0.979, 0.948, 0.919,
+    0.891, 0.863, 0.837, 0.811, 0.787, 0.763, 0.74, 0.718, 0.697, 0.676,
+    0.657, 0.637, 0.619, 0.601, 0.584, 0.567, 0.551, 0.535, 0.52, 0.505,
+    0.491, 0.477, 0.464, 0.451, 0.439, 0.427, 0.415, 0.404, 0.393, 0.383,
+    0.373,
+]
+
+
+def _r_to_temp(rk):
+    """Resistance (kΩ) -> °C by interpolating RT_KOHM (strictly decreasing)."""
+    if rk >= RT_KOHM[0] or rk <= RT_KOHM[-1]:
+        return None                       # colder than -40 / hotter than +120
+    for i in range(len(RT_KOHM) - 1):
+        hi_r, lo_r = RT_KOHM[i], RT_KOHM[i + 1]      # hi_r > lo_r
+        if lo_r <= rk <= hi_r:
+            return RT_START_C + i + (hi_r - rk) / (hi_r - lo_r)
+    return None
+
+
+def v_to_temp(mv, vref2=VREF2_MV):
+    """Divider voltage (mV) -> °C, or None if open (≈VREF2) / out of range."""
+    if mv is None or mv <= 0 or mv >= vref2:
+        return None
+    r = RPULL_KOHM * mv / (vref2 - mv)    # kΩ
+    return _r_to_temp(r)
+
+
+def fmt_c(mv):
+    """4-char cell: °C, 'open' (no NTC, ≈VREF2), 'hot' (off-scale), '.' (no reading)."""
+    if mv is None or mv == 0:      # 0 mV = absent IC / no real read (min real ~156 mV)
+        return "   ."
+    tc = v_to_temp(mv)
+    if tc is None:
+        return "open" if mv >= 2900 else " hot"
+    return f"{tc:>4.0f}"
+
 
 class Shared:
     def __init__(self):
@@ -186,6 +244,12 @@ def draw(scr, snap, count, stale, err):
             put(row, col, (f"{v:>5}" if v is not None else "    ."),
                 OK if (v not in (None, 0)) else DIM)
         y += 3
+        put(y, 2, "NTC temp °C", OK)
+        y += 1
+        for k, v in enumerate(t):
+            row, col = y + k // 10, 2 + (k % 10) * 6
+            put(row, col, f"{fmt_c(v):>5}", OK if v_to_temp(v) is not None else DIM)
+        y += 3
 
     put(h - 1, 2, "q to quit", DIM)
     if err:
@@ -254,6 +318,10 @@ def render_plain(snap, count, stale, color):
             L.append("    " + " ".join(
                 (f"{t[k]:>4}" if t[k] is not None else "   .")
                 for k in range(r0, min(r0 + 10, TEMPS_PER_IC))))
+        L.append(f"  {g}NTC temp °C{rst}")
+        for r0 in (0, 10):
+            L.append("    " + " ".join(
+                fmt_c(t[k]) for k in range(r0, min(r0 + 10, TEMPS_PER_IC))))
     return "\n".join(L)
 
 
