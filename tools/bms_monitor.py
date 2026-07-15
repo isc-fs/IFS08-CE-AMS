@@ -36,6 +36,11 @@ IC_CELL_IDS = [
 ]
 IC_LABELS = ["IC0 (bottom)", "IC1 (second)", "IC2 (third)", "IC3 (fourth)"]
 ID_IC1_RAW = 0x7BF          # IC1 RDCFGA raw (6 data + 2 PEC) — all 0xFF = no return on first hop
+# Per-IC temperature block: TEMP_BASE + ic*8 + frame(0..6); each frame
+# [ctr, base_channel, 3x mV LE] = the muxed NTC-divider voltage per channel.
+TEMP_BASE = 0x740
+TEMPS_PER_IC = 20           # ADG731 channels swept per LTC
+TEMP_FRAMES = (TEMPS_PER_IC + 2) // 3   # 7 frames of 3
 FRESH_S = 2.0               # frames older than this are treated as stale
 
 
@@ -92,10 +97,23 @@ def decode(frames, now):
                 vals += [None, None, None]
         return ok, vals
 
+    def temps(pos):
+        tvals = [None] * TEMPS_PER_IC
+        for f in range(TEMP_FRAMES):
+            e = fresh(TEMP_BASE + pos * 8 + f)
+            if e and len(e[0]) >= 8:
+                d = e[0]
+                base = d[1]
+                for j in range(3):
+                    idx = base + j
+                    if idx < TEMPS_PER_IC:
+                        tvals[idx] = int.from_bytes(d[2 + j * 2:4 + j * 2], "little")
+        return tvals
+
     ics = []
-    for ids in IC_CELL_IDS:
+    for pos, ids in enumerate(IC_CELL_IDS):
         ok, vals = cells(ids)
-        ics.append({"ok": ok, "cells": vals, "noreturn": False})
+        ics.append({"ok": ok, "cells": vals, "noreturn": False, "temps": temps(pos)})
     raw = fresh(ID_IC1_RAW)
     ics[1]["noreturn"] = bool(raw and all(b == 0xFF for b in raw[0]))
     snap["ics"] = ics
@@ -158,7 +176,16 @@ def draw(scr, snap, count, stale, err):
         s = _stats(cells)
         if s:
             put(y, 2, f"min {s[0]}   max {s[1]}   spread {s[2]} mV   ({s[3]} cells)", DIM)
-        y += 2
+        y += 1
+        t = ic["temps"]
+        nt = sum(1 for v in t if v not in (None, 0))
+        put(y, 2, f"NTC divider mV (ch 1-20)  [{nt}/20]", WARN)
+        y += 1
+        for k, v in enumerate(t):
+            row, col = y + k // 10, 2 + (k % 10) * 6
+            put(row, col, (f"{v:>5}" if v is not None else "    ."),
+                OK if (v not in (None, 0)) else DIM)
+        y += 3
 
     put(h - 1, 2, "q to quit", DIM)
     if err:
@@ -220,6 +247,13 @@ def render_plain(snap, count, stale, color):
         s = _stats(cells)
         if s:
             L.append(f"  min {s[0]}  max {s[1]}  spread {s[2]} mV  ({s[3]} cells)")
+        t = ic["temps"]
+        nt = sum(1 for v in t if v not in (None, 0))
+        L.append(f"  {yel}NTC divider mV (ch 1-20)  [{nt}/20 present]{rst}")
+        for r0 in (0, 10):
+            L.append("    " + " ".join(
+                (f"{t[k]:>4}" if t[k] is not None else "   .")
+                for k in range(r0, min(r0 + 10, TEMPS_PER_IC))))
     return "\n".join(L)
 
 
