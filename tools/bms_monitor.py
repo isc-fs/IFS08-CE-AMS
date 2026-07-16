@@ -34,15 +34,16 @@ IC_CELL_IDS = [
     [0x7C1, 0x7C4, 0x7C5, 0x7C6],   # IC2
     [0x7D1, 0x7D4, 0x7D5, 0x7D6],   # IC3
 ]
-IC_LABELS = ["IC0 (bottom)", "IC1 (second)", "IC2 (third)", "IC3 (fourth)"]
+IC_LABELS = [f"IC{i}" for i in range(10)]
 ID_IC1_RAW = 0x7BF          # IC1 RDCFGA raw (6 data + 2 PEC) — all 0xFF = no return on first hop
 # Per-IC temperature block: TEMP_BASE + ic*TEMP_STRIDE + frame; each frame
 # [ctr, base_addr, 3x mV LE] = the muxed divider voltage per ADG731 address.
 # Full 32-output map: addr 0-9 & 16-25 = NTC_1..20, the rest are NC (float).
-TEMP_BASE = 0x740
+TEMP_BASE = 0x400          # per-IC temp block base (10 ICs: 0x400..0x49x)
 TEMP_STRIDE = 16            # per-IC ID stride (fits 11 frames)
 TEMPS_PER_IC = 32          # full ADG731 sweep (S1..S32 = addr 0..31)
 TEMP_FRAMES = (TEMPS_PER_IC + 2) // 3   # 11 frames of 3
+N_IC = 10                  # LTCs the harness maps (temps for all; cells for first 4)
 FRESH_S = 2.0               # frames older than this are treated as stale
 
 # --- NTC conversion (Fenghua CMFB103F3950FANT, 10k / B25/50=3950) ---
@@ -171,8 +172,9 @@ def decode(frames, now):
         return tvals
 
     ics = []
-    for pos, ids in enumerate(IC_CELL_IDS):
-        ok, vals = cells(ids)
+    for pos in range(N_IC):
+        ids = IC_CELL_IDS[pos] if pos < len(IC_CELL_IDS) else None
+        ok, vals = cells(ids) if ids else (None, [None] * 12)
         ics.append({"ok": ok, "cells": vals, "noreturn": False, "temps": temps(pos)})
     raw = fresh(ID_IC1_RAW)
     ics[1]["noreturn"] = bool(raw and all(b == 0xFF for b in raw[0]))

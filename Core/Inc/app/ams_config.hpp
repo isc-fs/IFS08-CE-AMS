@@ -471,12 +471,11 @@ inline constexpr std::uint8_t  CellsPerLtcLower    =  9;  // LTC_2 (bottom of mo
 #if AMS_LTC_BARE
 // BARE bench harness: clock exactly the LTCs physically on the bus so the
 // isoSPI frame length matches (read_register_group sizes by this). 1 = U3
-// only. EDIT to match your bench. The harness broadcasts per-IC cells for
-// up to 4 ICs (IC0..IC3 -> 0x7E./0x7B./0x7C./0x7D.); a longer chain still
-// reads + counts PEC but only the first 4 get their own cell frames. With
-// the flight value (10) the master clocks an 80-byte frame onto a short
-// bus and the read self-rejects.
-inline constexpr std::uint8_t  LtcChainLength      = 4;
+// only. EDIT to match your bench (up to 10 = full pack). The harness
+// broadcasts per-IC TEMPS (all 32 mux outputs) for EVERY IC on
+// kCanIdTempBase(0x400)+ic*16; per-IC CELLS for the first 4 ICs only
+// (0x7E./0x7B./0x7C./0x7D.). A shorter chain reads + PEC-counts fine.
+inline constexpr std::uint8_t  LtcChainLength      = 10;
 #else
 inline constexpr std::uint8_t  LtcChainLength      = 10;  // BmsModuleCount * LtcsPerModule
 #endif

@@ -62,9 +62,10 @@ constexpr std::uint8_t kWakeBursts = 6;
 constexpr std::uint32_t kCanIdStatus  = 0x7E0;  // RDCFGA / PEC summary
 constexpr std::uint32_t kCanIdVoltage = 0x7E1;  // decoded cell mV
 // Per-IC temperature block: ID = kCanIdTempBase + ic*16 + (addr/3), 11 frames
-// of 3 = the full 32 ADG731 mux positions. IC0 0x740.., IC1 0x750.., IC2
-// 0x760.., IC3 0x770.. (stride 16 leaves room for 11 frames per IC).
-constexpr std::uint32_t kCanIdTempBase = 0x740;  // 32 mux-divider mV per IC
+// of 3 = the full 32 ADG731 mux positions, for up to 10 ICs. IC0 0x400..,
+// IC1 0x410.., ... IC9 0x490.. (stride 16 = 11 frames + slack). Base 0x400
+// keeps it clear of the cell IDs (0x7B./7C./7D.) at high IC counts.
+constexpr std::uint32_t kCanIdTempBase = 0x400;  // 32 mux-divider mV per IC
 constexpr std::uint8_t  kMuxChannels   = 32;     // full ADG731 sweep (S1..S32)
 
 bool can_send8(std::uint32_t id, const std::uint8_t data[8]) noexcept {
@@ -78,6 +79,14 @@ bool can_send8(std::uint32_t id, const std::uint8_t data[8]) noexcept {
     tx.FDFormat            = FDCAN_CLASSIC_CAN;
     tx.TxEventFifoControl  = FDCAN_NO_TX_EVENTS;
     tx.MessageMarker       = 0;
+    // 10 ICs burst ~110 frames/loop, far faster than the 500k bus drains, so
+    // the TX FIFO overflows and later frames (higher ICs) get dropped. Wait
+    // for a free slot before queueing. Bounded (~3 ms) so a bus with no ACKer
+    // can't hang the harness -- it just drops that frame and moves on.
+    const std::uint32_t t0 = osKernelGetTickCount();
+    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0u) {
+        if ((osKernelGetTickCount() - t0) >= 3u) return false;
+    }
     return HAL_FDCAN_AddMessageToTxFifoQ(
                &hfdcan1, &tx, const_cast<std::uint8_t*>(data)) == HAL_OK;
 }
@@ -232,7 +241,9 @@ extern "C" void ams_ltc_bare_run(void) {
         // voltage; unused / NC addresses float to ~Vref2. Flight NTC map =
         // config::Adg731ChannelMap (addr 0-9 -> NTC_1..10, 16-25 -> NTC_11..20).
         // Per-IC block: kCanIdTempBase + ic*16 + (addr/3), [ctr, base, 3x mV LE].
-        std::uint16_t temp_mv[kChainLen][kMuxChannels] = {};
+        // static: [10][32] u16 = 640 B, too big for the task stack.
+        static std::uint16_t temp_mv[kChainLen][kMuxChannels];
+        std::memset(temp_mv, 0, sizeof(temp_mv));
         for (std::uint8_t addr = 0; addr < kMuxChannels; ++addr) {
             ams_watchdog_refresh();  // sweep is long -- keep the dog fed
             const auto sel = ams::ltc6811::pack_adg731_select(addr);  // raw addr 0..31
@@ -252,14 +263,16 @@ extern "C" void ams_ltc_bare_run(void) {
                     temp_mv[ic][addr] = av[0];  // AUX1 = temps_mux for this IC
             }
         }
-        for (std::uint8_t ic = 0; ic < kChainLen && ic < 4u; ++ic)
-        for (std::uint8_t base = 0; base < kMuxChannels; base += 3) {
-            std::uint8_t tf[8] = { counter, base, 0u, 0u, 0u, 0u, 0u, 0u };
-            for (std::uint8_t j = 0; j < 3u && (base + j) < kMuxChannels; ++j) {
-                tf[2 + j * 2] = static_cast<std::uint8_t>(temp_mv[ic][base + j] & 0xFFu);
-                tf[3 + j * 2] = static_cast<std::uint8_t>(temp_mv[ic][base + j] >> 8);
+        for (std::uint8_t ic = 0; ic < kChainLen && ic < 10u; ++ic) {
+            ams_watchdog_refresh();  // paced sends can take a few ms per IC
+            for (std::uint8_t base = 0; base < kMuxChannels; base += 3) {
+                std::uint8_t tf[8] = { counter, base, 0u, 0u, 0u, 0u, 0u, 0u };
+                for (std::uint8_t j = 0; j < 3u && (base + j) < kMuxChannels; ++j) {
+                    tf[2 + j * 2] = static_cast<std::uint8_t>(temp_mv[ic][base + j] & 0xFFu);
+                    tf[3 + j * 2] = static_cast<std::uint8_t>(temp_mv[ic][base + j] >> 8);
+                }
+                can_send8(kCanIdTempBase + ic * 16u + (base / 3u), tf);
             }
-            can_send8(kCanIdTempBase + ic * 16u + (base / 3u), tf);
         }
 
         // PEC self-test: echo the EXACT command+PEC bytes the firmware
