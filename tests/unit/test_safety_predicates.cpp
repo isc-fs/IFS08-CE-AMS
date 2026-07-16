@@ -95,7 +95,14 @@ extern "C" void test_predicates_cell_overtemp(void) {
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
     bms.max_tempC = ams::config::CellOverTempC + 1;
-    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+    // Cell-temp faults are gated behind config::TempFaultsTrusted. While temps
+    // are not trusted (mux path unvalidated) an over-temp must NOT fault; when
+    // the flag flips true it must. This asserts whichever the flag selects.
+    if (ams::config::TempFaultsTrusted) {
+        TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+    } else {
+        TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+    }
 }
 
 extern "C" void test_predicates_bms_stale(void) {
