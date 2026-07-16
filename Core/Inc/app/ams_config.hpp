@@ -23,6 +23,14 @@ inline constexpr std::uint16_t CellUnderVoltageMv =  2800;  // under-voltage   -
 inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
 inline constexpr std::int16_t  CellUnderTempC  =   -10;  // under-temp °C   -- COMMISSION
 inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- COMMISSION
+// Cell TEMPERATURE fault gate. NTC temps are read through the per-LTC ADG731
+// 32:1 mux; that path is NOT yet trusted on flight (the mux-select word was
+// wrong -- fixed on the bench harness, not yet validated in the flight path).
+// While false, the CellUnderTemp / CellOverTemp predicates are SUPPRESSED so
+// the FSM never faults on unvalidated temperatures. Cell VOLTAGE protection is
+// unaffected. Flip to true once the mux fix ships to flight and temps are
+// bench-validated end-to-end.
+inline constexpr bool          TempFaultsTrusted = false;
 inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)

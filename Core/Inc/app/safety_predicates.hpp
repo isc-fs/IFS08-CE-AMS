@@ -163,10 +163,17 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
             return { FaultReason::CellOverVoltage,
                      module_above_u16(in.bms.vmax_module, config::CellOverVoltageMv) };
         }
-        if (in.bms.min_tempC < config::CellUnderTempC) return { FaultReason::CellUnderTemp, 0 };
-        if (in.bms.max_tempC > config::CellOverTempC) {
-            return { FaultReason::CellOverTemp,
-                     module_above_i16(in.bms.tmax_module, config::CellOverTempC) };
+        // Cell TEMPERATURE faults are gated behind config::TempFaultsTrusted:
+        // NTC temps come through the ADG731 mux, whose select word was wrong
+        // and is not yet validated on flight, so we do NOT fault on them yet
+        // (voltage protection above is unaffected). Flip the flag once the mux
+        // fix ships to flight + temps are validated end-to-end.
+        if (config::TempFaultsTrusted) {
+            if (in.bms.min_tempC < config::CellUnderTempC) return { FaultReason::CellUnderTemp, 0 };
+            if (in.bms.max_tempC > config::CellOverTempC) {
+                return { FaultReason::CellOverTemp,
+                         module_above_i16(in.bms.tmax_module, config::CellOverTempC) };
+            }
         }
     }
 
