@@ -540,8 +540,8 @@ inline constexpr std::uint32_t AmsRelayStatusId = 0x4A4u;  // contactor + AMS_OK
 // docs/BMS_LTC6811.md for the wire protocol and slot mapping.
 // ---------------------------------------------------------------------------
 inline constexpr std::uint8_t  LtcsPerModule       = 2;
-inline constexpr std::uint8_t  CellsPerLtcUpper    = 10;  // LTC_1 (top of module)
-inline constexpr std::uint8_t  CellsPerLtcLower    =  9;  // LTC_2 (bottom of module)
+inline constexpr std::uint8_t  CellsPerLtcUpper    =  9;  // LTC_1 (first in chain) -- 9 cells -> module 0..8 (#423)
+inline constexpr std::uint8_t  CellsPerLtcLower    = 10;  // LTC_2 (second in chain) -- 10 cells -> module 9..18 (#423)
 inline constexpr std::uint8_t  LtcChainLength      = 10;  // BmsModuleCount * LtcsPerModule
 inline constexpr std::uint8_t  TempsPerLtc         = 20;  // ADG731 channels populated
 inline constexpr std::uint8_t  TempMuxChannelsUsed = 20;  // of 32 on ADG731

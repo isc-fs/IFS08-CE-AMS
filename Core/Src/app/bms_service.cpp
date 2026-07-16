@@ -193,22 +193,25 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
             continue;
         }
 
-        // Commit. Module index and "upper vs lower" derive from the
-        // chain index: even slots are LTC_1 (top of the module, 10
-        // cells), odd slots are LTC_2 (bottom, 9 cells).
+        // Commit. Module index and "upper vs lower" derive from the chain
+        // index: even slots are LTC_1 (FIRST in chain, 9 cells -> module
+        // cells 0..8); odd slots are LTC_2 (SECOND, 10 cells -> module
+        // 9..18). The 10-cell LTC's tenth cell is RDCVD slot 0 (its C10);
+        // the 9-cell LTC's RDCVD group is discarded (#423 -- these were
+        // swapped, which zeroed module cell 9 and dropped the real cell 18).
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
 
-        if (is_upper) {
+        if (is_upper) {          // first LTC: 9 cells -> module 0..8
             for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][0 + k] = groups[0][k];
             for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][3 + k] = groups[1][k];
             for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][6 + k] = groups[2][k];
-            state_.cell_mV[module][9] = groups[3][0];   // LTC_1's cell 10
-        } else {
-            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][10 + k] = groups[0][k];
-            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][13 + k] = groups[1][k];
-            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][16 + k] = groups[2][k];
-            // RDCVD entirely discarded -- LTC_2 owns only 9 cells.
+            // RDCVD (groups[3]) discarded -- the first LTC owns only 9 cells.
+        } else {                 // second LTC: 10 cells -> module 9..18
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][9 + k]  = groups[0][k];
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][12 + k] = groups[1][k];
+            for (std::uint8_t k = 0; k < 3; ++k) state_.cell_mV[module][15 + k] = groups[2][k];
+            state_.cell_mV[module][18] = groups[3][0];   // LTC_2's cell 10 (RDCVD C10)
         }
 
         new_ltc_online = static_cast<std::uint16_t>(new_ltc_online | (1u << ic));
