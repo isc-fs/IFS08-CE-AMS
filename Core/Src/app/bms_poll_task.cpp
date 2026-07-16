@@ -195,14 +195,14 @@ void maybe_run_balance_update() {
     bool         any_dcc = false;
 
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
-        // LTC_1 (upper, chain index 2m) owns module cells 0..9.
+        // LTC_1 (upper, chain index 2m) owns module cells 0..8 (9 cells).
         std::uint16_t dcc_upper = 0;
         for (std::uint8_t c = 0; c < config::CellsPerLtcUpper; ++c) {
             if (mask.cell[m][c]) {
                 dcc_upper = static_cast<std::uint16_t>(dcc_upper | (1u << c));
             }
         }
-        // LTC_2 (lower, chain index 2m+1) owns module cells 10..18.
+        // LTC_2 (lower, chain index 2m+1) owns module cells 9..18 (10 cells).
         std::uint16_t dcc_lower = 0;
         for (std::uint8_t c = 0; c < config::CellsPerLtcLower; ++c) {
             if (mask.cell[m][config::CellsPerLtcUpper + c]) {

@@ -87,17 +87,17 @@ public:
     //
     // Per-IC cell-slot mapping inside the module's 19-cell window:
     //
-    //   LTC_1 (chain index 2N, "upper", 10 cells)
+    //   LTC_1 (chain index 2N, "upper", FIRST -- 9 cells)  [#423]
     //     RDCVA -> module cells 0,1,2
     //     RDCVB -> module cells 3,4,5
     //     RDCVC -> module cells 6,7,8
-    //     RDCVD -> module cell 9 (slots 2,3 of group D unused)
-    //
-    //   LTC_2 (chain index 2N+1, "lower", 9 cells)
-    //     RDCVA -> module cells 10,11,12
-    //     RDCVB -> module cells 13,14,15
-    //     RDCVC -> module cells 16,17,18
     //     RDCVD -> discarded
+    //
+    //   LTC_2 (chain index 2N+1, "lower", SECOND -- 10 cells)  [#423]
+    //     RDCVA -> module cells 9,10,11
+    //     RDCVB -> module cells 12,13,14
+    //     RDCVC -> module cells 15,16,17
+    //     RDCVD -> module cell 18 (slots 1,2 of group D unused)
     //
     // Per-IC PEC handling: if ANY of the 4 register groups for an IC
     // fails PEC, that IC is marked offline this cycle and its cell

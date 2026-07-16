@@ -347,8 +347,8 @@ namespace detail {
 //   0x6C8  PitDiag_pec_per_ic_b: bytes 0..1 = ICs 8..9, bytes 2..7 = 0
 //
 // Chain-to-module mapping:
-//   IC index 0 = module 0 upper (cells 0..9)
-//   IC index 1 = module 0 lower (cells 10..18)
+//   IC index 0 = module 0 upper (first LTC, cells 0..8)
+//   IC index 1 = module 0 lower (second LTC, cells 9..18)
 //   IC index 2 = module 1 upper, etc.
 // So 0x6C7 byte 0 spike = "module 0's top LTC6811 is misbehaving".
 // ---------------------------------------------------------------------------
