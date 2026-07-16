@@ -217,39 +217,24 @@ def draw(scr, snap, count, stale, err):
 
     n_show = snap["expected"] if snap.get("have_status") and snap["expected"] else len(snap["ics"])
     n_show = min(n_show, len(snap["ics"]))
+    # Compact: 3 rows/IC (cells line + the 20 NTC temps on two lines) so all
+    # 10 ICs fit a normal window. Full 32-output / raw-mV detail is in --plain.
     for pos in range(n_show):
+        if y >= h - 1:
+            put(h - 1, 40, f"...+{n_show - pos} more ICs (use --plain)", WARN)
+            break
         ic = snap["ics"][pos]
         ok = ic["ok"]
-        okstr = "YES" if ok else ("NO" if ok is not None else "--")
-        put(y, 2, f"{IC_LABELS[pos]}   decode_ok: {okstr}", (OK if ok else BAD) | curses.A_BOLD)
-        if ic["noreturn"]:
-            put(y, 40, "NO RETURN (all 0xFF)", BAD | curses.A_BOLD)
-        y += 1
+        okstr = "Y" if ok else ("N" if ok is not None else "-")
         cells = ic["cells"]
-        for i, v in enumerate(cells):
-            row, col = y + i // 4, 2 + (i % 4) * 14
-            txt = f"c{i + 1:<2} {v:>5}" if v is not None else f"c{i + 1:<2}   ---"
-            put(row, col, txt, OK if (v not in (None, 0)) else DIM)
-        y += 3
-        s = _stats(cells)
-        if s:
-            put(y, 2, f"min {s[0]}   max {s[1]}   spread {s[2]} mV   ({s[3]} cells)", DIM)
+        cstr = " ".join((f"{v:>4}" if v not in (None, 0) else "  --") for v in cells)
+        put(y, 2, f"{IC_LABELS[pos]:<4}{okstr} cells {cstr}", (OK if ok else BAD) | curses.A_BOLD)
         y += 1
         t = ic["temps"]
-        nt = sum(1 for v in t if v not in (None, 0))
-        put(y, 2, f"mux divider mV — 32 (addr 0-31)  [{nt}/32]", WARN)
-        y += 1
-        for k, v in enumerate(t):
-            row, col = y + k // 16, 2 + (k % 16) * 6
-            put(row, col, (f"{v:>5}" if v is not None else "    ."),
-                OK if (v not in (None, 0)) else DIM)
-        y += 3
-        put(y, 2, "mux temp °C  (NTC at addr 0-9,16-25)", OK)
-        y += 1
-        for k, v in enumerate(t):
-            row, col = y + k // 16, 2 + (k % 16) * 6
-            put(row, col, f"{fmt_c(v):>5}", OK if v_to_temp(v) is not None else DIM)
-        y += 3
+        for label, lo in (("  °C  0-9 :", 0), ("  °C 16-25:", 16)):
+            tstr = " ".join(f"{fmt_c(t[k]):>4}" for k in range(lo, lo + 10))
+            put(y, 2, f"{label} {tstr}", OK)
+            y += 1
 
     put(h - 1, 2, "q to quit", DIM)
     if err:
