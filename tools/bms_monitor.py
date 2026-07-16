@@ -26,14 +26,10 @@ import can  # noqa: E402
 
 # --- bare-harness CAN map (Core/Src/app/ltc_bare_task.cpp) ---
 ID_STATUS = 0x7E0           # [0]loop [1]expected [2]pec_clean [3]spi_ok [4..7]IC0 CFG
-# Per-IC cell-frame IDs, chain pos 0..3 = IC0..IC3. Each row: [A(1-3), B(4-6),
-# C(7-9), D(10-12)]. Mirrors ltc_bare_task.cpp read_send_group().
-IC_CELL_IDS = [
-    [0x7E1, 0x7E4, 0x7E5, 0x7E6],   # IC0
-    [0x7B1, 0x7B4, 0x7B5, 0x7B6],   # IC1
-    [0x7C1, 0x7C4, 0x7C5, 0x7C6],   # IC2
-    [0x7D1, 0x7D4, 0x7D5, 0x7D6],   # IC3
-]
+# Per-IC cell block: CELL_BASE + ic*8 + group (0=A/1-3 .. 3=D/10-12) for all
+# 10 ICs. Mirrors ltc_bare_task.cpp read_send_group().
+CELL_BASE = 0x500
+IC_CELL_IDS = [[CELL_BASE + ic * 8 + g for g in range(4)] for ic in range(10)]
 IC_LABELS = [f"IC{i}" for i in range(10)]
 ID_IC1_RAW = 0x7BF          # IC1 RDCFGA raw (6 data + 2 PEC) — all 0xFF = no return on first hop
 # Per-IC temperature block: TEMP_BASE + ic*TEMP_STRIDE + frame; each frame

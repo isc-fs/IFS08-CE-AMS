@@ -60,7 +60,9 @@ constexpr std::uint8_t kWakeBursts = 6;
 // =======================================================================
 
 constexpr std::uint32_t kCanIdStatus  = 0x7E0;  // RDCFGA / PEC summary
-constexpr std::uint32_t kCanIdVoltage = 0x7E1;  // decoded cell mV
+// Per-IC cell block: kCanIdCellBase + ic*8 + group (0=A/1-3 .. 3=D/10-12),
+// for up to 10 ICs. IC0 0x500.., IC9 0x548.. [ctr, decode_ok, 3x mV LE].
+constexpr std::uint32_t kCanIdCellBase = 0x500;
 // Per-IC temperature block: ID = kCanIdTempBase + ic*16 + (addr/3), 11 frames
 // of 3 = the full 32 ADG731 mux positions, for up to 10 ICs. IC0 0x400..,
 // IC1 0x410.., ... IC9 0x490.. (stride 16 = 11 frames + slack). Base 0x400
@@ -184,31 +186,19 @@ extern "C" void ams_ltc_bare_run(void) {
         }
 
         // --- (2) ADCV + read ALL 4 cell-voltage groups, EVERY IC ---------
-        // Per IC, per group: [ctr, decode-ok, cellX..Z mV LE]. Per-IC CAN
-        // IDs (chain pos 0..3 = IC0..IC3):
-        //   A(1-3)   IC0 0x7E1  IC1 0x7B1  IC2 0x7C1  IC3 0x7D1
-        //   B(4-6)   IC0 0x7E4  IC1 0x7B4  IC2 0x7C4  IC3 0x7D4
-        //   C(7-9)   IC0 0x7E5  IC1 0x7B5  IC2 0x7C5  IC3 0x7D5
-        //   D(10-12) IC0 0x7E6  IC1 0x7B6  IC2 0x7C6  IC3 0x7D6
-        // (decode_cell_voltage_group decodes one 8-byte IC segment; ICs
-        //  past pos 3 are still read + PEC-counted, just not broadcast.)
+        // Per IC, per group: [ctr, decode-ok, cellX..Z mV LE] on
+        // kCanIdCellBase + ic*8 + group, for all 10 ICs (IC0 0x500.., IC9
+        // 0x548..). decode_cell_voltage_group decodes one 8-byte IC segment.
         bus.wakeup();  // re-wake right before ADCV so a marginal downstream
                        // IC is freshly READY (REFUP) for the conversion+read
         bus.send_command(cmd_adcv.data());
         osDelay(3);  // > 2.3 ms 7 kHz all-cell conversion
 
         const auto read_send_group =
-            [&](const std::array<std::uint8_t, 4>& cmd,
-                const std::array<std::uint32_t, 4>& ids,
-                std::uint32_t raw_ic1_id = 0u) {
+            [&](const std::array<std::uint8_t, 4>& cmd, std::uint8_t group) {
                 std::uint8_t cv[8u * kChainLen] = {};
                 bus.read_register_group(cmd.data(), cv, sizeof(cv));
-                for (std::uint8_t ic = 0; ic < kChainLen; ++ic) {
-                    // RAW IC1 segment dump (6 data + 2 PEC) for the
-                    // 0xFF-vs-valid-PEC-zeros call on the cell read too.
-                    if (ic == 1u && raw_ic1_id != 0u) {
-                        can_send8(raw_ic1_id, &cv[8u]);
-                    }
+                for (std::uint8_t ic = 0; ic < kChainLen && ic < 10u; ++ic) {
                     std::array<std::uint16_t, 3> mv{};
                     const bool dec_ok =
                         ams::ltc6811::decode_cell_voltage_group(&cv[ic * 8u], mv);
@@ -222,14 +212,13 @@ extern "C" void ams_ltc_bare_run(void) {
                         static_cast<std::uint8_t>(mv[2] & 0xFFu),
                         static_cast<std::uint8_t>(mv[2] >> 8),
                     };
-                    if (static_cast<std::size_t>(ic) < ids.size())
-                        can_send8(ids[ic], f);   // first 4 ICs get their own frame
+                    can_send8(kCanIdCellBase + ic * 8u + group, f);
                 }
             };
-        read_send_group(cmd_rdcva, {kCanIdVoltage, 0x7B1u, 0x7C1u, 0x7D1u}, 0x7BEu);  // A: 1-3 (+raw IC1)
-        read_send_group(cmd_rdcvb, {0x7E4u, 0x7B4u, 0x7C4u, 0x7D4u});                 // B: cells 4-6
-        read_send_group(cmd_rdcvc, {0x7E5u, 0x7B5u, 0x7C5u, 0x7D5u});                 // C: cells 7-9
-        read_send_group(cmd_rdcvd, {0x7E6u, 0x7B6u, 0x7C6u, 0x7D6u});                 // D: cells 10-12
+        read_send_group(cmd_rdcva, 0u);  // A: cells 1-3
+        read_send_group(cmd_rdcvb, 1u);  // B: cells 4-6
+        read_send_group(cmd_rdcvc, 2u);  // C: cells 7-9
+        read_send_group(cmd_rdcvd, 3u);  // D: cells 10-12
 
         // --- (3) FULL ADG731 mux map (all 32 outputs), EVERY IC ----------
         // Sweep ALL 32 mux addresses (S1..S32 = addr 0..31), not just the 20
