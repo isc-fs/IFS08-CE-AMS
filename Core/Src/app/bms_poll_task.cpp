@@ -33,6 +33,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 // FSM state mirror, written by MainTask on every transition (the FSM
 // step body lives inside MainTask since refactor/19 phase 3). Reading
@@ -70,6 +71,13 @@ extern "C" volatile std::uint32_t g_balance_dcc_bits[5] = {0, 0, 0, 0, 0};
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub  = 0;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
 
+// Chain-recovery counter: incremented every time run_voltage_poll re-wakes
+// and reconfigures the chain after consecutive failed polls. Zero on a
+// healthy bus; climbing means the chain is repeatedly dropping out (the
+// inverter-EMI T_SLEEP case this recovery exists for). extern "C" so the
+// pit-diag stream can surface it.
+extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -77,6 +85,56 @@ namespace {
 volatile std::uint32_t g_balance_cycles_total  = 0;
 volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
+
+// ---------------------------------------------------------------------------
+// Chain-sleep recovery.
+//
+// The LTC6811 drops into T_SLEEP (~2 s) after its last VALID command, and a
+// sleeping IC ignores every normal command -- only the CS-low wake pulse
+// train (Bus::wakeup) brings it back. Until this landed, wakeup() was issued
+// exactly once at boot (app_init_task) and never again, so the chain survived
+// only on uninterrupted poll traffic: any interruption longer than T_SLEEP
+// (e.g. inverter switching noise corrupting commands through a torque event)
+// put the chain to sleep permanently, with no code path able to recover it.
+//
+// So: count consecutive failed polls, and once the chain looks gone, re-wake
+// + reconfigure before each subsequent attempt. Retrying every poll (rather
+// than once) is deliberate -- while the disturbance lasts the wake won't take,
+// and we want the chain back on the first poll after it clears.
+//
+// Waking an already-awake chain is harmless (CS pulses carry no command), so
+// a false positive costs ~500 us, not correctness.
+// ---------------------------------------------------------------------------
+
+// Consecutive failed voltage polls before recovery kicks in. 2 polls =
+// 500 ms at BmsPollVoltMs (250 ms), comfortably inside BmsStaleMs (1500 ms)
+// so a recovered chain never reaches the stale predicate. Not 1: an isolated
+// PEC glitch shouldn't clear DCC bits mid-balance for no reason.
+constexpr std::uint32_t RecoverAfterFailedPolls = 2;
+
+std::uint32_t s_consecutive_poll_failures = 0;
+
+// Re-establish the chain after a suspected T_SLEEP: wake it, then restore
+// CFGR. The reconfigure is NOT optional -- sleeping resets CFGR to defaults,
+// which re-enables the GPIO pull-downs and would short the ADG731 mux / NTC
+// divider that the ADAX temperature path reads, and drops REFON. DCC is
+// written all-zero (discharge off); maybe_run_balance_update restores the
+// real mask on its next cycle.
+void recover_chain() noexcept {
+    using namespace ams;
+
+    auto& bus = ltc6820::Bus::default_instance();
+    bus.wakeup();
+
+    const auto   cfg = ltc6811::pack_cfga_payload(/*dcc_bits=*/0u);
+    std::uint8_t per_ic[config::LtcChainLength][6];
+    for (std::size_t i = 0; i < config::LtcChainLength; ++i) {
+        std::memcpy(per_ic[i], cfg.data(), 6);
+    }
+    (void)bus.write_chain_command(ltc6811::CmdWRCFGA, per_ic);
+
+    ++g_ltc_chain_recover_count;
+}
 
 void volt_timer_cb(void * /*arg*/) {
     osEventFlagsSet(bms_eventsHandle, ams::events::bms::PollVDue);
@@ -97,6 +155,12 @@ void run_voltage_poll() {
 
     auto& bus = ltc6820::Bus::default_instance();
 
+    // 0. If the last polls failed, the chain has probably hit T_SLEEP and is
+    //    deaf to ordinary commands -- wake + reconfigure before trying again.
+    if (s_consecutive_poll_failures >= RecoverAfterFailedPolls) {
+        recover_chain();
+    }
+
     // 1. ADCV broadcast. Discharge-permit = false during normal data
     //    acquisition (#74 will flip it for balancing windows). All
     //    cells channel-select = CellSel::All.
@@ -106,6 +170,7 @@ void run_voltage_poll() {
                           ltc6811::CellSel::All));
     if (!bus.send_command(adcv.data())) {
         ++g_ltc_spi_err_count;
+        ++s_consecutive_poll_failures;
         return;
     }
 
@@ -134,6 +199,7 @@ void run_voltage_poll() {
     if (!bus.read_register_group(rdcfga.data(),
                                  warmup_reply, sizeof(warmup_reply))) {
         ++g_ltc_spi_err_count;
+        ++s_consecutive_poll_failures;
         return;
     }
 
@@ -155,15 +221,33 @@ void run_voltage_poll() {
                                      reply + g * GroupBytes,
                                      GroupBytes)) {
             ++g_ltc_spi_err_count;
+            ++s_consecutive_poll_failures;
             return;  // partial reply -> don't poison BmsService state
         }
     }
 
     // 4. Hand the assembled chain response to BmsService. Per-IC PEC
     //    is checked inside; bus-level failures already returned above.
+    //
+    //    The return value matters and must not be discarded: a sleeping /
+    //    EMI-swamped chain still clocks bytes out fine at the HAL level (so
+    //    none of the bus-level checks above fire) and simply shifts back
+    //    garbage that fails PEC. This is the ONLY signal for that mode.
+    //
+    //    It is false iff NO module had both its LTCs PEC-clean this poll,
+    //    i.e. the whole chain gave us nothing -- precisely the sleep/blackout
+    //    signature. Partial corruption (a few ICs failing PEC while others
+    //    report) leaves it true, so ordinary bus noise never triggers a
+    //    needless re-wake; those blips are already counted per-IC inside.
     const std::uint32_t now_ms = osKernelGetTickCount();
-    (void)BmsService::instance().update_from_ltc_response(
+    const bool          ok     = BmsService::instance().update_from_ltc_response(
         reply, sizeof(reply), now_ms);
+
+    if (ok) {
+        s_consecutive_poll_failures = 0;
+    } else {
+        ++s_consecutive_poll_failures;
+    }
 }
 
 // ---------------------------------------------------------------------------
