@@ -217,12 +217,22 @@ void SafetyTask::run() noexcept {
         // the count. Immediate-danger predicates (force-error, BMS
         // offline/stale, current-over-limit, VCU-stale) are NOT debounced
         // -- they latch on the first tick exactly as before.
+        // Both debounces are driven every tick and self-gate on the reason:
+        // cell V/T ranges via cell_debounce_, BmsStale via bms_stale_debounce_
+        // (#279 pattern). BmsStale is confirmed over BmsStaleConfirmTicks so a
+        // far module that flickers just past the stale window on a brief EMI
+        // burst -- then reports on its next poll -- doesn't spuriously latch;
+        // a sustained loss still latches, just BmsStaleConfirmTicks later. All
+        // other immediate-danger predicates (force-error, BMS offline, current
+        // over-limit/stale, VCU-stale) latch on the first tick as before.
         const bool cell_confirmed =
             cell_debounce_.update(fault_res.reason, config::CellFaultConfirmTicks);
+        const bool bms_stale_confirmed =
+            bms_stale_debounce_.update(fault_res.reason, config::BmsStaleConfirmTicks);
         const bool predicate_fault =
-            safety::is_cell_range_reason(fault_res.reason)
-                ? cell_confirmed
-                : fault_res.faulted();
+            safety::is_cell_range_reason(fault_res.reason) ? cell_confirmed
+            : (fault_res.reason == safety::FaultReason::BmsStale) ? bms_stale_confirmed
+            : fault_res.faulted();
 
         const bool fault = error_latched_ || predicate_fault;
 

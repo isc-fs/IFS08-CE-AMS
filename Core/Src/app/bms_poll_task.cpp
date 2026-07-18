@@ -150,62 +150,54 @@ void temp_timer_cb(void * /*arg*/) {
 // RDCVD) concatenated into a 320-byte buffer that BmsService digests
 // in one mutex-acquire.
 // ---------------------------------------------------------------------------
-void run_voltage_poll() {
+// Result of one voltage-poll attempt.
+struct VoltAttempt {
+    bool         any_module_fresh;  // >= 1 module had BOTH its LTCs PEC-clean
+    std::uint8_t clean_ltcs;        // count of PEC-clean ICs this attempt
+};
+
+// One voltage-poll attempt: ADCV -> settle -> warm-up -> RDCVA/B/C/D -> digest.
+// update_from_ltc_response refreshes last_rx_tick for whichever modules came
+// back PEC-clean, so calling this repeatedly (the retry loop below) gives each
+// module more chances to report. Returns {false, 0} on any bus-level failure.
+VoltAttempt attempt_voltage_poll() {
     using namespace ams;
 
     auto& bus = ltc6820::Bus::default_instance();
 
-    // 0. If the last polls failed, the chain has probably hit T_SLEEP and is
-    //    deaf to ordinary commands -- wake + reconfigure before trying again.
-    if (s_consecutive_poll_failures >= RecoverAfterFailedPolls) {
-        recover_chain();
-    }
-
     // 1. ADCV broadcast. Discharge-permit = false during normal data
-    //    acquisition (#74 will flip it for balancing windows). All
-    //    cells channel-select = CellSel::All.
+    //    acquisition (#74 flips it for balancing windows). Cells = All.
     const auto adcv = ltc6811::pack_command(
         ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                           /*discharge_permit=*/false,
                           ltc6811::CellSel::All));
     if (!bus.send_command(adcv.data())) {
         ++g_ltc_spi_err_count;
-        ++s_consecutive_poll_failures;
-        return;
+        return { false, 0 };
     }
 
     // 2. ADC settling. Norm-7kHz mode converts all 12 channels in
-    //    ~2.3 ms; we round to 3 ms (config::AdcvSettleMs). osDelay
-    //    rounds up to the next FreeRTOS tick (1 Hz) so worst-case
-    //    wait is 3-4 ms -- well below the 50 ms budget.
+    //    ~2.3 ms; we round to 3 ms (config::AdcvSettleMs).
     osDelay(config::AdcvSettleMs);
 
-    // 3. Warm-up cmd before RDCVA (#214). After the multi-ms idle
-    //    between ADCV+settle and the first RDCV, MOSI drifts toward
-    //    its idle-high level long enough that slaves which re-sync
-    //    on CS edges (e.g. the Pi Pico LTC6820 emulator on the HIL
-    //    bench) sample a stray HIGH as bit 7 of byte 0 of RDCVA --
-    //    PEC then mismatches for every IC in the chain. Issuing a
-    //    no-op RDCFGA first burns the stale-MOSI sample into a cmd
-    //    whose reply we discard; the subsequent RDCV* commands come
-    //    back-to-back with MOSI continuously driven, so bit-sync
-    //    holds. ~700 us at 1 MHz SCK, well under the 50 ms budget.
-    //
-    //    TODO: replace settle delay + warm-up with PLADC polling
-    //    (LTC6811 cmd 0x0714) so we hold CS low across the
-    //    conversion and there's no idle gap to bridge.
+    // 3. Warm-up cmd before RDCVA (#214). After the multi-ms idle between
+    //    ADCV+settle and the first RDCV, MOSI drifts toward its idle-high
+    //    level long enough that slaves which re-sync on CS edges (e.g. the Pi
+    //    Pico LTC6820 emulator on the HIL bench) sample a stray HIGH as bit 7
+    //    of byte 0 of RDCVA -- PEC then mismatches for every IC. A no-op RDCFGA
+    //    first burns the stale-MOSI sample into a cmd whose reply we discard;
+    //    the RDCV* commands then come back-to-back with MOSI continuously
+    //    driven, so bit-sync holds. ~700 us at 1 MHz SCK.
     const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
     std::uint8_t warmup_reply[8 * config::LtcChainLength];
     if (!bus.read_register_group(rdcfga.data(),
                                  warmup_reply, sizeof(warmup_reply))) {
         ++g_ltc_spi_err_count;
-        ++s_consecutive_poll_failures;
-        return;
+        return { false, 0 };
     }
 
-    // 4. Read the four cell-voltage register groups into one
-    //    contiguous buffer that BmsService::update_from_ltc_response
-    //    can walk. Group layout:
+    // 4. Read the four cell-voltage register groups into one contiguous buffer
+    //    that BmsService::update_from_ltc_response can walk. Group layout:
     //      [A: 10 segments][B: 10 segments][C: 10 segments][D: 10 segments]
     constexpr std::size_t SegBytes   = 8;
     constexpr std::size_t GroupBytes = config::LtcChainLength * SegBytes;
@@ -221,29 +213,48 @@ void run_voltage_poll() {
                                      reply + g * GroupBytes,
                                      GroupBytes)) {
             ++g_ltc_spi_err_count;
-            ++s_consecutive_poll_failures;
-            return;  // partial reply -> don't poison BmsService state
+            return { false, 0 };  // partial reply -> don't poison BmsService state
         }
     }
 
-    // 4. Hand the assembled chain response to BmsService. Per-IC PEC
-    //    is checked inside; bus-level failures already returned above.
-    //
-    //    The return value matters and must not be discarded: a sleeping /
-    //    EMI-swamped chain still clocks bytes out fine at the HAL level (so
-    //    none of the bus-level checks above fire) and simply shifts back
-    //    garbage that fails PEC. This is the ONLY signal for that mode.
-    //
-    //    It is false iff NO module had both its LTCs PEC-clean this poll,
-    //    i.e. the whole chain gave us nothing -- precisely the sleep/blackout
-    //    signature. Partial corruption (a few ICs failing PEC while others
-    //    report) leaves it true, so ordinary bus noise never triggers a
-    //    needless re-wake; those blips are already counted per-IC inside.
+    // 5. Digest. Per-IC PEC is checked inside; update returns false iff NO
+    //    module had both its LTCs PEC-clean (the sleep/blackout signature).
     const std::uint32_t now_ms = osKernelGetTickCount();
-    const bool          ok     = BmsService::instance().update_from_ltc_response(
+    const bool any_fresh = BmsService::instance().update_from_ltc_response(
         reply, sizeof(reply), now_ms);
 
-    if (ok) {
+    // Count PEC-clean ICs so the retry loop can stop early on a fully-clean read.
+    std::uint16_t mask  = BmsService::instance().ltc_online_mask();
+    std::uint8_t  clean = 0;
+    while (mask != 0u) { clean = static_cast<std::uint8_t>(clean + (mask & 1u)); mask >>= 1; }
+    return { any_fresh, clean };
+}
+
+void run_voltage_poll() {
+    using namespace ams;
+
+    // 0. If the last polls failed, the chain has probably hit T_SLEEP and is
+    //    deaf to ordinary commands -- wake + reconfigure before trying again.
+    if (s_consecutive_poll_failures >= RecoverAfterFailedPolls) {
+        recover_chain();
+    }
+
+    // 1. Attempt the read up to (1 + VoltPollRetries) times. Each attempt
+    //    digests whatever ICs are PEC-clean (refreshing those modules), so a
+    //    brief EMI burst that corrupts one attempt often clears on an immediate
+    //    re-read before the affected module drifts toward BmsStale, and retries
+    //    give stragglers more chances. Stop early once the whole chain reads
+    //    clean. A chain that fails EVERY attempt (dead / asleep / continuously
+    //    swamped) still counts as one failed poll, feeding the T_SLEEP recovery
+    //    and the staleness predicate exactly as before.
+    bool any_fresh = false;
+    for (std::uint8_t attempt = 0; attempt <= config::VoltPollRetries; ++attempt) {
+        const VoltAttempt r = attempt_voltage_poll();
+        any_fresh = any_fresh || r.any_module_fresh;
+        if (r.clean_ltcs >= config::LtcChainLength) break;  // whole chain clean
+    }
+
+    if (any_fresh) {
         s_consecutive_poll_failures = 0;
     } else {
         ++s_consecutive_poll_failures;
