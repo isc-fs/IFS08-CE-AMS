@@ -35,7 +35,7 @@ inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- CO
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
-inline constexpr std::uint32_t BmsStaleMs     = 1500;  // any BMS module silent
+inline constexpr std::uint32_t BmsStaleMs     = 1000;  // any BMS module silent (1000 ms fault-response window)
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
 // FSM checks "have we heard a VCU 0x100 frame in the last VcuFreshMs?"
