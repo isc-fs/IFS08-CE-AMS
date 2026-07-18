@@ -246,6 +246,7 @@ void test_balance_single_hot_cell_in_charge(void);
 void test_balance_caps_at_max_active_per_module(void);
 void test_balance_disabled_outside_charge(void);
 void test_balance_thermal_lockout(void);
+void test_balance_disabled_when_temps_untrusted(void);
 void test_balance_override_suppresses_in_charge(void);
 void test_balance_threshold_strict_inequality(void);
 
@@ -498,6 +499,7 @@ int main(void) {
     RUN_TEST(test_balance_caps_at_max_active_per_module);
     RUN_TEST(test_balance_disabled_outside_charge);
     RUN_TEST(test_balance_thermal_lockout);
+    RUN_TEST(test_balance_disabled_when_temps_untrusted);
     RUN_TEST(test_balance_override_suppresses_in_charge);
     RUN_TEST(test_balance_threshold_strict_inequality);
 

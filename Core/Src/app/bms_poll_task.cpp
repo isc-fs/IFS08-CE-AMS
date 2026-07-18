@@ -189,7 +189,12 @@ void maybe_run_balance_update() {
     const bool       suppress = VehicleService::balance_suppressed(
         osKernelGetTickCount(), veh.last_balance_override_tick,
         veh.balance_override_suppress);
-    const auto       mask     = balance::compute_mask(state, fsm_curr, suppress);
+    // temps_trusted = config::TempFaultsTrusted: while the ADG731 temp path is
+    // unvalidated on flight, balancing's max_tempC thermal lockout can't be
+    // trusted, so compute_mask returns an all-zero (no-discharge) mask. Flips
+    // on with the same flag that arms the cell-temp faults.
+    const auto       mask     = balance::compute_mask(
+        state, fsm_curr, /*temps_trusted=*/config::TempFaultsTrusted, suppress);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;

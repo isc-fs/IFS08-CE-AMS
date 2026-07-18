@@ -10,9 +10,10 @@
 // BmsPollTask -- this header owns only the policy.
 //
 // Rules (config::Balance*):
-//   1. fsm_state != Charge                  -> mask all zero
-//   2. max_tempC > BalanceTempMax          -> mask all zero
-//   3. cell voltage > min_cell_mV + delta   -> candidate
+//   0. temps not trusted, or operator override  -> mask all zero
+//   1. fsm_state != Charge                       -> mask all zero
+//   2. max_tempC > BalanceTempMax                -> mask all zero
+//   3. cell voltage > min_cell_mV + delta        -> candidate
 //   4. per module, keep at most BalanceMaxActive candidates with
 //      the largest excess over the pack minimum (round-robin across
 //      windows is overkill at 1 Hz cadence -- top-k is good enough)
@@ -32,8 +33,13 @@ struct Mask {
     bool cell[config::BmsModuleCount][config::CellsPerModule];
 };
 
+// temps_trusted is REQUIRED (no default) so every call site must state the
+// pack-temperature trust explicitly -- a new caller can't silently inherit a
+// permissive default and balance on data the FSM won't even fault on. The
+// firmware caller passes config::TempFaultsTrusted.
 [[nodiscard]] inline Mask compute_mask(const BmsState&  s,
                                        fsm::State       fsm_state,
+                                       bool             temps_trusted,
                                        bool             suppressed = false) noexcept {
     Mask out = {};
 
@@ -43,6 +49,17 @@ struct Mask {
     // like the Charge gate, is moot outside Charge.
     if (suppressed)                            return out;
     if (fsm_state != fsm::State::Charge)       return out;
+
+    // Temperature-trust gate. Passive balancing dumps heat into the cells and
+    // the max_tempC lockout below is its ONLY thermal protection. When the
+    // cell-temp path isn't trusted (temps_trusted == config::TempFaultsTrusted
+    // == false -- the ADG731 mux path isn't validated on flight, and
+    // unpopulated NTC slots default to a harmless-looking 25 C) that guard
+    // reads meaningless data, so refuse to balance at all rather than heat the
+    // pack on numbers we won't even let the FSM fault on. Mirrors the safety
+    // predicates, which suppress the cell-temp FAULTS under the same flag.
+    if (!temps_trusted)                        return out;
+
     // Bang-bang thermal lockout: no hysteresis because compute_mask
     // is stateless by design (pure function, unit-testable in
     // isolation). At the 1 Hz balance-update cadence and the slow
