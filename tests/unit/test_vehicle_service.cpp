@@ -111,28 +111,42 @@ extern "C" void test_charge_requested_freshness(void) {
 }
 
 // ---------------------------------------------------------------------------
-// #336: operator balance override (0x103). "BALO" suppresses + stamps,
-// "BALX" resumes + stamps, an unrecognised payload is ignored.
+// #336: operator balance master switch (0x103). "BALO"->Off, "BALN"->On,
+// "BALX"->Auto, each stamps the tick; an unrecognised payload is ignored.
 // ---------------------------------------------------------------------------
-extern "C" void test_balance_override_balo_suppresses(void) {
+extern "C" void test_balance_override_balo_off(void) {
     const std::uint8_t balo[8] = { 0x42, 0x41, 0x4C, 0x4F, 0, 0, 0, 0 };  // "BALO"
     auto f = make_acu_frame(ams::config::BalanceOverrideReqId,
                             ams::config::BalanceOverrideReqDlc, balo);
     f.timestamp_ms = 7000;
     TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
     const auto s = ams::VehicleService::instance().snapshot();
-    TEST_ASSERT_TRUE(s.balance_override_suppress);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::config::BalanceCmd::Off),
+                            static_cast<std::uint8_t>(s.balance_cmd));
     TEST_ASSERT_EQUAL_UINT32(7000, s.last_balance_override_tick);
 }
 
-extern "C" void test_balance_override_balx_resumes(void) {
+extern "C" void test_balance_override_baln_on(void) {
+    const std::uint8_t baln[8] = { 0x42, 0x41, 0x4C, 0x4E, 0, 0, 0, 0 };  // "BALN"
+    auto f = make_acu_frame(ams::config::BalanceOverrideReqId,
+                            ams::config::BalanceOverrideReqDlc, baln);
+    f.timestamp_ms = 7500;
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    const auto s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::config::BalanceCmd::On),
+                            static_cast<std::uint8_t>(s.balance_cmd));
+    TEST_ASSERT_EQUAL_UINT32(7500, s.last_balance_override_tick);
+}
+
+extern "C" void test_balance_override_balx_auto(void) {
     const std::uint8_t balx[8] = { 0x42, 0x41, 0x4C, 0x58, 0, 0, 0, 0 };  // "BALX"
     auto f = make_acu_frame(ams::config::BalanceOverrideReqId,
                             ams::config::BalanceOverrideReqDlc, balx);
     f.timestamp_ms = 8000;
     TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
     const auto s = ams::VehicleService::instance().snapshot();
-    TEST_ASSERT_FALSE(s.balance_override_suppress);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::config::BalanceCmd::Auto),
+                            static_cast<std::uint8_t>(s.balance_cmd));
     TEST_ASSERT_EQUAL_UINT32(8000, s.last_balance_override_tick);
 }
 
@@ -143,13 +157,20 @@ extern "C" void test_balance_override_wrong_magic_ignored(void) {
     TEST_ASSERT_FALSE(ams::VehicleService::instance().update_from_frame(f));
 }
 
-// balance_suppressed: only when the last cmd was BALO (flag true) AND fresh.
-extern "C" void test_balance_suppressed_freshness(void) {
-    TEST_ASSERT_TRUE (ams::VehicleService::balance_suppressed(
-        10000, 10000 - ams::config::BalanceOverrideFreshMs, true));   // exactly fresh
-    TEST_ASSERT_FALSE(ams::VehicleService::balance_suppressed(
-        10000, 10000 - ams::config::BalanceOverrideFreshMs - 1, true)); // just stale
-    TEST_ASSERT_FALSE(ams::VehicleService::balance_suppressed(10000, 9999, false)); // BALX
-    TEST_ASSERT_FALSE(ams::VehicleService::balance_suppressed(10000, 0u, true));    // never
-    TEST_ASSERT_TRUE (ams::VehicleService::balance_suppressed(10000, 10005, true)); // future
+// effective_balance_cmd: fresh -> the command as-is; stale / never -> Off.
+extern "C" void test_balance_effective_cmd_freshness(void) {
+    using ams::config::BalanceCmd;
+    const auto eff = ams::VehicleService::effective_balance_cmd;
+    // Fresh On / Auto pass through.
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(BalanceCmd::On),
+        static_cast<std::uint8_t>(eff(10000, 10000 - ams::config::BalanceOverrideFreshMs,
+                                      BalanceCmd::On)));                       // exactly fresh
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(BalanceCmd::Auto),
+        static_cast<std::uint8_t>(eff(10000, 10005, BalanceCmd::Auto)));      // future -> fresh
+    // Dead-man: just-stale and never-seen both fall back to Off.
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(BalanceCmd::Off),
+        static_cast<std::uint8_t>(eff(10000, 10000 - ams::config::BalanceOverrideFreshMs - 1,
+                                      BalanceCmd::On)));                       // just stale -> Off
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(BalanceCmd::Off),
+        static_cast<std::uint8_t>(eff(10000, 0u, BalanceCmd::On)));           // never -> Off
 }

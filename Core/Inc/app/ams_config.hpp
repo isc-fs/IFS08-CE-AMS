@@ -198,18 +198,32 @@ inline constexpr std::uint8_t  ChargeModeReqDlc     = 4u;
 inline constexpr std::uint8_t  ChargeModeReqMagic[4] = { 0x43u, 0x48u, 0x52u, 0x47u };  // "CHRG"
 inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this recent at the mode lock
 
-// Operator balance-control override (#336). The ChargerDisplayWario pit
-// tool can pause autonomous cell balancing during Charge (e.g. for a
-// clean cell-V snapshot). Magic-gated like 0x101: "BALO" suppresses
-// balancing, "BALX" resumes auto. Re-sent ~2 Hz while ON; if the frame
-// goes stale (> BalanceOverrideFreshMs) the AMS reverts to autonomous.
-// Only affects balancing (which runs in Charge only) -- never an AIR /
-// safety path.
-inline constexpr std::uint32_t BalanceOverrideReqId    = 0x103u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
-inline constexpr std::uint8_t  BalanceOverrideReqDlc   = 4u;
-inline constexpr std::uint8_t  BalanceOverrideOnMagic[4]  = { 0x42u, 0x41u, 0x4Cu, 0x4Fu };  // "BALO" -> suppress
-inline constexpr std::uint8_t  BalanceOverrideOffMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x58u };  // "BALX" -> resume auto
-inline constexpr std::uint32_t BalanceOverrideFreshMs  = 5000;   // revert to auto if silent this long
+// Operator balance-control override (#336, extended to a 3-state master
+// switch). The ChargerDisplayWario pit tool commands cell balancing on
+// 0x103, magic-gated like 0x101:
+//   "BALO" -> OFF   force balancing off
+//   "BALN" -> ON    force balancing on in ANY FSM state -- operator override
+//                   of the Charge-only default. Still honours the temp-trust
+//                   gate + thermal lockout in balance::compute_mask (the
+//                   operator overrides the ENABLE decision, never the safety
+//                   guards).
+//   "BALX" -> AUTO  defer to the autonomous policy (balances in Charge when
+//                   imbalanced).
+// Dead-man: WarioCharger re-sends the active command ~2 Hz. If the frame goes
+// stale (> BalanceOverrideFreshMs) OR was never seen, the effective command
+// falls back to OFF, so a dead WarioCharger link never leaves the pack
+// bleeding. Only ever affects balancing -- never an AIR / safety path.
+inline constexpr std::uint32_t BalanceOverrideReqId  = 0x103u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
+inline constexpr std::uint8_t  BalanceOverrideReqDlc = 4u;
+inline constexpr std::uint8_t  BalanceCmdOffMagic [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Fu };  // "BALO" -> OFF
+inline constexpr std::uint8_t  BalanceCmdOnMagic  [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Eu };  // "BALN" -> ON (any state)
+inline constexpr std::uint8_t  BalanceCmdAutoMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x58u };  // "BALX" -> AUTO
+inline constexpr std::uint32_t BalanceOverrideFreshMs = 5000;   // fall back to OFF if silent this long
+
+// Effective operator balancing command. VehicleService resolves the raw last-
+// seen command through the freshness dead-man into one of these (stale/never
+// -> Off); balance::compute_mask consumes it.
+enum class BalanceCmd : std::uint8_t { Off = 0, Auto = 1, On = 2 };
 
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time

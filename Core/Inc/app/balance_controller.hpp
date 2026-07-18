@@ -3,18 +3,20 @@
 // Passive cell-balancing controller. Pure logic; no HAL, no FreeRTOS,
 // so the host unit-test build exercises the policy directly.
 //
-// Active only in fsm::State::Charge. Each call independently decides
-// which cells should be discharged this balancing window based on a
+// Gated by the operator master switch (op_cmd, #336). Each call independently
+// decides which cells should be discharged this balancing window based on a
 // BmsState snapshot. The actual LTC6811 WRCFGA packing happens in
-// ltc6811::pack_cfga_payload and the chain TX happens in
-// BmsPollTask -- this header owns only the policy.
+// ltc6811::pack_cfga_payload and the chain TX happens in BmsPollTask -- this
+// header owns only the policy.
 //
 // Rules (config::Balance*):
-//   0. temps not trusted, or operator override  -> mask all zero
-//   1. fsm_state != Charge                       -> mask all zero
-//   2. max_tempC > BalanceTempMax                -> mask all zero
-//   3. cell voltage > min_cell_mV + delta        -> candidate
-//   4. per module, keep at most BalanceMaxActive candidates with
+//   0. op_cmd == Off (incl. the dead-man fallback)  -> mask all zero
+//   1. op_cmd == Auto AND fsm_state != Charge        -> mask all zero
+//      (op_cmd == On runs in ANY state -- operator override of Charge-only)
+//   2. temps not trusted                             -> mask all zero
+//   3. max_tempC > BalanceTempMax                    -> mask all zero
+//   4. cell voltage > min_cell_mV + delta            -> candidate
+//   5. per module, keep at most BalanceMaxActive candidates with
 //      the largest excess over the pack minimum (round-robin across
 //      windows is overkill at 1 Hz cadence -- top-k is good enough)
 
@@ -33,22 +35,29 @@ struct Mask {
     bool cell[config::BmsModuleCount][config::CellsPerModule];
 };
 
-// temps_trusted is REQUIRED (no default) so every call site must state the
-// pack-temperature trust explicitly -- a new caller can't silently inherit a
-// permissive default and balance on data the FSM won't even fault on. The
-// firmware caller passes config::TempFaultsTrusted.
-[[nodiscard]] inline Mask compute_mask(const BmsState&  s,
-                                       fsm::State       fsm_state,
-                                       bool             temps_trusted,
-                                       bool             suppressed = false) noexcept {
+// temps_trusted and op_cmd are BOTH required (no defaults) so every call site
+// states the pack-temperature trust and the operator command explicitly -- a
+// new caller can't silently inherit a permissive default and balance on data
+// the FSM won't even fault on, or balance when the operator hasn't asked. The
+// firmware caller passes config::TempFaultsTrusted and the freshness-resolved
+// VehicleService::effective_balance_cmd.
+[[nodiscard]] inline Mask compute_mask(const BmsState&    s,
+                                       fsm::State         fsm_state,
+                                       bool               temps_trusted,
+                                       config::BalanceCmd op_cmd) noexcept {
     Mask out = {};
 
-    // Operator override (#336): a fresh "BALO" on 0x103 pauses autonomous
-    // balancing. Checked first so it can only ever PRODUCE an all-zero
-    // mask -- never enable a discharge the policy below wouldn't -- and,
-    // like the Charge gate, is moot outside Charge.
-    if (suppressed)                            return out;
-    if (fsm_state != fsm::State::Charge)       return out;
+    // Operator master switch (#336). op_cmd is already freshness-resolved by
+    // VehicleService::effective_balance_cmd (the dead-man is folded in, so a
+    // stale / absent WarioCharger link arrives here as Off):
+    //   Off  -> never balance.
+    //   On   -> operator forces balancing in ANY state (skips the Charge gate).
+    //   Auto -> autonomous policy, Charge-only.
+    // The safety guards below (temp-trust, thermal lockout) apply to BOTH On
+    // and Auto -- the operator overrides the ENABLE decision, never the guards.
+    if (op_cmd == config::BalanceCmd::Off)     return out;
+    if (op_cmd == config::BalanceCmd::Auto &&
+        fsm_state != fsm::State::Charge)       return out;
 
     // Temperature-trust gate. Passive balancing dumps heat into the cells and
     // the max_tempC lockout below is its ONLY thermal protection. When the

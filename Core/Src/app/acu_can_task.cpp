@@ -297,9 +297,12 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
         (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET) ? 1u : 0u;
 
     const auto veh_snap = ams::VehicleService::instance().snapshot();
-    const bool balance_override = ams::VehicleService::balance_suppressed(
-        osKernelGetTickCount(), veh_snap.last_balance_override_tick,
-        veh_snap.balance_override_suppress);
+    // Pit-diag "balance_override" bit = balancing currently held OFF by the
+    // operator master switch (Off, or the dead-man fallback). On / Auto -> 0.
+    const bool balance_override =
+        ams::VehicleService::effective_balance_cmd(
+            osKernelGetTickCount(), veh_snap.last_balance_override_tick,
+            veh_snap.balance_cmd) == ams::config::BalanceCmd::Off;
     send_or_fail_blocking(ams::config::PitDiagFsmStatusId,
                           ams::pit_diag::encode_fsm_status(
                               g_state_telemetry,
