@@ -1,5 +1,7 @@
 /* SPDX-License-Identifier: proprietary */
-/* 0x103 Operator_balance_override -- magic-gated balance pause/resume. RX (Pit_Tool). */
+/* 0x103 Operator_balance_override -- magic-gated balance master switch. RX (Pit_Tool).
+ * magic: "BALO"->OFF, "BALN"->ON (any state), "BALX"->AUTO. Re-send ~2 Hz;
+ * stale/absent falls back to OFF. See ams_config.hpp BalanceCmd*Magic. */
 CAN_MSG(Operator_balance_override, 0x103, 4, "Pit_Tool", 0)
     FIELD_BE (magic, uint32_t, 0, 32, 1, 0, "magic")
 CAN_MSG_END(Operator_balance_override)

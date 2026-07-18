@@ -182,19 +182,17 @@ void maybe_run_balance_update() {
     const auto       state    = BmsService::instance().snapshot();
     const fsm::State fsm_curr =
         static_cast<fsm::State>(g_state_telemetry);
-    // Operator balance override (#336): pause autonomous balancing while a
-    // fresh "BALO" (0x103) is in effect. Reverts to auto on "BALX" or when
-    // the override goes stale.
-    const auto       veh      = VehicleService::instance().snapshot();
-    const bool       suppress = VehicleService::balance_suppressed(
-        osKernelGetTickCount(), veh.last_balance_override_tick,
-        veh.balance_override_suppress);
+    // Operator balance master switch (#336): OFF / ON / AUTO on 0x103, with
+    // the freshness dead-man resolved here (stale / never-seen -> Off).
+    const auto       veh    = VehicleService::instance().snapshot();
+    const auto       op_cmd = VehicleService::effective_balance_cmd(
+        osKernelGetTickCount(), veh.last_balance_override_tick, veh.balance_cmd);
     // temps_trusted = config::TempFaultsTrusted: while the ADG731 temp path is
     // unvalidated on flight, balancing's max_tempC thermal lockout can't be
     // trusted, so compute_mask returns an all-zero (no-discharge) mask. Flips
     // on with the same flag that arms the cell-temp faults.
-    const auto       mask     = balance::compute_mask(
-        state, fsm_curr, /*temps_trusted=*/config::TempFaultsTrusted, suppress);
+    const auto       mask   = balance::compute_mask(
+        state, fsm_curr, /*temps_trusted=*/config::TempFaultsTrusted, op_cmd);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
