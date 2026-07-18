@@ -192,9 +192,10 @@ extern "C" void test_bms_ltc_null_buffer_rejected(void) {
 }
 
 // ---------------------------------------------------------------------------
-// is_healthy goes false after the freshness window expires.
-// BmsStaleMs is 1500; after the corrupted-IC test above last_rx_tick
-// for module 2 stayed at 1000, so any tick > 2500 must report stale.
+// is_healthy goes false after the freshness window expires. After the
+// corrupted-IC test above, last_rx_tick for module 2 stayed at 1000, so any
+// tick > 1000 + BmsStaleMs reports stale. 2501 is past the window for any
+// BmsStaleMs <= 1500 (window edge is 2000 at the current 1000 ms).
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_is_healthy_false_after_staleness(void) {
     TEST_ASSERT_FALSE(BmsService::instance().is_healthy(2501));
@@ -231,18 +232,20 @@ extern "C" void test_bms_mask_collapses_when_chain_stops_responding(void) {
         bad[0 * GroupBytes + ic * Seg + 7] ^= 0x01u;
     }
 
-    // Mid-window: at t = 1500 (== BmsStaleMs), delta from t=0 is 1500
-    // which is <= BmsStaleMs (the boundary case is "still fresh").
-    fake_set_tick(1500);
-    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), 1500);
+    // Boundary: at t == BmsStaleMs, delta from t=0 equals BmsStaleMs, which is
+    // <= BmsStaleMs -> still fresh (key off the constant, not a literal, so the
+    // test tracks the configured window).
+    const std::uint32_t boundary = config::BmsStaleMs;
+    fake_set_tick(boundary);
+    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), boundary);
     {
         const auto s = BmsService::instance().snapshot();
         TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
     }
 
-    // Beyond the window: at t = 1501, delta is 1501 > 1500 -> drop.
-    fake_set_tick(1501);
-    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), 1501);
+    // Beyond the window: at t = BmsStaleMs + 1, delta > BmsStaleMs -> drop.
+    fake_set_tick(boundary + 1u);
+    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), boundary + 1u);
     {
         const auto s = BmsService::instance().snapshot();
         TEST_ASSERT_EQUAL_UINT8(0u, s.module_online_mask);
