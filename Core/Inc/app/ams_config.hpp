@@ -97,6 +97,20 @@ inline constexpr std::uint32_t SafetyBootGraceMs = 2000;
 // current-over-limit, and VCU-stale still latch on the first tick.
 inline constexpr std::uint16_t CellFaultConfirmTicks = 30;  // ~300 ms
 
+// BmsStale confirmation debounce. BmsStale (a BMS module silent past
+// BmsStaleMs) is a timeout, but it currently latches ERROR on the FIRST
+// SafetyTask tick it crosses. Require it to persist this many consecutive
+// evaluations (x SafetyPeriodMs = 10 ms) first, so a far module that flickers
+// just past the window under a brief EMI burst and then reports on its next
+// voltage poll (<= 250 ms later) does not spuriously open the contactors.
+// SAFETY TRADEOFF -- COMMISSION: this ADDS up to BmsStaleConfirmTicks x 10 ms
+// to the detection of a GENUINELY lost module (25 -> 1500 ms window + 250 ms
+// confirm = 1750 ms worst case). Sized to span one 250 ms voltage-poll cycle so
+// a recovering module gets exactly one more chance. Sustained loss (a dead
+// chain through a whole torque event) still latches -- the confirm only delays
+// it, it does not prevent it. Set to 0 to restore first-tick latching.
+inline constexpr std::uint16_t BmsStaleConfirmTicks = 25;  // ~250 ms  COMMISSION
+
 inline constexpr std::uint32_t StatePeriodMs     =  20;
 inline constexpr std::uint32_t CurrentPeriodMs   =  50;
 inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
@@ -439,6 +453,17 @@ inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollV
 // pair plus a settling allowance.
 inline constexpr std::uint8_t  AdcMode          = 2;   // ams::ltc6811::AdcMode::Norm7kHz
 inline constexpr std::uint32_t AdcvSettleMs     = 3;
+
+// Voltage-poll retry budget. A voltage poll is re-attempted up to this many
+// EXTRA times if it does not come back fully PEC-clean, before being counted a
+// failed poll. Absorbs brief EMI bursts (e.g. inverter switching noise) that
+// corrupt one read but clear on an immediate re-read, so a transient does not
+// starve a module toward BmsStale. Each attempt is ~5 ms (ADCV + settle +
+// reads); at 2 retries the worst case (3 attempts) is ~15 ms, well inside the
+// 50 ms voltage-poll budget. Each attempt digests whatever ICs are clean, so
+// retries give the stragglers more chances. A dead/asleep chain fails every
+// attempt and still counts as failed. 0 = no retry (legacy behaviour).
+inline constexpr std::uint8_t  VoltPollRetries  = 2;
 inline constexpr std::uint32_t AdaxSettleMs     = 1;
 
 // ---------------------------------------------------------------------------

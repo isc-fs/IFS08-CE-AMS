@@ -42,6 +42,7 @@ private:
     // persist for config::CellFaultConfirmTicks consecutive evaluations
     // before it latches; pure + unit-tested in safety_predicates.hpp.
     safety::CellFaultDebounce cell_debounce_{};
+    safety::BmsStaleDebounce  bms_stale_debounce_{};
 
     // Open all relays, set the backup-register magic, mark this
     // instance as latched. Idempotent.

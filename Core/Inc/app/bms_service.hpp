@@ -142,6 +142,15 @@ public:
     // module_online_mask covers them. Used by SafetyTask.
     [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
 
+    // Bitmask of chain-index ICs that were PEC-clean on the most recent
+    // update_from_ltc_response (bit i = IC i clean). Single-writer
+    // (BmsPollTask); read from that same task right after the update, so the
+    // voltage-poll retry can tell a fully-clean read (all LtcChainLength bits
+    // set) from a partial one without copying the whole snapshot.
+    [[nodiscard]] std::uint16_t ltc_online_mask() const noexcept {
+        return state_.ltc_online_mask;
+    }
+
 private:
     BmsService();
 

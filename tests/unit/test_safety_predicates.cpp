@@ -392,6 +392,43 @@ extern "C" void test_cell_debounce_ignores_non_cell(void) {
 }
 
 // ---------------------------------------------------------------------------
+// BmsStale confirmation debounce: confirms only after N consecutive BmsStale
+// ticks; a single flicker never confirms; any other reason resets the streak.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_stale_debounce_confirms_after_n(void) {
+    ams::safety::BmsStaleDebounce db;
+    const std::uint16_t N = 25;
+    for (std::uint16_t i = 0; i < N - 1; ++i) {
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));  // not yet
+    }
+    TEST_ASSERT_TRUE(db.update(ams::safety::FaultReason::BmsStale, N));       // Nth -> confirm
+    TEST_ASSERT_TRUE(db.update(ams::safety::FaultReason::BmsStale, N));       // stays confirmed
+}
+
+extern "C" void test_bms_stale_debounce_transient_never_confirms(void) {
+    ams::safety::BmsStaleDebounce db;
+    const std::uint16_t N = 25;
+    // A far module flickering just past the window then recovering next poll.
+    for (int cycle = 0; cycle < 50; ++cycle) {
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));  // 1 bad
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::None, N));      // recovered -> reset
+    }
+}
+
+// Any non-BmsStale reason (incl. a different real fault) resets the streak so
+// it can't carry over and never leaks a confirm to another reason.
+extern "C" void test_bms_stale_debounce_resets_on_other_reason(void) {
+    ams::safety::BmsStaleDebounce db;
+    const std::uint16_t N = 3;
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 1
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 2
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsModuleOffline, N));  // reset
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 1 again
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 2
+    TEST_ASSERT_TRUE (db.update(ams::safety::FaultReason::BmsStale, N));      // 3 -> confirm
+}
+
+// ---------------------------------------------------------------------------
 // #299: AMS_OK (SDC enable) drive decision. HIGH only past boot grace
 // with no ERROR latched; LOW during grace and whenever latched.
 // ---------------------------------------------------------------------------
