@@ -347,8 +347,8 @@ namespace detail {
 //   0x6C8  PitDiag_pec_per_ic_b: bytes 0..1 = ICs 8..9, bytes 2..7 = 0
 //
 // Chain-to-module mapping:
-//   IC index 0 = module 0 upper (cells 0..9)
-//   IC index 1 = module 0 lower (cells 10..18)
+//   IC index 0 = module 0 upper (first LTC, cells 0..8)
+//   IC index 1 = module 0 lower (second LTC, cells 9..18)
 //   IC index 2 = module 1 upper, etc.
 // So 0x6C7 byte 0 spike = "module 0's top LTC6811 is misbehaving".
 // ---------------------------------------------------------------------------
@@ -399,6 +399,33 @@ namespace detail {
     s.acu_tx_fail                  = acu_tx_fail;
     std::uint8_t b[8];
     ifs08::encode_PIT_comms_health(s, b);
+    return detail::to_frame(b);
+}
+
+// ---------------------------------------------------------------------------
+// 0x6CA AMS_fw_health -- UNGATED firmware-health (#411), ECU-0x704 parity.
+// Emitted always-on (NOT part of the pit-diag scan); this adapter just packs
+// the gathered fields. free_heap/min_free_heap are clamped to u16 -- the heap
+// is 64 KB so they always fit today, but the clamp stops a future larger heap
+// from wrapping silently.
+//   [0..1] free_heap      BE u16   [4] task_liveness bitfield   [6] uptime_s u8
+//   [2..3] min_free_heap  BE u16   [5] reset_cause enum         [7] last_fault
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_fw_health(std::uint32_t free_heap,
+                                            std::uint32_t min_free_heap,
+                                            std::uint8_t  task_liveness,
+                                            std::uint8_t  reset_cause,
+                                            std::uint8_t  uptime_s,
+                                            std::uint8_t  last_fault) noexcept {
+    ifs08::AMS_fw_health_t s{};
+    s.free_heap     = (free_heap     > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(free_heap);
+    s.min_free_heap = (min_free_heap > 0xFFFFu) ? 0xFFFFu : static_cast<std::uint16_t>(min_free_heap);
+    s.task_liveness = task_liveness;
+    s.reset_cause   = reset_cause;
+    s.uptime_s      = uptime_s;
+    s.last_fault    = last_fault;
+    std::uint8_t b[8];
+    ifs08::encode_AMS_fw_health(s, b);
     return detail::to_frame(b);
 }
 

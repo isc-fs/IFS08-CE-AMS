@@ -15,15 +15,15 @@ them within 10 ms of any fault.
 ## Build & test commands
 
 ```bash
-# Host unit + SIL tests (fast — run these for any logic change). Expect "182 Tests 0 Failures".
+# Host unit + SIL tests (fast — run these for any logic change). Expect "218 Tests 0 Failures".
 cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-dir build-tests --output-on-failure
 
 # Cross-compile the firmware.
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake && cmake --build build
 scripts/check_flash_layout.py build/AMS.elf      # sector-0 / overflow guard (CI runs this)
 
-# Regenerate the CAN database after any wire-format change (CI's "DBC matches generator" check enforces it).
-python3 tools/gen_dbc.py > docs/dbc/ams.dbc
+# Regenerate the CAN database after any wire-format change (CI's "DBC matches code" check enforces it).
+c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump && /tmp/dbc_dump > docs/dbc/ams.dbc
 ```
 
 There is no CubeIDE/Eclipse makefile — CMake end-to-end. The bench build
@@ -67,7 +67,7 @@ invariants still hold:
 - `Core/Src/app/safety_task.cpp` — `MainTask` (safety + FSM + relays + telemetry, 10 ms)
 - `Core/Inc/app/state_machine.hpp` — the pure FSM
 - `Core/Inc/app/safety_predicates.hpp` — the fault predicate set
-- `Core/Inc/app/relay_driver.{hpp,cpp}` — contactors + `AMS_OK`
+- `Core/Inc/app/relay_driver.hpp` + `Core/Src/app/relay_driver.cpp` — contactors + `AMS_OK`
 - `Core/Inc/app/ams_config.hpp` — thresholds / timings (many tagged `COMMISSION`)
 
 ## Architecture in 10 lines
@@ -80,7 +80,7 @@ invariants still hold:
   `CurrentService` (CurrentSensorTask), `VehicleService` (AcuCanTask).
   No mutexes (32-bit atomic access + single-writer contract).
 - **Pure-logic core** (FSM, predicates, CAN/LTC encoders) is HAL-free → the
-  182 host tests need no hardware or RTOS mocks.
+  host tests need no hardware or RTOS mocks.
 - **FSM:** Start → Precharge → Transition → {Run | Charge}, plus sticky Error.
   Mode (Car/Charger) is locked at `Start → Precharge` and never re-evaluated.
 - **Inputs:** TSMS (PF9, held level) + DASH_CHG (PF10, momentary **edge**).

@@ -31,7 +31,7 @@ inputs (10 wired channels + 10 unused on the current rev — see §3).
 ```mermaid
 flowchart LR
     subgraph AMS_PCB[AMS PCB]
-        MCU[STM32H733<br/>SPI1 master<br/>PA4 = CS]
+        MCU[STM32H733<br/>SPI1 master<br/>PB9 = CS]
         LTC6820[LTC6820<br/>SPI ↔ isoSPI bridge]
         MCU -- SPI1 SCK/MISO/MOSI/CS --> LTC6820
     end
@@ -218,9 +218,9 @@ Placeholder calibration constants (`ams_config.hpp`, all tagged
 | Layer | Parameter | Value | Source |
 |---|---|---|---|
 | MCU SPI1 | Master / full-duplex / 8-bit / MSB-first | — | `AMS.ioc` |
-| MCU SPI1 | Mode | 3 (CPOL=HIGH, CPHA=2EDGE) | LTC6811 datasheet |
-| MCU SPI1 | Baud | ~516 Hz (prescaler 256 on 132 MHz APB2) | `AMS.ioc` |
-| MCU SPI1 | NSS | software, on PA4 | `AMS.ioc` |
+| MCU SPI1 | Mode | 0 (CPOL=LOW, CPHA=1EDGE) | `AMS.ioc` (`SPI_POLARITY_LOW` / `SPI_PHASE_1EDGE`) |
+| MCU SPI1 | Baud | ~516 kHz (prescaler 256 on 132 MHz APB2) | `AMS.ioc` (`CalculateBaudRate=515.625 KBits/s`) |
+| MCU SPI1 | NSS | software, on PB9 | `AMS.ioc` |
 | CS line | Wakeup pulse | 20 µs LOW, 30 µs HIGH | `ltc6820.cpp::WakePulseUs` |
 | Chain | t_WAKE (per IC) | ≥ 10 µs LOW | LTC6811 datasheet §"Wakeup" |
 | Chain | Idle drain (T_SLEEP) | ~2 s | LTC6811 datasheet §"Core LTC6811 State Transitions" |
@@ -233,14 +233,15 @@ along the isoSPI return path; an IC consumes one pulse to leave
 T_IDLE and only forwards subsequent pulses once it's awake. Ten
 pulses with 30 µs gaps land the whole chain in ~500 µs.
 
-`App_InitTask` runs this once on boot; `BmsPollTask::run_temperature_poll`
-also calls it at the start of every 500 ms cycle so a paused-for-debug
-voltage loop doesn't drop the chain into T_SLEEP.
+`App_InitTask` runs this once on boot — the only `Bus::wakeup()` call
+site. After boot nothing re-issues the pulse train; the ~250/500 ms
+voltage and temperature poll traffic itself keeps the chain out of the
+~2 s T_SLEEP window.
 
 ### Idle CS state
 
-PA4 is held HIGH at boot by CubeMX (`GPIO_PIN_SET` in `AMS.ioc`) so
-the chain never sees a stray CS-low edge before `Bus::configure()`
+PB9 is held HIGH at boot by CubeMX (`PB9.PinState=GPIO_PIN_SET` in
+`AMS.ioc`) so the chain never sees a stray CS-low edge before `Bus::configure()`
 has bound the singleton to `hspi1`. `Bus::cs_high()` in the ctor is
 a no-op when called pre-`configure()` (HAL handles are null) and a
 guaranteed-HIGH write afterwards.
@@ -253,7 +254,7 @@ Every LTC6811 command the firmware emits, in order of first use.
 
 | Command | Encoding | Direction | Used by | Cadence |
 |---|---|---|---|---|
-| `RDCFGA` | 0x0002 + PEC + chain × (data + PEC) | read 6 B per IC | `App_InitTask` chain-length discovery | once on boot |
+| `RDCFGA` | 0x0002 + PEC + chain × (data + PEC) | read 6 B per IC | `App_InitTask` chain-length discovery; `run_voltage_poll` warm-up | once on boot + every voltage poll (250 ms, discarded warm-up read before RDCVA per the #214 bit-sync fix) |
 | `ADCV` (Norm) | 0x0260 + MD\|DCP\|CH bits | broadcast, no reply | `BmsPollTask::run_voltage_poll` | 250 ms |
 | `RDCVA..D` | 0x0004 / 0x0006 / 0x0008 / 0x000A | read 6 B per IC | `BmsPollTask::run_voltage_poll` | 250 ms × 4 groups |
 | `WRCOMM` | 0x0721 + per-IC 6 B + PEC | broadcast write | `BmsPollTask::run_temperature_poll` | 500 ms × 20 channels |
@@ -267,7 +268,7 @@ read), `CH = All`. ADAX defaults: `MD = Norm7kHz`, `CHG = Gpio1`
 (AUX1 only — that's where the mux output lands).
 
 Worst-case voltage-poll budget on the wire: ADCV (4 B) → 3 ms ADC →
-4 × RDCV* (4 + 80 B each) ≈ 10 ms total at 516 Hz SCK. The
+4 × RDCV* (4 + 80 B each) ≈ 10 ms total at 516 kHz SCK. The
 per-cycle round-trip is recorded in `g_bms_volt_poll_ms` for the
 HIL acceptance check.
 
@@ -355,7 +356,8 @@ whole 84-byte frame and `Bus::write_chain_command()` ships it.
 train. `ltc6811::count_pec_valid_segments` walks the reply in 8-byte
 chunks, stops at the first PEC failure, and reports the count of
 consecutive clean ICs. Mismatch with `LtcChainLength` latches
-`ErrorLatch`, opens all relays, posts `safety::ForceError`. See §9.
+`ErrorLatch` and opens all relays; MainTask then boots already latched
+via `ErrorLatch::is_set()`. See §9.
 
 ---
 
@@ -420,11 +422,11 @@ bench calibration in
 
 | Failure | Detection | Reaction |
 |---|---|---|
-| Chain length ≠ `LtcChainLength` on boot | `count_pec_valid_segments` after RDCFGA | `App_InitTask` → `ErrorLatch::set` + `Relays::open_all` + `ForceError`. ERROR latch persists across the follow-up watchdog reset. |
+| Chain length ≠ `LtcChainLength` on boot | `count_pec_valid_segments` after RDCFGA | `App_InitTask` → `ErrorLatch::set` + `Relays::open_all`; MainTask boots already latched via `ErrorLatch::is_set()`. ERROR latch persists across the follow-up watchdog reset. |
 | PEC error on one IC, one register group | `decode_cell_voltage_group` / `decode_aux_voltage_group` returns false | drop slot, ++`g_ltc_pec_err_count[ic]`, continue. Sustained errors trip via freshness window (`BmsStaleMs`). |
 | Bus-level SPI failure (`HAL_SPI_*` non-OK) | `Bus::transfer` / `Bus::read_register_group` returns false | abort the cycle, ++`g_ltc_spi_err_count`, `last_rx_tick` doesn't advance. |
 | Mux SPI lost (open ADG731) | NTC reading rails (`V_aux = 0` or `≥ V_ref`), `ntc_mV_to_tempC` returns sentinel | skip slot, keep previous value. Operator-visible via `cell_tempC` snapshot. |
-| Chain dropped to T_SLEEP | next ADCV broadcast lands while ICs are deaf → PEC fails | freshness window catches it within `BmsStaleMs`. The temp poll's once-per-500-ms wakeup makes this extremely rare in practice. |
+| Chain dropped to T_SLEEP | next ADCV broadcast lands while ICs are deaf → PEC fails | freshness window catches it within `BmsStaleMs`. The ~250/500 ms poll traffic normally keeps the chain out of the ~2 s T_SLEEP window; there is no post-boot re-wakeup, so a long-paused poll loop can still let it drop. |
 | Open-wire detection (LTC ADOL) | **not used** — relying on software cell-mV plausibility instead | low-cell-V predicate trips on an open wire reading 0 mV. |
 
 The unifying principle: a single anomalous frame is bookkeeping, a

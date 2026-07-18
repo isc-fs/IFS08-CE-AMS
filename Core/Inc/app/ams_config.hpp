@@ -23,11 +23,19 @@ inline constexpr std::uint16_t CellUnderVoltageMv =  2800;  // under-voltage   -
 inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
 inline constexpr std::int16_t  CellUnderTempC  =   -10;  // under-temp °C   -- COMMISSION
 inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- COMMISSION
-inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
+// Cell TEMPERATURE fault gate. NTC temps are read through the per-LTC ADG731
+// 32:1 mux; that path is NOT yet trusted on flight (the mux-select word was
+// wrong -- fixed on the bench harness, not yet validated in the flight path).
+// While false, the CellUnderTemp / CellOverTemp predicates are SUPPRESSED so
+// the FSM never faults on unvalidated temperatures. Cell VOLTAGE protection is
+// unaffected. Flip to true once the mux fix ships to flight and temps are
+// bench-validated end-to-end.
+inline constexpr bool          TempFaultsTrusted = false;
+inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
-inline constexpr std::uint32_t BmsStaleMs     = 1500;  // any BMS module silent
+inline constexpr std::uint32_t BmsStaleMs     = 1000;  // any BMS module silent (1000 ms fault-response window)
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
 // FSM checks "have we heard a VCU 0x100 frame in the last VcuFreshMs?"
@@ -89,6 +97,20 @@ inline constexpr std::uint32_t SafetyBootGraceMs = 2000;
 // current-over-limit, and VCU-stale still latch on the first tick.
 inline constexpr std::uint16_t CellFaultConfirmTicks = 30;  // ~300 ms
 
+// BmsStale confirmation debounce. BmsStale (a BMS module silent past
+// BmsStaleMs) is a timeout, but it currently latches ERROR on the FIRST
+// SafetyTask tick it crosses. Require it to persist this many consecutive
+// evaluations (x SafetyPeriodMs = 10 ms) first, so a far module that flickers
+// just past the window under a brief EMI burst and then reports on its next
+// voltage poll (<= 250 ms later) does not spuriously open the contactors.
+// SAFETY TRADEOFF -- COMMISSION: this ADDS up to BmsStaleConfirmTicks x 10 ms
+// to the detection of a GENUINELY lost module (25 -> 1500 ms window + 250 ms
+// confirm = 1750 ms worst case). Sized to span one 250 ms voltage-poll cycle so
+// a recovering module gets exactly one more chance. Sustained loss (a dead
+// chain through a whole torque event) still latches -- the confirm only delays
+// it, it does not prevent it. Set to 0 to restore first-tick latching.
+inline constexpr std::uint16_t BmsStaleConfirmTicks = 25;  // ~250 ms  COMMISSION
+
 inline constexpr std::uint32_t StatePeriodMs     =  20;
 inline constexpr std::uint32_t CurrentPeriodMs   =  50;
 inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
@@ -96,6 +118,44 @@ inline constexpr std::uint32_t BmsPollVoltMs     = 250;
 inline constexpr std::uint32_t BmsPollTempMs     = 500;
 inline constexpr std::uint32_t TelemetryPeriodMs = 500;
 inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)
+
+// ---------------------------------------------------------------------------
+// Datalogging to microSD (SDMMC1 + FatFs). Strictly off the safety path:
+// SdLoggerTask (low priority) owns the card; SafetyTask only pushes a
+// LogRecord into a lock-free ring every LogSamplePeriodMs. Best-effort -- a
+// missing/failed card or a full ring degrades to "no log", NEVER a fault and
+// never a blocking call on the 10 ms loop. The boot-path SDMMC init is
+// decoupled (CubeMX: MX_SDMMC1_SD_Init not auto-called) so an absent card
+// can't brick the node -- see AMS #407. Logger: Core/Src/app/sd_logger_task.cpp.
+// ---------------------------------------------------------------------------
+
+// SafetyTask captures a record this often. 250 ms = 4 Hz, matched to the
+// BmsPollVoltMs voltage poll so every sample carries a FRESH cell-voltage
+// frame (no oversampling of the 2-4 Hz BMS data; design option B). ~6 KB/s
+// of full per-cell CSV. Must be a multiple of SafetyPeriodMs.
+inline constexpr std::uint32_t LogSamplePeriodMs = 250;
+
+// Lock-free ring depth (LogRecords). Each record now carries the FULL
+// 95-cell + 200-temp matrices (~620 B), so the ring is ~10 KB of BSS at
+// depth 16. MUST be a power of two. 16 @ 4 Hz ~= 4 s of buffer; the
+// shared-SD-mutex-with-yielding (#406 pull) lets the logger drain between
+// the extractor's reads, so the ring rarely saturates. Bump if RAM allows.
+inline constexpr std::uint32_t LogRingCapacity   = 16;
+
+// SdLoggerTask drain cadence, and how often it f_syncs the active file
+// (bounds data lost on a power-cut to <= LogSyncPeriodMs of samples).
+inline constexpr std::uint32_t LogDrainPeriodMs  = 50;
+inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
+
+// Seal (rotate) the active file once it reaches this size. Bounded, rotated
+// files make #406 listing / CRC / resume / "only new logs" tractable.
+inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~4 min/file at full per-cell rows)
+
+// 8.3 names (LFN off in ffconf.h; no RTC wall-clock -- #406/#407). The active
+// file is written as ".TMP" and renamed to ".CSV" on seal, so the extractor
+// only ever sees finished logs. Index is a rotation counter, not a timestamp.
+inline constexpr char          LogActiveNameFmt[] = "LOG%04lu.TMP";
+inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
@@ -138,18 +198,32 @@ inline constexpr std::uint8_t  ChargeModeReqDlc     = 4u;
 inline constexpr std::uint8_t  ChargeModeReqMagic[4] = { 0x43u, 0x48u, 0x52u, 0x47u };  // "CHRG"
 inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this recent at the mode lock
 
-// Operator balance-control override (#336). The ChargerDisplayWario pit
-// tool can pause autonomous cell balancing during Charge (e.g. for a
-// clean cell-V snapshot). Magic-gated like 0x101: "BALO" suppresses
-// balancing, "BALX" resumes auto. Re-sent ~2 Hz while ON; if the frame
-// goes stale (> BalanceOverrideFreshMs) the AMS reverts to autonomous.
-// Only affects balancing (which runs in Charge only) -- never an AIR /
-// safety path.
-inline constexpr std::uint32_t BalanceOverrideReqId    = 0x103u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
-inline constexpr std::uint8_t  BalanceOverrideReqDlc   = 4u;
-inline constexpr std::uint8_t  BalanceOverrideOnMagic[4]  = { 0x42u, 0x41u, 0x4Cu, 0x4Fu };  // "BALO" -> suppress
-inline constexpr std::uint8_t  BalanceOverrideOffMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x58u };  // "BALX" -> resume auto
-inline constexpr std::uint32_t BalanceOverrideFreshMs  = 5000;   // revert to auto if silent this long
+// Operator balance-control override (#336, extended to a 3-state master
+// switch). The ChargerDisplayWario pit tool commands cell balancing on
+// 0x103, magic-gated like 0x101:
+//   "BALO" -> OFF   force balancing off
+//   "BALN" -> ON    force balancing on in ANY FSM state -- operator override
+//                   of the Charge-only default. Still honours the temp-trust
+//                   gate + thermal lockout in balance::compute_mask (the
+//                   operator overrides the ENABLE decision, never the safety
+//                   guards).
+//   "BALX" -> AUTO  defer to the autonomous policy (balances in Charge when
+//                   imbalanced).
+// Dead-man: WarioCharger re-sends the active command ~2 Hz. If the frame goes
+// stale (> BalanceOverrideFreshMs) OR was never seen, the effective command
+// falls back to OFF, so a dead WarioCharger link never leaves the pack
+// bleeding. Only ever affects balancing -- never an AIR / safety path.
+inline constexpr std::uint32_t BalanceOverrideReqId  = 0x103u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
+inline constexpr std::uint8_t  BalanceOverrideReqDlc = 4u;
+inline constexpr std::uint8_t  BalanceCmdOffMagic [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Fu };  // "BALO" -> OFF
+inline constexpr std::uint8_t  BalanceCmdOnMagic  [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Eu };  // "BALN" -> ON (any state)
+inline constexpr std::uint8_t  BalanceCmdAutoMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x58u };  // "BALX" -> AUTO
+inline constexpr std::uint32_t BalanceOverrideFreshMs = 5000;   // fall back to OFF if silent this long
+
+// Effective operator balancing command. VehicleService resolves the raw last-
+// seen command through the freshness dead-man into one of these (stale/never
+// -> Off); balance::compute_mask consumes it.
+enum class BalanceCmd : std::uint8_t { Off = 0, Auto = 1, On = 2 };
 
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time
@@ -235,6 +309,12 @@ inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + 
 inline constexpr std::uint32_t PitDiagPecPerIcAId        = 0x6C7u;  // per-IC PEC count: ICs 0..7 (saturating u8)
 inline constexpr std::uint32_t PitDiagPecPerIcBId        = 0x6C8u;  // per-IC PEC count: ICs 8..9 + reserved
 inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail (#331)
+// UNGATED firmware-health frame (#411): always-on 1 Hz, NEVER gated by the
+// pit-diag arm (0x7F0). ID sits right after the gated 0x6C0..0x6C9 block but
+// is emitted regardless of arm state -- parity with ECU 0x704 for passive
+// liveness ("is the AMS app alive?" without transmitting an arm frame).
+inline constexpr std::uint32_t FwHealthId                = 0x6CAu;
+inline constexpr std::uint32_t FwHealthPeriodMs          = 1000u;  // 1 Hz
 inline constexpr std::uint8_t  PitDiagCmdDlc             = 4u;
 inline constexpr std::uint8_t  PitDiagEnableMagic[4]     = { 0xDEu, 0xADu, 0xBEu, 0xEFu };
 inline constexpr std::uint8_t  PitDiagDisableMagic[4]    = { 0x00u, 0x00u, 0x00u, 0x00u };
@@ -387,6 +467,17 @@ inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollV
 // pair plus a settling allowance.
 inline constexpr std::uint8_t  AdcMode          = 2;   // ams::ltc6811::AdcMode::Norm7kHz
 inline constexpr std::uint32_t AdcvSettleMs     = 3;
+
+// Voltage-poll retry budget. A voltage poll is re-attempted up to this many
+// EXTRA times if it does not come back fully PEC-clean, before being counted a
+// failed poll. Absorbs brief EMI bursts (e.g. inverter switching noise) that
+// corrupt one read but clear on an immediate re-read, so a transient does not
+// starve a module toward BmsStale. Each attempt is ~5 ms (ADCV + settle +
+// reads); at 2 retries the worst case (3 attempts) is ~15 ms, well inside the
+// 50 ms voltage-poll budget. Each attempt digests whatever ICs are clean, so
+// retries give the stragglers more chances. A dead/asleep chain fails every
+// attempt and still counts as failed. 0 = no retry (legacy behaviour).
+inline constexpr std::uint8_t  VoltPollRetries  = 2;
 inline constexpr std::uint32_t AdaxSettleMs     = 1;
 
 // ---------------------------------------------------------------------------
@@ -429,7 +520,7 @@ inline constexpr std::uint8_t  BlBootReqDlc        = 4;
 // as the boot magic and error latch).
 //
 // Slot 0: BL boot-request magic. Slot 1: AMS ErrorLatch. Slot 2:
-// jump reason. Slot 3+ reserved for future use.
+// jump reason. Slot 3: last-fault sentinel (#411). Slot 4+ reserved.
 inline constexpr std::uint32_t BkpJumpReasonReg = 2;
 
 enum class JumpReason : std::uint32_t {
@@ -437,6 +528,25 @@ enum class JumpReason : std::uint32_t {
     CanTrigger     = 0x4A554D50u,  // 'JUMP' -- MingoCAN sent the boot frame
     FaultLatch     = 0x46415554u,  // 'FAUT' -- safety supervisor forced it
     ManualRequest  = 0x4D414E55u,  // 'MANU' -- operator-issued, no fault
+};
+
+// --- Firmware-health frame (0x6CA, #411) -----------------------------------
+// Slot 3 holds the last-fault sentinel: the HardFault handler stamps a
+// LastFault code here, the 0x6CA health frame surfaces it on byte [7], and a
+// clean boot clears it. Same backup-domain persistence as slots 0-2 (survives
+// IWDG / NVIC reset, cleared on POR).
+inline constexpr std::uint32_t BkpLastFaultReg = 3;
+
+// reset_cause byte [5] -- mirrors the ECU 0x704 reset_cause enum exactly.
+enum class ResetCause : std::uint8_t {
+    Unknown = 0u, PowerOn = 1u, Pin = 2u, Software = 3u,
+    Iwdg = 4u, Wwdg = 5u, LowPower = 6u,
+};
+
+// last_fault byte [7] sentinel, latched in BkpLastFaultReg across a reset.
+// 0 = clean; the rest map the HardFault / RTOS-hook fault classes.
+enum class LastFault : std::uint8_t {
+    None = 0u, HardFault = 1u, StackOverflow = 2u, MallocFail = 3u, AssertFail = 4u,
 };
 
 // AMS node ID on the stm32-can-bootloader multi-node bus. Must match
@@ -469,8 +579,8 @@ inline constexpr std::uint32_t AmsRelayStatusId = 0x4A4u;  // contactor + AMS_OK
 // docs/BMS_LTC6811.md for the wire protocol and slot mapping.
 // ---------------------------------------------------------------------------
 inline constexpr std::uint8_t  LtcsPerModule       = 2;
-inline constexpr std::uint8_t  CellsPerLtcUpper    = 10;  // LTC_1 (top of module)
-inline constexpr std::uint8_t  CellsPerLtcLower    =  9;  // LTC_2 (bottom of module)
+inline constexpr std::uint8_t  CellsPerLtcUpper    =  9;  // LTC_1 (first in chain) -- 9 cells -> module 0..8 (#423)
+inline constexpr std::uint8_t  CellsPerLtcLower    = 10;  // LTC_2 (second in chain) -- 10 cells -> module 9..18 (#423)
 inline constexpr std::uint8_t  LtcChainLength      = 10;  // BmsModuleCount * LtcsPerModule
 inline constexpr std::uint8_t  TempsPerLtc         = 20;  // ADG731 channels populated
 inline constexpr std::uint8_t  TempMuxChannelsUsed = 20;  // of 32 on ADG731

@@ -66,10 +66,11 @@ void test_acu_unknown_id_rejected(void);
 void test_charge_req_magic_frame_sets_tick(void);
 void test_charge_req_wrong_magic_ignored(void);
 void test_charge_requested_freshness(void);
-void test_balance_override_balo_suppresses(void);
-void test_balance_override_balx_resumes(void);
+void test_balance_override_balo_off(void);
+void test_balance_override_baln_on(void);
+void test_balance_override_balx_auto(void);
 void test_balance_override_wrong_magic_ignored(void);
-void test_balance_suppressed_freshness(void);
+void test_balance_effective_cmd_freshness(void);
 
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
@@ -118,6 +119,9 @@ void test_cell_debounce_confirms_after_n(void);
 void test_cell_debounce_transient_never_confirms(void);
 void test_cell_debounce_reason_change_resets(void);
 void test_cell_debounce_ignores_non_cell(void);
+void test_bms_stale_debounce_confirms_after_n(void);
+void test_bms_stale_debounce_transient_never_confirms(void);
+void test_bms_stale_debounce_resets_on_other_reason(void);
 void test_ams_ok_low_during_grace(void);
 void test_ams_ok_high_when_healthy_post_grace(void);
 void test_ams_ok_low_when_latched(void);
@@ -235,13 +239,21 @@ void test_pit_diag_comms_health_layout(void);
 void test_pit_diag_comms_health_zero_when_clean(void);
 void test_pit_diag_comms_health_fields_independent(void);
 
+// test_fw_health.cpp
+void test_fw_health_reset_cause_priority(void);
+void test_fw_health_encode_layout(void);
+void test_fw_health_encode_clamps_heap(void);
+
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
 void test_balance_single_hot_cell_in_charge(void);
 void test_balance_caps_at_max_active_per_module(void);
 void test_balance_disabled_outside_charge(void);
 void test_balance_thermal_lockout(void);
-void test_balance_override_suppresses_in_charge(void);
+void test_balance_disabled_when_temps_untrusted(void);
+void test_balance_op_off_forces_no_discharge(void);
+void test_balance_op_on_runs_outside_charge(void);
+void test_balance_op_on_respects_temp_trust(void);
 void test_balance_threshold_strict_inequality(void);
 
 // test_sil_scenarios.cpp
@@ -251,6 +263,18 @@ void test_sil_charger_path(void);
 void test_sil_charger_stale_request_times_out(void);
 void test_sil_tsms_drop_in_run_rearms(void);
 void test_sil_bus_collapse_in_run_rearms(void);
+
+// test_datalogging.cpp
+void test_logring_empty_pop_false(void);
+void test_logring_fifo_order(void);
+void test_logring_fills_and_drops_newest(void);
+void test_logring_wraparound_fifo(void);
+void test_logring_size_tracking(void);
+void test_logcsv_header_column_count(void);
+void test_logcsv_row_matches_header_columns(void);
+void test_logcsv_row_scalar_values(void);
+void test_logcsv_row_cell_and_temp_values(void);
+void test_logcsv_truncation_returns_zero(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -310,10 +334,11 @@ int main(void) {
     RUN_TEST(test_charge_req_magic_frame_sets_tick);
     RUN_TEST(test_charge_req_wrong_magic_ignored);
     RUN_TEST(test_charge_requested_freshness);
-    RUN_TEST(test_balance_override_balo_suppresses);
-    RUN_TEST(test_balance_override_balx_resumes);
+    RUN_TEST(test_balance_override_balo_off);
+    RUN_TEST(test_balance_override_baln_on);
+    RUN_TEST(test_balance_override_balx_auto);
     RUN_TEST(test_balance_override_wrong_magic_ignored);
-    RUN_TEST(test_balance_suppressed_freshness);
+    RUN_TEST(test_balance_effective_cmd_freshness);
     RUN_TEST(test_acu_unknown_id_rejected);
 
     RUN_TEST(test_bootloader_trigger_exact_match);
@@ -360,6 +385,9 @@ int main(void) {
     RUN_TEST(test_cell_debounce_transient_never_confirms);
     RUN_TEST(test_cell_debounce_reason_change_resets);
     RUN_TEST(test_cell_debounce_ignores_non_cell);
+    RUN_TEST(test_bms_stale_debounce_confirms_after_n);
+    RUN_TEST(test_bms_stale_debounce_transient_never_confirms);
+    RUN_TEST(test_bms_stale_debounce_resets_on_other_reason);
     RUN_TEST(test_ams_ok_low_during_grace);
     RUN_TEST(test_ams_ok_high_when_healthy_post_grace);
     RUN_TEST(test_ams_ok_low_when_latched);
@@ -472,12 +500,19 @@ int main(void) {
     RUN_TEST(test_pit_diag_comms_health_zero_when_clean);
     RUN_TEST(test_pit_diag_comms_health_fields_independent);
 
+    RUN_TEST(test_fw_health_reset_cause_priority);
+    RUN_TEST(test_fw_health_encode_layout);
+    RUN_TEST(test_fw_health_encode_clamps_heap);
+
     RUN_TEST(test_balance_uniform_pack_no_discharge);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
     RUN_TEST(test_balance_caps_at_max_active_per_module);
     RUN_TEST(test_balance_disabled_outside_charge);
     RUN_TEST(test_balance_thermal_lockout);
-    RUN_TEST(test_balance_override_suppresses_in_charge);
+    RUN_TEST(test_balance_disabled_when_temps_untrusted);
+    RUN_TEST(test_balance_op_off_forces_no_discharge);
+    RUN_TEST(test_balance_op_on_runs_outside_charge);
+    RUN_TEST(test_balance_op_on_respects_temp_trust);
     RUN_TEST(test_balance_threshold_strict_inequality);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
@@ -486,6 +521,17 @@ int main(void) {
     RUN_TEST(test_sil_charger_stale_request_times_out);
     RUN_TEST(test_sil_tsms_drop_in_run_rearms);
     RUN_TEST(test_sil_bus_collapse_in_run_rearms);
+
+    RUN_TEST(test_logring_empty_pop_false);
+    RUN_TEST(test_logring_fifo_order);
+    RUN_TEST(test_logring_fills_and_drops_newest);
+    RUN_TEST(test_logring_wraparound_fifo);
+    RUN_TEST(test_logring_size_tracking);
+    RUN_TEST(test_logcsv_header_column_count);
+    RUN_TEST(test_logcsv_row_matches_header_columns);
+    RUN_TEST(test_logcsv_row_scalar_values);
+    RUN_TEST(test_logcsv_row_cell_and_temp_values);
+    RUN_TEST(test_logcsv_truncation_returns_zero);
 
     return UNITY_END();
 }

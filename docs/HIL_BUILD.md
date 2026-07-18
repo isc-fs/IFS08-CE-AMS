@@ -104,9 +104,9 @@ flight and HIL now share the same BMS path, and the only HIL-only
 behaviour that remains is the boot-time latch wipe described above.
 
 The diagnostics the old stub layout used to overlay onto `0x4A2` now
-live on the pit-diag CAN stream (`0x680..0x6C8`): 24 cell-voltage frames
+live on the pit-diag CAN stream (`0x680..0x6C9`): 24 cell-voltage frames
 (`0x680..0x697`), 25 temperature frames (`0x6A0..0x6B8`), and status
-frames (`0x6C0..0x6C8`). See [`CAN_MAP.md`](CAN_MAP.md).
+frames (`0x6C0..0x6C9`). See [`CAN_MAP.md`](CAN_MAP.md).
 
 ---
 
@@ -115,11 +115,11 @@ frames (`0x6C0..0x6C8`). See [`CAN_MAP.md`](CAN_MAP.md).
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) §1 — safety invariants; the
   bench and flight share the same BMS path.
 - [`docs/CAN_MAP.md`](CAN_MAP.md) — the pit-diag stream
-  (`0x680..0x6C8`) carries the bench observability the old stub layout
+  (`0x680..0x6C9`) carries the bench observability the old stub layout
   used to provide.
 - [`docs/BMS_LTC6811.md`](BMS_LTC6811.md) §7 — chain-length discovery on
   boot (runs on every build).
-- HIL acceptance plan — [issue #317](https://github.com/isc-fs/IFS08-CE-AMS/issues/317)
-  (the living bench-test matrix, blocks A–G, that gates a `dev → main` release).
+- HIL acceptance plan — [issue #399](https://github.com/isc-fs/IFS08-CE-AMS/issues/399)
+  (the living bench-test matrix that gates a `dev → main` release; v1.6.2, supersedes #317).
 - IFS08_HIL [`feat/pico-ltc-emulator`](https://github.com/isc-fs/IFS08_HIL/tree/feat/pico-ltc-emulator) —
   the Pi Pico LTC6820/LTC6811 emulator that replaced the data stub.

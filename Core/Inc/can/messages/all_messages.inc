@@ -18,6 +18,7 @@
 #include "ams_pack.def"
 #include "ams_temps.def"
 #include "relay_status.def"
+#include "ams_fw_health.def"
 
 #include "acu_ok_precharge.def"
 #include "acu_v_cell_min.def"

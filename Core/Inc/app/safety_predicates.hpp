@@ -163,10 +163,17 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
             return { FaultReason::CellOverVoltage,
                      module_above_u16(in.bms.vmax_module, config::CellOverVoltageMv) };
         }
-        if (in.bms.min_tempC < config::CellUnderTempC) return { FaultReason::CellUnderTemp, 0 };
-        if (in.bms.max_tempC > config::CellOverTempC) {
-            return { FaultReason::CellOverTemp,
-                     module_above_i16(in.bms.tmax_module, config::CellOverTempC) };
+        // Cell TEMPERATURE faults are gated behind config::TempFaultsTrusted:
+        // NTC temps come through the ADG731 mux, whose select word was wrong
+        // and is not yet validated on flight, so we do NOT fault on them yet
+        // (voltage protection above is unaffected). Flip the flag once the mux
+        // fix ships to flight + temps are validated end-to-end.
+        if (config::TempFaultsTrusted) {
+            if (in.bms.min_tempC < config::CellUnderTempC) return { FaultReason::CellUnderTemp, 0 };
+            if (in.bms.max_tempC > config::CellOverTempC) {
+                return { FaultReason::CellOverTemp,
+                         module_above_i16(in.bms.tmax_module, config::CellOverTempC) };
+            }
         }
     }
 
@@ -250,6 +257,29 @@ struct CellFaultDebounce {
             reason = ru;
             streak = 1;
         }
+        return streak >= confirm_ticks;
+    }
+};
+
+// BmsStale confirmation debounce. BmsStale is already a timeout (a BMS module
+// silent past BmsStaleMs), but the safety loop latches it on the FIRST tick it
+// crosses. This requires it to persist confirm_ticks consecutive evaluations
+// first, so a far module that flickers just past the window under a brief EMI
+// burst -- then reports on its next voltage poll (<= 250 ms later) -- does not
+// spuriously open the contactors. Any reason other than BmsStale resets the
+// streak (that fault takes its own immediate-latch path in the caller).
+// See config::BmsStaleConfirmTicks for the SAFETY TRADEOFF (adds confirm time
+// to the detection of a genuinely lost module). Mirrors CellFaultDebounce's
+// self-gating pattern so the caller can drive it every tick.
+struct BmsStaleDebounce {
+    std::uint16_t streak = 0;
+
+    [[nodiscard]] bool update(FaultReason r, std::uint16_t confirm_ticks) noexcept {
+        if (r != FaultReason::BmsStale) {
+            streak = 0;
+            return false;
+        }
+        if (streak < confirm_ticks) ++streak;
         return streak >= confirm_ticks;
     }
 };

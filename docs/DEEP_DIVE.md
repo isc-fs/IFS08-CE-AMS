@@ -4,7 +4,7 @@
 
 Top-to-bottom walk of the AMS codebase as it actually exists on `dev`. This is onboarding reference material for a new firmware engineer: precise, source-anchored, and kept current with the merged FSM / safety / mode-gating work.
 
-**Target:** STM32H733ZGTx Cortex-M7 @ 264 MHz · FreeRTOS via CMSIS-RTOS v2 · C++17 app · CubeMX-generated CMake. Formula Student EV accumulator / battery-management firmware. `VERSION` = `1.6.0`.
+**Target:** STM32H733ZGTx Cortex-M7 @ 264 MHz · FreeRTOS via CMSIS-RTOS v2 · C++17 app · CubeMX-generated CMake. Formula Student EV accumulator / battery-management firmware. `VERSION` = `1.6.2`.
 
 ## Sections
 
@@ -45,7 +45,7 @@ flowchart LR
 
     AMS -- "isoSPI via LTC6820" --> Chain([10 × LTC6811-1<br/>+ 10 × ADG731<br/>95 cells / 200 NTCs])
     AMS -- "AMS_OK PB4 (driven)<br/>AIR+ PB5 · AIR- PB6 · PRECHARGE PB7" --> SDC([Shutdown circuit + AIRs])
-    AMS -- "0x4A0/4A1/4A2 telem · 500 ms<br/>0x450 current · 250 ms<br/>0x680..0x6C8 pit-diag · gated" --> VCU
+    AMS -- "0x4A0/4A1/4A2 telem · 500 ms<br/>0x020/0x12C/0x131..0x137 ECU-TX matrix · 50/100/250 ms<br/>0x680..0x6C9 pit-diag · gated" --> VCU
     AMS -- "ADC3 diff PF7/PF8" --> CurrSensor([SSA-2-250A<br/>bipolar shunt])
 ```
 
@@ -104,7 +104,7 @@ sequenceDiagram
   main->>main: SCB->VTOR = 0x08020000
   main->>main: HAL_Init · SystemClock_Config (HSE 24 MHz, 264 MHz core)
   main->>HW: MX_GPIO_Init · relays default LOW<br/>TSMS+DASH_CHG with PULLDOWN
-  main->>HW: MX_FDCAN1 · USART2 · ADC3 · SPI1 · IWDG1 · FDCAN2
+  main->>HW: MX_FDCAN1 · USART2 · ADC3 · SPI1 · IWDG1
   Note over main: IWDG already ticking (~100 ms) before scheduler
   main->>main: osKernelInitialize · queues · 6 tasks · ams_app_globals_init
   main->>main: osKernelStart
@@ -136,7 +136,7 @@ sequenceDiagram
       ST->>HW: every 500 ms: emit 0x4A0/0x4A1/0x4A2
     end
   and aux
-    aux-->>aux: BmsPoll 250/500 ms · CurrentSensor 50 ms<br/>AcuCan RX drain + 250 ms 0x450 TX · pit-diag 1 Hz when enabled
+    aux-->>aux: BmsPoll 250/500 ms · CurrentSensor 50 ms<br/>AcuCan RX drain + ECU-TX matrix (0x135 50 ms · 0x020/0x12C/0x131..0x134 100 ms · 0x136/0x137 250 ms) · pit-diag 1 Hz when enabled
   end
 ```
 
@@ -154,7 +154,7 @@ sequenceDiagram
 | `App_InitTask` | High (40) | 512 w | once | FDCAN1 bring-up · LTC chain discovery · self-exit | `app_init_task.cpp` |
 | **`SafetyTask`** *(MainTask)* | **Realtime (48)** | 512 w | **10 ms** | snapshot · predicate (10 ms) · FSM step (20 ms) · AMS_OK drive (10 ms) · telemetry (500 ms) · IWDG refresh | `safety_task.cpp` |
 | `BmsPollTask` | Normal (24) | 1024 w | 250 / 500 ms | ADCV + RDCV[A–D] · ADAX + RDAUXA · balance WRCFGA · or HIL stub seed | `bms_poll_task.cpp` |
-| `AcuCanTask` | AboveNormal (32) | 512 w | RX-queue + 250 ms TX | drain `acu_rx_queue` → VehicleService · 0x450 current TX · boot-trigger · pit-diag emit | `acu_can_task.cpp` |
+| `AcuCanTask` | AboveNormal (32) | 512 w | RX-queue + 50/100/250 ms TX | drain `acu_rx_queue` → VehicleService · 0x020/0x12C/0x131–0x137 ECU-TX matrix (50/100/250 ms) · boot-trigger · pit-diag emit · FDCAN1 Bus-Off poll+recover | `acu_can_task.cpp` |
 | `CurrentSensorTask` | AboveNormal (32) | 256 w | 50 ms | ADC3 poll · IIR filter · `CurrentService::update_from_adc` | `current_task.cpp` |
 
 > **Priority discipline.** Only `SafetyTask` writes relay GPIO and drives AMS_OK. Only `SafetyTask` and `App_InitTask` refresh IWDG. Producers run strictly lower, so they cannot preempt the safety supervisor.
@@ -201,9 +201,12 @@ for (;;) {
       charge_req  = VehicleService::charge_requested(now, veh.last_charge_req_tick);
       mode_locked = (charge_req && !vcu_fresh) ? Mode::Charger : Mode::Car;   // (#311)
     }
+    // DEBOUNCED bus-collapse (#330): dc_bus < BusCollapsePercent(50%) of pack
+    // for BusCollapseConfirmTicks(20 ≈ 200 ms) ⇒ the AIRs opened externally.
+    bus_collapsed = bus_collapse_debounce(fsm::bus_below_collapse(bms_snap, veh_snap));
     out = fsm::step({state, bms_snap, cur_snap, veh_snap,
                      tsms, dash_chg_edge_pending, mode_locked, predicate_fault,
-                     now, state_entry_tick});
+                     bus_collapsed, now, state_entry_tick});
     dash_chg_edge_pending = false;                  // edge is one-shot
     apply_relay_actions(out.safety_flags);
     state = out.next;
@@ -235,9 +238,10 @@ Three singletons wrapping `volatile` structs. Cortex-M7 32-bit aligned R/W are a
 | **CurrentService** | CurrentSensorTask | SafetyTask, BmsPollTask, AcuCanTask | `filtered_mA`, `last_update_tick`, `sensor_fault` |
 | **VehicleService** | AcuCanTask | SafetyTask, AcuCanTask (pit-diag read) | `dc_bus_V`, `last_dc_bus_tick`, `last_charge_req_tick` |
 
-`VehicleService` decodes two RX frames (`vehicle_service.cpp`):
+`VehicleService` decodes three RX frames (`vehicle_service.cpp`):
 - **0x100** (`AcuRxDcBusId`) — little-endian `dc_bus_V` from the VCU; stamps `last_dc_bus_tick`.
 - **0x101** (`ChargeModeReqId`) — operator charge-mode request, **magic-gated**: the 4-byte payload must equal `ChargeModeReqMagic = {0x43,0x48,0x52,0x47}` ("CHRG") or the frame is dropped, so bus noise can't flip the AMS into a HV charge mode. A valid frame stamps `last_charge_req_tick`. `charge_requested(now, last)` returns true while that tick is within `ChargeReqFreshMs = 1000 ms` (future-tick safe).
+- **0x103** (`BalanceOverrideReqId`, #336) — operator balance-control override, **magic-gated**: `"BALO"` suppresses autonomous balancing, `"BALX"` resumes it. A valid frame stamps `last_balance_override_tick` and sets `balance_override_suppress`; the override reverts to autonomous once silent for `BalanceOverrideFreshMs = 5000 ms`. This affects Charge-mode balancing only — never an AIR / safety path.
 
 ---
 
@@ -262,8 +266,9 @@ stateDiagram-v2
   Transition --> Charge : mode == Charger
   Transition --> Error : Car-only: bus slumped, or mode == Undecided
 
-  Run --> Error : NOT tsms
-  Charge --> Error : NOT tsms
+  Run --> Start : NOT tsms (non-latching, #327)
+  Charge --> Start : NOT tsms (non-latching, #327)
+  Run --> Start : bus collapsed (#330)<br/>dc_bus < 50% pack ~200 ms
 
   Start --> Error : predicate_fault
   Precharge --> Error : predicate_fault
@@ -283,7 +288,8 @@ stateDiagram-v2
   - **Charger** — `dc_bus_V` is VCU-only and absent during a charge, so there is nothing to voltage-gate on. The proceed signal is a **still-fresh 0x101** (`charge_requested`). A single DASH_CHG press entered Precharge; **no second press and no `dc_bus` is required**. If 0x101 goes stale (charger unplugged), Precharge holds and hits the `PrechargeMaxMs` timeout → Error rather than closing AIR+ into a dead charger.
 - **Precharge timeout** (#307) — `now - state_entry_tick > PrechargeMaxMs (5000 ms)` latches Error and opens every contactor. This bounds how long the precharge resistor is held in-circuit, for any stuck-precharge cause. (`TransitionHoldMs` stays removed — Transition is a one-step passthrough.)
 - **Transition** — one FSM-step passthrough; the contactor swap (`CloseAirP|OpenPrecharge`) was already emitted on the entry edge. A **Car-only** bus-still-up guard re-checks `precharge_target_reached`; if the bus slumped when the precharge contactor opened, it lands in Error rather than energising a degraded bus. Charger commits to `Charge` directly (no VCU-measured bus to check). `Undecided` here is a programming error → Error.
-- **Run / Charge** — sustained while `tsms` is held. TSMS drop is the **only** exit (→ Error, sticky). **DASH_CHG is NOT level-checked here** — it is a momentary press and is low most of the time, so checking its level would fault instantly. Releasing the button does not fault Run or Charge. (#316)
+- **Run / Charge** — sustained while `tsms` is held. A **TSMS drop de-energises to Start (non-latching, #327)** — it is a normal operator stop, not a fault: the FSM opens every contactor and falls back to Start without latching Error, and the AMS re-arms with a fresh DASH_CHG press that re-runs precharge. `AMS_OK` stays **health-only** (driven by the predicate set, never by TSMS) so a TSMS drop never opens the AMS's own upstream SDC leg — which would otherwise need a reset/power-cycle to restore. This is the FS "driver can stop + restart the tractive system unaided" rule. **DASH_CHG is NOT level-checked here** — it is a momentary press and is low most of the time, so checking its level would fault instantly. Releasing the button does not fault Run or Charge. (#316) Genuine pack faults still latch via `predicate_fault`.
+- **Run → Start on bus collapse** (#330) — **Car/Run only.** If the VCU-measured `dc_bus_V` sits below `BusCollapsePercent = 50%` of the pack (cell-sum) for `BusCollapseConfirmTicks = 20` consecutive 10 ms ticks (~200 ms, SafetyTask-debounced into `bus_collapsed`), the AIRs were opened externally (a cockpit SDC shutdown the AMS can't directly sense). Run de-energises to Start (non-latching, like a TSMS drop) so a re-arm re-runs precharge rather than reclosing AIR+ onto a discharged DC-link when the shutdown is released.
 - **predicate_fault (any state)** — kept backstop. In normal operation SafetyTask handles the fault before ever calling `step()`, so this branch is false on a clean tick.
 
 ---
@@ -329,7 +335,7 @@ return {};
 | 4 | CellUnderVoltage | 10 | CurrentOverLimit |
 | 5 | CellOverVoltage | 11 | VcuStale |
 
-`12` (`FsmError`) is reserved for the SafetyTask FSM-driven Error path (precharge timeout / TSMS drop), set in `safety_task.cpp`, not in the predicate. Both `reason` and `detail` are surfaced on pit-diag `0x6C0[6]/[7]` (#276).
+`12` (`FsmError`) is reserved for the SafetyTask FSM-driven Error path (precharge timeout / Transition bus-slump), set in `safety_task.cpp`, not in the predicate. A **TSMS drop and a bus collapse are non-latching** (they return to Start, #327/#330) and so never set `FsmError`. Both `reason` and `detail` are surfaced on pit-diag `0x6C0[6]/[7]` (#276).
 
 ### Two facts to internalise
 
@@ -374,7 +380,7 @@ The firmware previously never drove this pin; the prior claim that "firmware nev
 
 ```mermaid
 flowchart LR
-  MCU[STM32H733<br/>SPI1 PA5/6/7 + PA4 CS<br/>MasterSSIdleness 07 CYCLE] -- "SPI master" --> Bridge[LTC6820<br/>SPI ↔ isoSPI]
+  MCU[STM32H733<br/>SPI1 PA5/6/7 + PB9 CS<br/>MasterSSIdleness 07 CYCLE] -- "SPI master" --> Bridge[LTC6820<br/>SPI ↔ isoSPI]
   Bridge -- "isoSPI transformer-coupled" --> M0
   subgraph M0[Module 0]
     L0a[LTC_1 · cells 0..9]
@@ -454,8 +460,8 @@ Single namespace `ams::config` (`ams_config.hpp`) — the canonical home for eve
 
 | Pack limits | Current sensor | Balancing + NTC |
 |---|---|---|
-| `CellUnderVoltageMv` 2800 | `CurrentZeroCount` 2048 (diff mid-scale) | `BalanceDeltaMv` 50 |
-| `CellOverVoltageMv` 4200 | `CurrentMvPerAmpe1` 50 (5 mV/A, bare sensor) | `BalanceTempMax` 50 °C |
+| `CellUnderVoltageMv` 2800 | `CurrentZeroCount` 2054 (flight-carrier re-cal, #393; nominal 2048) | `BalanceDeltaMv` 50 |
+| `CellOverVoltageMv` 4200 | `CurrentMvPerAmpe1` 46 (HIL #348 gain-trim; nominal 50 = 5 mV/A) | `BalanceTempMax` 50 °C |
 | `CellUnderTempC` -10 °C | `CurrentFilterShift` (IIR) | `BalanceMaxActive` 4 |
 | `CellOverTempC` 60 °C | | `NtcBeta` 3380 K |
 | `CurrentMaxMa` 200000 | | `NtcR25` 10 kΩ |
@@ -475,7 +481,7 @@ FDCAN1 TX, every 500 ms, always-on, classic CAN 8-byte frames.
 | [0] | `fsm.state` |
 | [1] | `ams_ok` GPIO readback |
 | [2] | `online_mask` |
-| [3] | `app_init_progress` |
+| [3] | reserved (`0x00`) |
 | [4..5] | `min_cell_mV` BE |
 | [6..7] | `max_cell_mV` BE |
 
@@ -526,7 +532,7 @@ A gateable diagnostic stream surfacing the entire pack state on FDCAN1 — used 
 |---|---|---|
 | `0x680..0x697` | 24 | **Cells:** 4 cells × u16 mV BE per frame · ceil(95/4)=24; pad slots = `0xFFFF` sentinel |
 | `0x6A0..0x6B8` | 25 | **Temps:** 8 channels × i8 °C per frame · 200/8=25 |
-| `0x6C0` | 1 | **FSM status:** state, mode_locked, error_latched, ams_ok, tsms/dash_chg, **[6] fault_reason** (FaultReason 0..11, 12=FsmError), **[7] detail** (#276) |
+| `0x6C0` | 1 | **FSM status:** [0] state, [1] mode_locked, byte 2 bits {dash_chg, tsms, balance_override}, [3] ams_ok_gpio, **[4..5] pec_err_total (BE u16, saturating)**, **[6] fault_reason** (FaultReason 0..11, 12=FsmError), **[7] detail** (#276) |
 | `0x6C1` | 1 | **Timing:** V-poll last/max ms · last temp-sweep mask |
 | `0x6C2` | 1 | **Balance mask A:** DCC bits cells 0..63 |
 | `0x6C3` | 1 | **Balance mask B:** DCC bits 64..94 + balance cycle counts |
@@ -535,14 +541,15 @@ A gateable diagnostic stream surfacing the entire pack state on FDCAN1 — used 
 | `0x6C6` | 1 | **FW ID:** semver + git hash[0..3] + BL node id |
 | `0x6C7` | 1 | **Per-IC PEC (A):** ICs 0..7, saturating u8 |
 | `0x6C8` | 1 | **Per-IC PEC (B):** ICs 8..9, bytes 2..7 reserved |
+| `0x6C9` | 1 | **Comms health** (#331): FDCAN1 Bus-Off recovery count (bytes 0..3, LE u32) + ECU-TX enqueue-fail count (bytes 4..7, LE u32) |
 
-> **Burst pacing.** `AcuCanTask` yields between batches so the 16-deep FDCAN1 TX FIFO can drain; without it a 50+ frame burst would overflow and drop trailing diag frames. MingoCAN shows all 95 cell voltages, 200 NTC temps, boot context, per-IC PEC, and the balance DCC mask live on a stock CAN interface.
+> **Burst pacing.** `AcuCanTask` yields between batches so the 16-deep FDCAN1 TX FIFO can drain; without it the 59-frame scan (24 cell + 25 temp + 10 status frames 0x6C0..0x6C9) would overflow and drop trailing diag frames. MingoCAN shows all 95 cell voltages, 200 NTC temps, boot context, per-IC PEC, and the balance DCC mask live on a stock CAN interface.
 
 ---
 
 ## 12. Tests
 
-Host-side unit tests run on every push (Unity), in both flight and HIL_STUB build configs. **182 tests total** across these suites (`tests/unit/`):
+Host-side unit tests run on every push (Unity), in both flight and HIL_STUB build configs. **218 tests total** across these suites (`tests/unit/`):
 
 | File | Coverage |
 |---|---|
@@ -552,12 +559,15 @@ Host-side unit tests run on every push (Unity), in both flight and HIL_STUB buil
 | `test_state_machine.cpp` | FSM transitions · Mode lock · precharge timeout · DASH_CHG edge / TSMS-only Run/Charge |
 | `test_telemetry_encoders.cpp` | encoder signatures · cockpit byte |
 | `test_pit_diag_emitter.cpp` | cell/temp frame layout · 0x6C0 fault reason/detail · cmd decode |
-| `test_acu_tx_encoders.cpp` | 0x450 current TX encode |
+| `test_acu_tx_encoders.cpp` | ECU-TX encode: 0x135 currents · 0x020 ok_precharge · 0x12C vmin · 0x131–0x137 per-module V/T |
 | `test_vehicle_service.cpp` | 0x100 decode · 0x101 magic gate · `charge_requested` freshness |
 | `test_bootloader.cpp` | `matches_trigger` happy + reject paths |
 | `test_balance_controller.cpp` | selection policy edge cases |
 | `test_sil_scenarios.cpp` | multi-step FSM scenarios (Car + Charger paths) |
 | `test_current_service.cpp` | ADC scaling · filter · sensor_fault |
+| `test_can_busoff_recovery.cpp` | FDCAN1 Bus-Off recovery rate-limit · `should_attempt_recovery` cadence / tick-wrap |
+| `test_dsl_parity.cpp` | encoder ↔ `.def` DSL byte-for-byte parity |
+| `test_dsl_dbc_consistency.cpp` | `docs/dbc/ams.dbc` matches the code-first DSL generator |
 
 `mocks/cmsis_os2_stub.cpp` stubs the minimum FreeRTOS surface; Unity is fetched at configure time.
 
@@ -596,9 +606,7 @@ Host-side unit tests run on every push (Unity), in both flight and HIL_STUB buil
 ## 15. Open questions
 
 1. `acu_tx_queue` declared depth-16 in `AMS.ioc`, never used — wire or remove.
-2. `CurrentService::set_charger_detected` + `charger_detected` field — dead since fix/48; prunable.
-3. `safety_events` event group + 3 mutex handles still allocated by CubeMX — unused; trim on next `.ioc` regen.
-4. `scoped_mutex.hpp` — orphaned since the refactor; delete or document.
-5. `VehicleService::start_button` legacy path — dead since the GPIO move; the FSM now reads TSMS/DASH_CHG directly.
-6. `encode_diag` / `AmsTelemDiagId = 0x4A3` — still defined, never emitted; the pit-diag stream supersedes it. Remove or document the deferred plan.
-7. Pit-diag 1 Hz burst is the largest CAN producer (~49 frames/s, ≈24% of FDCAN1 TX at 500 kbps) — budget it before adding another large producer.
+2. `safety_events` event group + 3 mutex handles still allocated by CubeMX — unused; trim on next `.ioc` regen.
+3. `scoped_mutex.hpp` — orphaned since the refactor; delete or document.
+4. `AmsTelemDiagId = 0x4A3` — the constant is still defined but its `encode_diag` encoder is already gone; the pit-diag stream supersedes it. Drop the leftover ID or document the deferred plan.
+5. Pit-diag 1 Hz burst is the largest CAN producer (~59 frames/scan = 24 cells + 25 temps + 0x6C0..0x6C9 status; ≈1.3 % of FDCAN1 TX at 500 kbps) — budget it before adding another large producer.
