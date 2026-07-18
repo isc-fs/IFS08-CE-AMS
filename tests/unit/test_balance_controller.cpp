@@ -62,7 +62,7 @@ std::uint8_t count_set_in_module(const balance::Mask& m, std::uint8_t module) {
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_uniform_pack_no_discharge(void) {
     auto state = make_uniform_state(/* mV */ 4100, /* C */ 25);
-    const auto mask = balance::compute_mask(state, fsm::State::Charge);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true);
     TEST_ASSERT_FALSE(any_set(mask));
 }
 
@@ -75,7 +75,7 @@ extern "C" void test_balance_single_hot_cell_in_charge(void) {
     state.cell_mV[2][7] = static_cast<std::uint16_t>(4100 + 80);
     state.max_cell_mV  = state.cell_mV[2][7];
 
-    const auto mask = balance::compute_mask(state, fsm::State::Charge);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true);
     TEST_ASSERT_TRUE(mask.cell[2][7]);
     // Only that one cell -- floor + 50 is the threshold, others sit
     // exactly at the floor so none should be selected.
@@ -100,7 +100,7 @@ extern "C" void test_balance_caps_at_max_active_per_module(void) {
     }
     state.max_cell_mV = state.cell_mV[1][5];
 
-    const auto mask = balance::compute_mask(state, fsm::State::Charge);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true);
     TEST_ASSERT_EQUAL_UINT8(config::BalanceMaxActive,
                             count_set_in_module(mask, 1));
     TEST_ASSERT_TRUE(mask.cell[1][5]);
@@ -123,7 +123,7 @@ extern "C" void test_balance_disabled_outside_charge(void) {
     for (auto st : { fsm::State::Start, fsm::State::Precharge,
                      fsm::State::Transition, fsm::State::Run,
                      fsm::State::Error }) {
-        const auto mask = balance::compute_mask(state, st);
+        const auto mask = balance::compute_mask(state, st, /*temps_trusted=*/true);
         TEST_ASSERT_FALSE_MESSAGE(any_set(mask),
             "mask must be empty outside Charge");
     }
@@ -141,9 +141,11 @@ extern "C" void test_balance_override_suppresses_in_charge(void) {
 
     // Sanity: without the override that cell discharges in Charge.
     TEST_ASSERT_TRUE(
-        balance::compute_mask(state, fsm::State::Charge, false).cell[2][7]);
+        balance::compute_mask(state, fsm::State::Charge,
+                              /*temps_trusted=*/true, /*suppressed=*/false).cell[2][7]);
     // With the override: nothing discharges.
-    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*suppressed=*/true);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, /*suppressed=*/true);
     TEST_ASSERT_FALSE(any_set(mask));
 }
 
@@ -157,7 +159,27 @@ extern "C" void test_balance_thermal_lockout(void) {
     state.max_cell_mV   = 4200;
     state.max_tempC     = static_cast<std::int16_t>(config::BalanceTempMax + 1);
 
-    const auto mask = balance::compute_mask(state, fsm::State::Charge);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true);
+    TEST_ASSERT_FALSE(any_set(mask));
+}
+
+// ---------------------------------------------------------------------------
+// 5b. Temperature-trust gate. With untrusted temps, balancing is fully
+//     disabled even for a clearly imbalanced pack in Charge -- the max_tempC
+//     thermal lockout is meaningless on unvalidated data, so we must not
+//     dump discharge heat into the pack. Mirrors config::TempFaultsTrusted.
+// ---------------------------------------------------------------------------
+extern "C" void test_balance_disabled_when_temps_untrusted(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[2][7] = static_cast<std::uint16_t>(4100 + 80);  // clearly imbalanced
+    state.max_cell_mV   = state.cell_mV[2][7];
+
+    // Sanity: with trusted temps this cell discharges in Charge.
+    TEST_ASSERT_TRUE(
+        balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true).cell[2][7]);
+    // Untrusted temps -> nothing discharges, regardless of imbalance.
+    const auto mask =
+        balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/false);
     TEST_ASSERT_FALSE(any_set(mask));
 }
 
@@ -170,7 +192,7 @@ extern "C" void test_balance_threshold_strict_inequality(void) {
     state.cell_mV[4][18] = static_cast<std::uint16_t>(4100 + config::BalanceDeltaMv);
     state.max_cell_mV    = state.cell_mV[4][18];
 
-    const auto mask = balance::compute_mask(state, fsm::State::Charge);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true);
     TEST_ASSERT_FALSE(mask.cell[4][18]);
     TEST_ASSERT_FALSE(any_set(mask));
 }
