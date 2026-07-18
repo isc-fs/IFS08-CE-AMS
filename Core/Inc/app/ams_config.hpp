@@ -31,7 +31,7 @@ inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- C
 // unaffected. Flip to true once the mux fix ships to flight and temps are
 // bench-validated end-to-end.
 inline constexpr bool          TempFaultsTrusted = false;
-inline constexpr std::int32_t  CurrentMaxMa   = 200000; // |I| max mA      -- COMMISSION
+inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
