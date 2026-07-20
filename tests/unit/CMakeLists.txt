@@ -44,6 +44,7 @@ add_executable(ams_unit_tests
     test_bms_service.cpp
     test_bootloader.cpp
     test_can_busoff_recovery.cpp
+    test_crc32.cpp
     test_current_service.cpp
     test_datalogging.cpp
     test_dsl_parity.cpp

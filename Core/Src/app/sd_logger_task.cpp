@@ -15,6 +15,7 @@
 #include "app/sd_logger_task.h"
 
 #include "ams_config.hpp"
+#include "crc32.hpp"
 #include "log_record.hpp"
 #include "log_ring.hpp"
 
@@ -103,6 +104,10 @@ bool          g_mounted    = false;
 bool          g_file_open  = false;
 std::uint32_t g_file_idx   = 0;
 std::uint32_t g_file_bytes = 0;
+// Running CRC-32 of the active file, folded in as rows are written. Kept so
+// the #406 CRC opcode can answer without re-reading a 4 MiB file off the card
+// (which would stall this task, and with it the drain, for seconds).
+std::uint32_t g_file_crc   = ams::crc::Crc32Init;
 char          g_rowbuf[ams::log_csv::MaxRowBytes];
 char          g_name[16];
 
@@ -143,8 +148,31 @@ bool open_new_file() noexcept {
         return false;
     }
     g_file_bytes = static_cast<std::uint32_t>(hn);
+    g_file_crc   = ams::crc::update(ams::crc::Crc32Init, g_rowbuf, hn);
     g_file_open  = true;
     return true;
+}
+
+// Write LOGnnnn.CRC next to the sealed CSV: 8 ASCII hex digits + newline.
+//
+// A sidecar rather than a trailer inside the CSV, because the file must stay
+// directly openable in a spreadsheet -- that is the whole reason it is CSV.
+// Best-effort: if this fails the CRC opcode falls back to reading the file,
+// so a missing sidecar costs time, not correctness. Files written before this
+// existed simply have no sidecar and take the slow path.
+void write_crc_sidecar(std::uint32_t idx, std::uint32_t crc) noexcept {
+    char  path[16];
+    char  text[16];
+    FIL   f;
+    std::snprintf(path, sizeof path, ams::config::LogCrcNameFmt,
+                  static_cast<unsigned long>(idx));
+    const int tn = std::snprintf(text, sizeof text, "%08lX\n",
+                                 static_cast<unsigned long>(crc));
+    if (tn <= 0) return;
+    if (f_open(&f, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return;
+    UINT bw = 0;
+    (void)f_write(&f, text, static_cast<UINT>(tn), &bw);
+    (void)f_close(&f);
 }
 
 // Close LOGnnnn.TMP and rename to LOGnnnn.CSV so the #406 extractor only ever
@@ -157,7 +185,11 @@ void seal_file() noexcept {
     std::snprintf(sealed,  sizeof sealed,  ams::config::LogSealedNameFmt,
                   static_cast<unsigned long>(g_file_idx));
     (void)f_rename(g_name, sealed);
+    // Sidecar AFTER the rename, so a .CRC only ever exists next to a sealed
+    // .CSV -- never next to a .TMP that is still growing.
+    write_crc_sidecar(g_file_idx, ams::crc::finalize(g_file_crc));
     g_file_open = false;
+    g_file_crc  = ams::crc::Crc32Init;
     ++g_file_idx;
     ++g_log_files;
 }
@@ -167,6 +199,9 @@ void seal_file() noexcept {
 void teardown(std::uint8_t new_state) noexcept {
     if (g_file_open) { (void)f_close(&g_fil); g_file_open = false; }
     if (g_mounted)   { (void)f_mount(nullptr, SDPath, 0); g_mounted = false; }
+    // The abandoned file stays a .TMP and never gets a sidecar, so the partial
+    // CRC must not carry into the next file.
+    g_file_crc  = ams::crc::Crc32Init;
     g_log_state = new_state;
 }
 
@@ -227,6 +262,7 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
                 break;
             }
             g_file_bytes += static_cast<std::uint32_t>(n);
+            g_file_crc    = ams::crc::update(g_file_crc, g_rowbuf, n);
             ++g_log_rows;
             if (g_file_bytes >= ams::config::LogFileMaxBytes) {
                 seal_file();                   // rotate; next file opens next tick

@@ -156,6 +156,9 @@ inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB
 // only ever sees finished logs. Index is a rotation counter, not a timestamp.
 inline constexpr char          LogActiveNameFmt[] = "LOG%04lu.TMP";
 inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
+// CRC-32 sidecar written beside a sealed CSV (#406): 8 ASCII hex digits.
+// Kept out of the CSV itself so the log stays directly spreadsheet-openable.
+inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with

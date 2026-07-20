@@ -140,6 +140,19 @@ void test_logfs_owns_only_its_opcodes(void);
 void test_logfs_unknown_opcode_nacks_unsupported(void);
 void test_logfs_full_file_pull_sequence(void);
 
+// test_crc32.cpp
+void test_crc32_check_vector(void);
+void test_crc32_empty_is_zero(void);
+void test_crc32_short_vectors(void);
+void test_crc32_csv_header_shape(void);
+void test_crc32_zero_filled_block(void);
+void test_crc32_incremental_matches_one_shot(void);
+void test_crc32_byte_at_a_time_matches(void);
+void test_crc32_zero_length_update_is_identity(void);
+void test_crc32_finalize_is_not_idempotent(void);
+void test_crc32_detects_single_bit_flip(void);
+void test_crc32_detects_reordering(void);
+
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
 void test_bootloader_trigger_wrong_bus(void);
@@ -473,6 +486,18 @@ int main(void) {
     RUN_TEST(test_logfs_owns_only_its_opcodes);
     RUN_TEST(test_logfs_unknown_opcode_nacks_unsupported);
     RUN_TEST(test_logfs_full_file_pull_sequence);
+
+    RUN_TEST(test_crc32_check_vector);
+    RUN_TEST(test_crc32_empty_is_zero);
+    RUN_TEST(test_crc32_short_vectors);
+    RUN_TEST(test_crc32_csv_header_shape);
+    RUN_TEST(test_crc32_zero_filled_block);
+    RUN_TEST(test_crc32_incremental_matches_one_shot);
+    RUN_TEST(test_crc32_byte_at_a_time_matches);
+    RUN_TEST(test_crc32_zero_length_update_is_identity);
+    RUN_TEST(test_crc32_finalize_is_not_idempotent);
+    RUN_TEST(test_crc32_detects_single_bit_flip);
+    RUN_TEST(test_crc32_detects_reordering);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);
