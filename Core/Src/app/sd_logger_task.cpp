@@ -376,6 +376,7 @@ void serve_diag_request() noexcept {
         // Not ours (or malformed) -- stay silent rather than answering for the
         // bootloader's namespace.
         g_diag_rsp_len = 0;
+        __DMB();
         g_diag_busy    = false;
         return;
     }
@@ -401,6 +402,10 @@ void serve_diag_request() noexcept {
     }
 
     g_diag_rsp_len = n;
+    // Publish the length BEFORE clearing the busy flag the CAN side polls.
+    // volatile orders the compiler but not the Cortex-M7 store buffer, and
+    // unlike the submit path there is no semaphore here to supply the barrier.
+    __DMB();
     g_diag_busy    = false;
 }
 
