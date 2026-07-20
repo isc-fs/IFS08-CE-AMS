@@ -115,6 +115,31 @@ void test_diag_session_rejects_other_peer(void);
 void test_diag_session_expires_when_host_walks_away(void);
 void test_diag_session_traffic_refreshes_idle_timer(void);
 
+// test_logfs_server.cpp
+void test_logfs_list_returns_all_entries(void);
+void test_logfs_list_entry_layout(void);
+void test_logfs_list_cursor_past_end_is_empty(void);
+void test_logfs_list_paginates_when_reply_is_full(void);
+void test_logfs_list_fs_error_nacks(void);
+void test_logfs_open_returns_handle_and_size(void);
+void test_logfs_open_missing_file_nacks(void);
+void test_logfs_reopen_supersedes_and_closes_previous(void);
+void test_logfs_close_releases_handle(void);
+void test_logfs_release_closes_open_file(void);
+void test_logfs_read_returns_requested_bytes(void);
+void test_logfs_read_past_eof_is_short_ack_not_error(void);
+void test_logfs_read_clamps_oversized_request(void);
+void test_logfs_read_with_stale_handle_nacks(void);
+void test_logfs_read_without_open_nacks(void);
+void test_logfs_read_io_error_nacks(void);
+void test_logfs_read_truncated_args_nacks(void);
+void test_logfs_crc_returns_value(void);
+void test_logfs_crc_error_nacks(void);
+void test_logfs_no_card_nacks_every_opcode(void);
+void test_logfs_owns_only_its_opcodes(void);
+void test_logfs_unknown_opcode_nacks_unsupported(void);
+void test_logfs_full_file_pull_sequence(void);
+
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
 void test_bootloader_trigger_wrong_bus(void);
@@ -424,6 +449,30 @@ int main(void) {
     RUN_TEST(test_diag_session_rejects_other_peer);
     RUN_TEST(test_diag_session_expires_when_host_walks_away);
     RUN_TEST(test_diag_session_traffic_refreshes_idle_timer);
+
+    RUN_TEST(test_logfs_list_returns_all_entries);
+    RUN_TEST(test_logfs_list_entry_layout);
+    RUN_TEST(test_logfs_list_cursor_past_end_is_empty);
+    RUN_TEST(test_logfs_list_paginates_when_reply_is_full);
+    RUN_TEST(test_logfs_list_fs_error_nacks);
+    RUN_TEST(test_logfs_open_returns_handle_and_size);
+    RUN_TEST(test_logfs_open_missing_file_nacks);
+    RUN_TEST(test_logfs_reopen_supersedes_and_closes_previous);
+    RUN_TEST(test_logfs_close_releases_handle);
+    RUN_TEST(test_logfs_release_closes_open_file);
+    RUN_TEST(test_logfs_read_returns_requested_bytes);
+    RUN_TEST(test_logfs_read_past_eof_is_short_ack_not_error);
+    RUN_TEST(test_logfs_read_clamps_oversized_request);
+    RUN_TEST(test_logfs_read_with_stale_handle_nacks);
+    RUN_TEST(test_logfs_read_without_open_nacks);
+    RUN_TEST(test_logfs_read_io_error_nacks);
+    RUN_TEST(test_logfs_read_truncated_args_nacks);
+    RUN_TEST(test_logfs_crc_returns_value);
+    RUN_TEST(test_logfs_crc_error_nacks);
+    RUN_TEST(test_logfs_no_card_nacks_every_opcode);
+    RUN_TEST(test_logfs_owns_only_its_opcodes);
+    RUN_TEST(test_logfs_unknown_opcode_nacks_unsupported);
+    RUN_TEST(test_logfs_full_file_pull_sequence);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);

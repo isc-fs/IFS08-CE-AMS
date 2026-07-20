@@ -104,8 +104,9 @@ inline constexpr std::uint8_t LogfsEntryLen  = 2u + 4u + 4u + LogfsNameLen;  // 
 // the client's normal termination signal either way).
 inline constexpr std::uint16_t LogfsMaxRead = 512u;
 
-// Entries per LIST reply, bounded so one reply fits an ISO-TP message with
-// room for the [type][opcode][next_cursor][count] header.
+// Entries per LIST reply, bounded so one reply fits an ISO-TP message. The
+// reply header is [type][opcode][next_cursor:u16][count] = 5 bytes; 8 is used
+// here to keep a little headroom if the header ever grows.
 inline constexpr std::uint8_t LogfsMaxListEntries =
     static_cast<std::uint8_t>((isotp::MaxMsg - 8u) / LogfsEntryLen);   // 46
 
