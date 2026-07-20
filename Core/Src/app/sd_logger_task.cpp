@@ -16,6 +16,7 @@
 
 #include "ams_config.hpp"
 #include "crc32.hpp"
+#include "diag_dispatch.hpp"
 #include "diag_proto.hpp"
 #include "log_record.hpp"
 #include "log_ring.hpp"
@@ -349,9 +350,12 @@ private:
     std::uint16_t skip_     = 0;
 };
 
-FatFsLogBackend            g_logfs_be;
-ams::logfs::Server<FatFsLogBackend> g_logfs_srv(g_logfs_be);
-ams::diag::Session         g_diag_session;
+using LogfsSrv = ams::logfs::Server<FatFsLogBackend>;
+
+FatFsLogBackend                 g_logfs_be;
+LogfsSrv                        g_logfs_srv(g_logfs_be);
+ams::diag::Session              g_diag_session;
+ams::diag::Dispatcher<LogfsSrv> g_diag_disp(g_diag_session, g_logfs_srv);
 
 // Single in-flight transaction: the session admits one host at a time, so a
 // second concurrent request is a protocol error, not a case to buffer for.
@@ -367,39 +371,16 @@ volatile bool          g_diag_busy    = false;   // request posted, reply pendin
 osSemaphoreId_t g_diag_sem = nullptr;
 
 // Serve whatever is sitting in g_diag_req. Runs on the logger thread.
+//
+// Routing/session policy lives in ams::diag::Dispatcher (host-tested); this
+// function is only the thread handoff around it. A returned length of 0 means
+// "say nothing" -- e.g. a CMD-typed frame, which belongs to the bootloader's
+// namespace and which the application must not answer even to refuse.
 void serve_diag_request() noexcept {
-    const std::uint16_t len = g_diag_req_len;
-    ams::diag::Request  req;
-    const std::uint32_t now = osKernelGetTickCount();
-
-    if (!ams::diag::parse_request(g_diag_req, len, req) || !req.is_app_ctrl()) {
-        // Not ours (or malformed) -- stay silent rather than answering for the
-        // bootloader's namespace.
-        g_diag_rsp_len = 0;
-        __DMB();
-        g_diag_busy    = false;
-        return;
-    }
-
-    std::uint16_t n = 0;
-    if (req.opcode == ams::diag::OpConnect) {
-        g_diag_session.connect(ams::config::AmsNodeId, now);
-        n = ams::diag::build_ack(g_diag_rsp, sizeof g_diag_rsp, req.opcode, nullptr, 0);
-    } else if (req.opcode == ams::diag::OpDisconnect) {
-        g_logfs_srv.release();
-        g_diag_session.disconnect();
-        n = ams::diag::build_ack(g_diag_rsp, sizeof g_diag_rsp, req.opcode, nullptr, 0);
-    } else if (!g_diag_session.touch(ams::config::AmsNodeId, now)) {
-        // No session -> refuse. Stops a stray frame from streaming the card to
-        // whoever happens to be on the bus.
-        n = ams::diag::build_nack(g_diag_rsp, sizeof g_diag_rsp, req.opcode,
-                                  ams::diag::NackBadSession);
-    } else if (ams::logfs::Server<FatFsLogBackend>::owns(req.opcode)) {
-        n = g_logfs_srv.handle(req, g_diag_rsp, sizeof g_diag_rsp);
-    } else {
-        n = ams::diag::build_nack(g_diag_rsp, sizeof g_diag_rsp, req.opcode,
-                                  ams::diag::NackUnsupported);
-    }
+    const std::uint16_t n = g_diag_disp.handle(g_diag_req, g_diag_req_len,
+                                               ams::config::AmsNodeId,
+                                               osKernelGetTickCount(),
+                                               g_diag_rsp, sizeof g_diag_rsp);
 
     g_diag_rsp_len = n;
     // Publish the length BEFORE clearing the busy flag the CAN side polls.
@@ -476,7 +457,7 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
 
         // Session idle-timeout: releases any file handle left open by a host
         // that walked away mid-pull.
-        if (g_diag_session.tick(osKernelGetTickCount())) g_logfs_srv.release();
+        (void)g_diag_disp.tick(osKernelGetTickCount());
 
         if (static_cast<std::int32_t>(next_drain - osKernelGetTickCount()) > 0) continue;
         next_drain += ams::config::LogDrainPeriodMs;

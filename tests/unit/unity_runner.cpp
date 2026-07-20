@@ -153,6 +153,22 @@ void test_crc32_finalize_is_not_idempotent(void);
 void test_crc32_detects_single_bit_flip(void);
 void test_crc32_detects_reordering(void);
 
+// test_diag_dispatch.cpp
+void test_dispatch_ignores_bootloader_namespace(void);
+void test_dispatch_ignores_runt_message(void);
+void test_dispatch_refuses_logfs_without_session(void);
+void test_dispatch_connect_then_logfs_reaches_server(void);
+void test_dispatch_refuses_logfs_from_other_peer(void);
+void test_dispatch_new_connect_takes_over_and_releases(void);
+void test_dispatch_connect_is_idempotent(void);
+void test_dispatch_disconnect_releases_and_closes_session(void);
+void test_dispatch_disconnect_without_session_still_acks(void);
+void test_dispatch_tick_expires_session_and_releases(void);
+void test_dispatch_traffic_keeps_long_transfer_alive(void);
+void test_dispatch_unknown_opcode_nacks(void);
+void test_dispatch_delete_opcode_is_unsupported(void);
+void test_dispatch_session_check_precedes_opcode_check(void);
+
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
 void test_bootloader_trigger_wrong_bus(void);
@@ -498,6 +514,21 @@ int main(void) {
     RUN_TEST(test_crc32_finalize_is_not_idempotent);
     RUN_TEST(test_crc32_detects_single_bit_flip);
     RUN_TEST(test_crc32_detects_reordering);
+
+    RUN_TEST(test_dispatch_ignores_bootloader_namespace);
+    RUN_TEST(test_dispatch_ignores_runt_message);
+    RUN_TEST(test_dispatch_refuses_logfs_without_session);
+    RUN_TEST(test_dispatch_connect_then_logfs_reaches_server);
+    RUN_TEST(test_dispatch_refuses_logfs_from_other_peer);
+    RUN_TEST(test_dispatch_new_connect_takes_over_and_releases);
+    RUN_TEST(test_dispatch_connect_is_idempotent);
+    RUN_TEST(test_dispatch_disconnect_releases_and_closes_session);
+    RUN_TEST(test_dispatch_disconnect_without_session_still_acks);
+    RUN_TEST(test_dispatch_tick_expires_session_and_releases);
+    RUN_TEST(test_dispatch_traffic_keeps_long_transfer_alive);
+    RUN_TEST(test_dispatch_unknown_opcode_nacks);
+    RUN_TEST(test_dispatch_delete_opcode_is_unsupported);
+    RUN_TEST(test_dispatch_session_check_precedes_opcode_check);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);
