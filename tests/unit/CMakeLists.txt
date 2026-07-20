@@ -48,6 +48,7 @@ add_executable(ams_unit_tests
     test_datalogging.cpp
     test_dsl_parity.cpp
     test_dsl_dbc_consistency.cpp
+    test_diag_proto.cpp
     test_isotp.cpp
     test_ltc6811_decode.cpp
     test_safety_predicates.cpp

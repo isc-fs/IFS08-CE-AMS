@@ -92,6 +92,29 @@ void test_isotp_ignores_received_flow_control(void);
 void test_isotp_recovers_after_error(void);
 void test_isotp_segmenter_rejects_invalid_input(void);
 
+// test_diag_proto.cpp
+void test_diag_msgtype_app_ctrl_is_0x06(void);
+void test_diag_logfs_opcodes(void);
+void test_diag_nack_codes_do_not_collide_with_bootloader(void);
+void test_diag_logfs_entry_is_22_bytes(void);
+void test_diag_list_batch_fits_one_isotp_message(void);
+void test_diag_put_u16_is_little_endian(void);
+void test_diag_put_u32_is_little_endian(void);
+void test_diag_le_helpers_handle_extremes(void);
+void test_diag_parse_request_extracts_type_opcode_args(void);
+void test_diag_parse_request_no_args(void);
+void test_diag_parse_request_rejects_runt(void);
+void test_diag_parse_request_flags_non_app_ctrl(void);
+void test_diag_build_ack_frames_type_and_opcode(void);
+void test_diag_build_ack_empty_payload(void);
+void test_diag_build_ack_refuses_overflow(void);
+void test_diag_build_nack_is_three_bytes(void);
+void test_diag_session_starts_closed(void);
+void test_diag_session_connect_disconnect(void);
+void test_diag_session_rejects_other_peer(void);
+void test_diag_session_expires_when_host_walks_away(void);
+void test_diag_session_traffic_refreshes_idle_timer(void);
+
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
 void test_bootloader_trigger_wrong_bus(void);
@@ -379,6 +402,28 @@ int main(void) {
     RUN_TEST(test_isotp_ignores_received_flow_control);
     RUN_TEST(test_isotp_recovers_after_error);
     RUN_TEST(test_isotp_segmenter_rejects_invalid_input);
+
+    RUN_TEST(test_diag_msgtype_app_ctrl_is_0x06);
+    RUN_TEST(test_diag_logfs_opcodes);
+    RUN_TEST(test_diag_nack_codes_do_not_collide_with_bootloader);
+    RUN_TEST(test_diag_logfs_entry_is_22_bytes);
+    RUN_TEST(test_diag_list_batch_fits_one_isotp_message);
+    RUN_TEST(test_diag_put_u16_is_little_endian);
+    RUN_TEST(test_diag_put_u32_is_little_endian);
+    RUN_TEST(test_diag_le_helpers_handle_extremes);
+    RUN_TEST(test_diag_parse_request_extracts_type_opcode_args);
+    RUN_TEST(test_diag_parse_request_no_args);
+    RUN_TEST(test_diag_parse_request_rejects_runt);
+    RUN_TEST(test_diag_parse_request_flags_non_app_ctrl);
+    RUN_TEST(test_diag_build_ack_frames_type_and_opcode);
+    RUN_TEST(test_diag_build_ack_empty_payload);
+    RUN_TEST(test_diag_build_ack_refuses_overflow);
+    RUN_TEST(test_diag_build_nack_is_three_bytes);
+    RUN_TEST(test_diag_session_starts_closed);
+    RUN_TEST(test_diag_session_connect_disconnect);
+    RUN_TEST(test_diag_session_rejects_other_peer);
+    RUN_TEST(test_diag_session_expires_when_host_walks_away);
+    RUN_TEST(test_diag_session_traffic_refreshes_idle_timer);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);
