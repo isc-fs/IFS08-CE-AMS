@@ -8,13 +8,22 @@
 //
 // FILESYSTEM OWNERSHIP -- why a Backend template parameter
 // --------------------------------------------------------
-// FatFs is not reentrant in this build, and SdLoggerTask already owns the
-// volume (it defines hsd1, mounts, writes, rotates). Rather than bolt a mutex
-// onto the logger's write path -- where a diag read could stall the drain and
-// overflow the 16-deep ring -- the server logic here is PURE and calls a
-// Backend that is expected to run ON the logger thread. One thread touches
-// FatFs, by construction, exactly like the lock-free single-writer services.
+// FatFs IS reentrant in this build (ffconf.h `_FS_REENTRANT 1`, `_SYNC_t
+// osSemaphoreId_t`, with option/syscall.c compiled in), so a separate diag
+// thread calling f_read would be memory-safe -- FatFs serialises per volume.
+// The server still runs ON the logger thread, for three reasons that are
+// about scheduling and headroom rather than data races:
 //
+//  1. `_SYNC_t` is an osSemaphoreId_t, i.e. a plain counting semaphore with NO
+//     priority inheritance. Contending for the volume across threads invites
+//     unbounded priority inversion; keeping one owner sidesteps it.
+//  2. `_FS_LOCK 2` caps simultaneously-open files at two. The logger holds the
+//     active .TMP, so a diag read is the second and last slot -- zero headroom
+//     for a concurrent third open.
+//  3. A diag thread costs another stack plus a ~550-byte FIL, and SdLoggerTask
+//     already owns the volume (it defines hsd1, mounts, writes, rotates).
+//
+// So: one thread touches FatFs, matching the lock-free single-writer services.
 // The template keeps that zero-cost and lets the host tests drive a fake
 // backend with no card, no HAL and no RTOS.
 //
