@@ -72,6 +72,26 @@ void test_balance_override_balx_auto(void);
 void test_balance_override_wrong_magic_ignored(void);
 void test_balance_effective_cmd_freshness(void);
 
+// test_isotp.cpp
+void test_isotp_round_trip_single_frame(void);
+void test_isotp_round_trip_first_multiframe(void);
+void test_isotp_round_trip_sequence_wrap(void);
+void test_isotp_round_trip_max_message(void);
+void test_isotp_segmenter_pins_wire_encoding(void);
+void test_isotp_flow_control_frame_format(void);
+void test_isotp_ff_raises_flow_control_pending(void);
+void test_isotp_rejects_bad_single_frame_length(void);
+void test_isotp_rejects_first_frame_that_should_be_single(void);
+void test_isotp_rejects_oversized_message(void);
+void test_isotp_rejects_consecutive_without_first(void);
+void test_isotp_rejects_out_of_order_sequence(void);
+void test_isotp_rejects_consecutive_from_other_peer(void);
+void test_isotp_reassembly_times_out(void);
+void test_isotp_idle_never_times_out(void);
+void test_isotp_ignores_received_flow_control(void);
+void test_isotp_recovers_after_error(void);
+void test_isotp_segmenter_rejects_invalid_input(void);
+
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
 void test_bootloader_trigger_wrong_bus(void);
@@ -341,6 +361,24 @@ int main(void) {
     RUN_TEST(test_balance_effective_cmd_freshness);
     RUN_TEST(test_acu_unknown_id_rejected);
 
+    RUN_TEST(test_isotp_round_trip_single_frame);
+    RUN_TEST(test_isotp_round_trip_first_multiframe);
+    RUN_TEST(test_isotp_round_trip_sequence_wrap);
+    RUN_TEST(test_isotp_round_trip_max_message);
+    RUN_TEST(test_isotp_segmenter_pins_wire_encoding);
+    RUN_TEST(test_isotp_flow_control_frame_format);
+    RUN_TEST(test_isotp_ff_raises_flow_control_pending);
+    RUN_TEST(test_isotp_rejects_bad_single_frame_length);
+    RUN_TEST(test_isotp_rejects_first_frame_that_should_be_single);
+    RUN_TEST(test_isotp_rejects_oversized_message);
+    RUN_TEST(test_isotp_rejects_consecutive_without_first);
+    RUN_TEST(test_isotp_rejects_out_of_order_sequence);
+    RUN_TEST(test_isotp_rejects_consecutive_from_other_peer);
+    RUN_TEST(test_isotp_reassembly_times_out);
+    RUN_TEST(test_isotp_idle_never_times_out);
+    RUN_TEST(test_isotp_ignores_received_flow_control);
+    RUN_TEST(test_isotp_recovers_after_error);
+    RUN_TEST(test_isotp_segmenter_rejects_invalid_input);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);
