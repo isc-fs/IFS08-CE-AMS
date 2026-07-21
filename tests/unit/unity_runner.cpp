@@ -398,6 +398,7 @@ void test_ntc_is_monotonic_over_the_whole_range(void);
 void test_ntc_rejects_out_of_range_resistance(void);
 void test_ntc_accepts_exact_endpoints(void);
 void test_ntc_pullup_is_6k8(void);
+void test_ntc_hot_endpoint_resolves_from_resistance(void);
 
 // test_log_rotation.cpp
 void test_logrot_empty_card_starts_at_zero(void);
@@ -786,6 +787,7 @@ int main(void) {
     RUN_TEST(test_ntc_rejects_out_of_range_resistance);
     RUN_TEST(test_ntc_accepts_exact_endpoints);
     RUN_TEST(test_ntc_pullup_is_6k8);
+    RUN_TEST(test_ntc_hot_endpoint_resolves_from_resistance);
 
     RUN_TEST(test_logrot_empty_card_starts_at_zero);
     RUN_TEST(test_logrot_skips_sealed_files);

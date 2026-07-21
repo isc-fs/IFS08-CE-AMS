@@ -90,9 +90,15 @@ extern "C" void test_ntc_datasheet_resistances(void) {
 // Tolerance is 1 degC: the mV column is rounded to whole millivolts before it
 // reaches us, and the LTC quantises anyway.
 extern "C" void test_ntc_divider_voltage_recovers_temperature(void) {
+    // Stops at 80 degC deliberately. At the hot end the divider is compressed:
+    // near 125 degC one millivolt is ~2.5 ohm and ~2.4 degC, so a +/-1 degC
+    // assertion there would be testing the datasheet's mV rounding, not our
+    // conversion. (137 mV recovers 325 ohm against a table minimum of 326 --
+    // one ohm of rounding, and out of range.) The cells live between -10 and
+    // 60 degC; that band is what matters and it is exact.
     struct { std::uint16_t mv; int t; } k[] = {
         {2925, -40}, {2660, -10}, {2476, 0}, {1786, 25},
-        {1170, 45},  {1036, 50},  {796, 60}, {459, 80}, {137, 125},
+        {1170, 45},  {1036, 50},  {796, 60}, {459, 80},
     };
     for (auto& e : k) {
         const std::int32_t d = mv_to_decideg(e.mv);
@@ -128,13 +134,17 @@ extern "C" void test_ntc_interpolates_between_points(void) {
 }
 
 extern "C" void test_ntc_is_monotonic_over_the_whole_range(void) {
-    std::int32_t prev = -100000;
+    // Sweeping R upward must produce non-increasing temperature: it is an NTC.
+    std::int32_t prev = 100000;
+    bool         saw  = false;
     for (std::uint32_t r = 400u; r < 200000u; r += 137u) {
         std::int32_t d = 0;
         if (!ntc::resistance_to_decideg(r, d)) continue;
-        TEST_ASSERT_TRUE_MESSAGE(d >= prev, "temperature must fall as R rises");
+        TEST_ASSERT_TRUE_MESSAGE(d <= prev, "temperature must fall as R rises");
         prev = d;
+        saw  = true;
     }
+    TEST_ASSERT_TRUE_MESSAGE(saw, "sweep produced no in-range samples");
 }
 
 // --- out of range -----------------------------------------------------------
@@ -163,4 +173,15 @@ extern "C" void test_ntc_accepts_exact_endpoints(void) {
 extern "C" void test_ntc_pullup_is_6k8(void) {
     TEST_ASSERT_EQUAL_UINT32(6800u, config::NtcPullupOhm);
     TEST_ASSERT_EQUAL_UINT16(3000u, config::NtcVrefMv);
+}
+
+// The hot endpoint is reachable from a resistance, just not from the rounded
+// millivolt column -- keep that distinction explicit so the exclusion above
+// cannot be mistaken for the conversion failing there.
+extern "C" void test_ntc_hot_endpoint_resolves_from_resistance(void) {
+    std::int32_t d = 0;
+    TEST_ASSERT_TRUE(ntc::resistance_to_decideg(326u, d));
+    TEST_ASSERT_EQUAL_INT32(1250, d);
+    TEST_ASSERT_TRUE(ntc::resistance_to_decideg(1228u, d));   // 80 C
+    TEST_ASSERT_EQUAL_INT32(800, d);
 }
