@@ -364,6 +364,10 @@ void test_balance_temp_trust_is_decoupled_from_fault_trust(void);
 void test_balance_operator_toggle_is_reachable_on_this_build(void);
 void test_balance_on_discharges_in_all_states_as_configured(void);
 void test_balance_lockout_still_applies_with_trust_flag(void);
+void test_balance_refuses_with_no_thermal_data(void);
+void test_balance_operator_on_cannot_override_thermal_data_gate(void);
+void test_balance_thermal_data_gate_boundary(void);
+void test_balance_runs_with_partial_thermal_coverage(void);
 
 // test_sil_scenarios.cpp
 void test_sil_nominal_startup_to_run(void);
@@ -756,6 +760,10 @@ int main(void) {
     RUN_TEST(test_balance_operator_toggle_is_reachable_on_this_build);
     RUN_TEST(test_balance_on_discharges_in_all_states_as_configured);
     RUN_TEST(test_balance_lockout_still_applies_with_trust_flag);
+    RUN_TEST(test_balance_refuses_with_no_thermal_data);
+    RUN_TEST(test_balance_operator_on_cannot_override_thermal_data_gate);
+    RUN_TEST(test_balance_thermal_data_gate_boundary);
+    RUN_TEST(test_balance_runs_with_partial_thermal_coverage);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_bms_dropout_in_run);

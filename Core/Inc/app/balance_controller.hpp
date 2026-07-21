@@ -69,6 +69,17 @@ struct Mask {
     // predicates, which suppress the cell-temp FAULTS under the same flag.
     if (!temps_trusted)                        return out;
 
+    // Thermal DATA gate, distinct from the trust gate above. The BalanceTempMax
+    // lockout below is balancing's only heat protection, and it reads
+    // s.max_tempC -- which is INT16_MIN when nothing has converted. INT16_MIN
+    // compares as "wonderfully cool", so without this check a pack with a dead
+    // temperature path balances with no thermal protection at all and no
+    // symptom. Refuse instead.
+    //
+    // Before the NtcNoReading sentinel this could not even be detected:
+    // unconverted channels were seeded to a plausible 25 degC.
+    if (s.valid_temp_channels < config::BalanceMinValidTempCh) return out;
+
     // Bang-bang thermal lockout: no hysteresis because compute_mask
     // is stateless by design (pure function, unit-testable in
     // isolation). At the 1 Hz balance-update cadence and the slow

@@ -13,6 +13,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
 
 namespace {
 
@@ -35,6 +36,9 @@ BmsState make_uniform_state(std::uint16_t base_mV, std::int16_t base_C) {
     s.max_cell_mV = base_mV;
     s.min_tempC   = base_C;
     s.max_tempC   = base_C;
+    // Every slot converted, so the thermal-data gate is satisfied.
+    s.valid_temp_channels =
+        static_cast<std::uint16_t>(config::BmsModuleCount * config::TempsPerModule);
     return s;
 }
 
@@ -323,4 +327,72 @@ extern "C" void test_balance_lockout_still_applies_with_trust_flag(void) {
                                       /*temps_trusted=*/config::BalanceTempsTrusted,
                                       config::BalanceCmd::On)),
         "operator ON must NOT override the BalanceTempMax lockout");
+}
+
+// --- thermal-data gate ------------------------------------------------------
+//
+// These cover the hole that the 25 degC seed hid: balancing's only heat
+// protection is the BalanceTempMax lockout on s.max_tempC, and with no
+// converted channels that field is INT16_MIN -- which compares as extremely
+// cool. Before the NtcNoReading sentinel, unconverted channels reported a
+// plausible 25 degC instead, so this state was not even observable.
+
+extern "C" void test_balance_refuses_with_no_thermal_data(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+    // Nothing converted: sentinels, exactly as recompute_summaries_ leaves them.
+    state.valid_temp_channels = 0;
+    state.max_tempC = std::numeric_limits<std::int16_t>::min();
+    state.min_tempC = std::numeric_limits<std::int16_t>::max();
+
+    TEST_ASSERT_FALSE_MESSAGE(
+        any_set(balance::compute_mask(state, fsm::State::Charge,
+                                      /*temps_trusted=*/true, config::BalanceCmd::On)),
+        "balancing must refuse when no temperature channel has converted");
+}
+
+// An operator ON must not override it either -- the operator overrides the
+// ENABLE decision, never a safety guard.
+extern "C" void test_balance_operator_on_cannot_override_thermal_data_gate(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+    state.valid_temp_channels = 0;
+    state.max_tempC = std::numeric_limits<std::int16_t>::min();
+
+    for (auto st : { fsm::State::Start, fsm::State::Run, fsm::State::Charge }) {
+        TEST_ASSERT_FALSE(any_set(balance::compute_mask(
+            state, st, /*temps_trusted=*/true, config::BalanceCmd::On)));
+    }
+}
+
+// Just below the threshold refuses; at it, balancing proceeds. Pins the
+// boundary so raising the constant after a bench sweep is a deliberate act.
+extern "C" void test_balance_thermal_data_gate_boundary(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+
+    state.valid_temp_channels =
+        static_cast<std::uint16_t>(config::BalanceMinValidTempCh - 1);
+    TEST_ASSERT_FALSE(any_set(balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::On)));
+
+    state.valid_temp_channels = config::BalanceMinValidTempCh;
+    TEST_ASSERT_TRUE(any_set(balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::On)));
+}
+
+// A partially-populated pack still balances: the gate exists to catch a DEAD
+// temperature path, not to demand full instrumentation.
+extern "C" void test_balance_runs_with_partial_thermal_coverage(void) {
+    auto state = make_uniform_state(4100, 30);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+    state.valid_temp_channels =
+        static_cast<std::uint16_t>(config::BalanceMinValidTempCh + 1);
+
+    TEST_ASSERT_TRUE(any_set(balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::On)));
 }

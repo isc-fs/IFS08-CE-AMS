@@ -29,6 +29,12 @@ struct BmsState {
     std::uint16_t max_cell_mV;
     std::int16_t  min_tempC;
     std::int16_t  max_tempC;
+    // Cell-temp channels that produced a VALID conversion this poll, across
+    // online modules. Unpopulated / open / shorted / PEC-failed channels do
+    // NOT count. Consumers that gate on temperature must check this: with a
+    // count of 0, min/max_tempC are sentinels and mean "no thermal data", not
+    // "cold". See NtcNoReading.
+    std::uint16_t valid_temp_channels;
     std::int16_t  avg_tempC;
 
     // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
