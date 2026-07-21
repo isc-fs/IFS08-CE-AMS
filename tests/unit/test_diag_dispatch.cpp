@@ -12,6 +12,7 @@
 #include "unity.h"
 
 #include <cstdint>
+#include <initializer_list>
 
 namespace {
 
