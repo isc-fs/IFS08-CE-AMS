@@ -700,9 +700,10 @@ Values ≤ `0x10` are the bootloader's, reused verbatim.
 
 ### Vehicle-state gate
 
-**Log extraction is permitted only in `Start` — car stopped, tractive system
-off.** Any LOGFS opcode in `Precharge` / `Transition` / `Run` / `Charge` is
-refused with `NACK VEHICLE_STATE (0x15)`, and any open read handle is released.
+**Log extraction is permitted only with the contactors open and the tractive
+system down — states `Start` and `Error`.** Any LOGFS opcode in `Precharge` /
+`Transition` / `Run` / `Charge` is refused with `NACK VEHICLE_STATE (0x15)`,
+and any open read handle is released.
 
 Beyond the obvious (a pull is a multi-minute, bus-heavy operation and should not
 be invited while the car can move) there is a concrete mechanism: the diag TX id
@@ -717,9 +718,12 @@ when the alternative is simply not extracting while the car is live.
 the bus and let a host discover *why* it is being refused rather than facing a
 silent node.
 
-> `Error` also has the contactors open and the TS down, and is where the car
-> sits after the fault whose log an operator most wants (#448). It is currently
-> **not** permitted — pending an explicit decision rather than an inference.
+> `Error` is permitted deliberately: it is the case the feature exists for.
+> #448 is *"grab the log from the run that just faulted"*, and a faulted car
+> sits in `Error` — with `ErrorLatch` sticky across resets, a power-cycled
+> post-fault car boots back into it. It is also the one state where the
+> arbitration hazard cannot bite: `VcuStale` latching `Error` is precisely what
+> the gate protects against, and in `Error` that has already happened.
 
 ### Session
 

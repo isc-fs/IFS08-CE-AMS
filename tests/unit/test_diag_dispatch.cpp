@@ -344,15 +344,39 @@ extern "C" void test_dispatch_releases_handle_when_car_goes_live(void) {
                                   "handle must be released when the car goes live");
 }
 
-// Error has the contactors open and the TS down, and is where the car sits
-// after the fault whose log an operator most wants (#448). It is currently NOT
-// permitted -- pinned so widening it is a deliberate act, not a drift.
-extern "C" void test_dispatch_error_state_currently_refused(void) {
+// Error is PERMITTED, and this is the case the feature exists for: #448 is
+// "grab the log from the run that just faulted", and a faulted car sits in
+// Error. ErrorLatch is sticky across resets, so a power-cycled post-fault car
+// boots back into Error -- refusing it would have made the primary use case
+// reachable only by clearing the latch first.
+extern "C" void test_dispatch_error_state_is_permitted(void) {
     Fixture f;
-    f.state = fsm::State::Start;
-    f.connect();
     f.state = fsm::State::Error;
+    f.connect();
     (void)f.app(diag::OpLogfsList, kHost, 1100u);
-    TEST_ASSERT_EQUAL_HEX8_MESSAGE(diag::NackVehicleState, g_out[2],
-                                   "Error is not currently a permitted state");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, g_out[0],
+                                   "Error must permit extraction -- it is the post-fault case");
+    TEST_ASSERT_EQUAL_INT(1, f.logfs.handled);
+}
+
+// The rule is really "contactors open, TS down". Both permitted states share
+// that; every refused state has the TS live.
+extern "C" void test_dispatch_permitted_states_are_ts_down(void) {
+    for (auto st : { fsm::State::Start, fsm::State::Error }) {
+        Fixture f;
+        f.state = st;
+        f.connect();
+        (void)f.app(diag::OpLogfsFinalize, kHost, 1100u);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x01, g_out[0], "TS-down states must permit LOGFS");
+    }
+    for (auto st : { fsm::State::Precharge, fsm::State::Transition,
+                     fsm::State::Run, fsm::State::Charge }) {
+        Fixture f;
+        f.state = fsm::State::Start;
+        f.connect();
+        f.state = st;
+        (void)f.app(diag::OpLogfsFinalize, kHost, 1100u);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(diag::NackVehicleState, g_out[2],
+                                       "TS-live states must refuse LOGFS");
+    }
 }
