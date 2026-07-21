@@ -5,7 +5,8 @@
 // Consumer loop (LogDrainPeriodMs cadence):
 //   1. ensure mounted   -- non-fatal f_mount; no card -> retry next tick
 //   2. ensure file open -- LOGnnnn.TMP + CSV header
-//   3. drain the ring   -- format each LogRecord -> f_write; rotate at LogFileMaxBytes
+//   3. drain the ring   -- format each LogRecord -> f_write; rotate on
+//                          LogFileMaxBytes OR LogFileMaxMs, sealing .TMP -> .CSV
 //   4. periodic f_sync  -- bound power-cut loss
 //
 // Any I/O error (card pulled mid-write, etc.) tears down to the unmounted
@@ -16,6 +17,7 @@
 
 #include "ams_config.hpp"
 #include "log_record.hpp"
+#include "log_rotation.hpp"
 #include "log_ring.hpp"
 
 #include "cmsis_os2.h"
@@ -103,6 +105,10 @@ bool          g_mounted    = false;
 bool          g_file_open  = false;
 std::uint32_t g_file_idx   = 0;
 std::uint32_t g_file_bytes = 0;
+std::uint32_t g_file_open_ms = 0;   // tick at which the active file was opened
+// Rows in the ACTIVE file. Gates time-based rotation so a stalled producer
+// cannot litter the card with header-only files.
+std::uint32_t g_rows_this_file = 0;
 char          g_rowbuf[ams::log_csv::MaxRowBytes];
 char          g_name[16];
 
@@ -119,16 +125,45 @@ void configure_hsd1() noexcept {
     hsd1.Init.ClockDiv            = 3;   // 132 MHz / (2*3) = 22 MHz
 }
 
-// Lowest LOGnnnn.CSV index not present on the card -> the next free file.
+// Seal an orphaned LOGnnnn.TMP left behind by a previous run.
+//
+// A .TMP is only renamed to .CSV at rotation, and power simply vanishes at
+// shutdown -- so every run that ends before LogFileMaxBytes leaves one behind.
+// An orphan is by definition from a run that is over and never coming back, so
+// promoting it to .CSV is always correct.
+//
+// This is what makes short runs produce a readable log at all, and it is why
+// the index scan below must consider .TMP as well: it previously looked only
+// at .CSV, so the next boot picked the same index and reopened the orphan with
+// FA_CREATE_ALWAYS -- truncating the whole previous run.
+bool seal_orphan(std::uint32_t idx) noexcept {
+    char active[16];
+    char sealed[16];
+    std::snprintf(active, sizeof active, ams::config::LogActiveNameFmt,
+                  static_cast<unsigned long>(idx));
+    std::snprintf(sealed, sizeof sealed, ams::config::LogSealedNameFmt,
+                  static_cast<unsigned long>(idx));
+    if (f_rename(active, sealed) != FR_OK) return false;
+    ++g_log_files;
+    return true;
+}
+
+// Lowest index with neither a sealed .CSV nor an active .TMP. Orphans found on
+// the way are sealed. Policy lives in log_rotation.hpp (host-tested); the
+// callbacks here are the only part that touches FatFs.
+//
 // Probed once per mount; O(existing logs), negligible at the rotation rate.
 std::uint32_t next_free_index() noexcept {
-    FILINFO fno;
-    for (std::uint32_t i = 0; i < 10000u; ++i) {
-        std::snprintf(g_name, sizeof g_name, ams::config::LogSealedNameFmt,
-                      static_cast<unsigned long>(i));
-        if (f_stat(g_name, &fno) != FR_OK) return i;   // not present -> free
-    }
-    return 0;   // card already full of logs -> wrap (best-effort)
+    return ams::log_rotation::next_index(
+        [](std::uint32_t i, bool sealed) noexcept {
+            FILINFO fno;
+            std::snprintf(g_name, sizeof g_name,
+                          sealed ? ams::config::LogSealedNameFmt
+                                 : ams::config::LogActiveNameFmt,
+                          static_cast<unsigned long>(i));
+            return f_stat(g_name, &fno) == FR_OK;
+        },
+        [](std::uint32_t i) noexcept { return seal_orphan(i); });
 }
 
 // Open LOGnnnn.TMP for the current index and write the CSV header.
@@ -142,8 +177,10 @@ bool open_new_file() noexcept {
         f_close(&g_fil);
         return false;
     }
-    g_file_bytes = static_cast<std::uint32_t>(hn);
-    g_file_open  = true;
+    g_file_bytes     = static_cast<std::uint32_t>(hn);
+    g_file_open_ms   = osKernelGetTickCount();
+    g_rows_this_file = 0;
+    g_file_open    = true;
     return true;
 }
 
@@ -227,11 +264,22 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
                 break;
             }
             g_file_bytes += static_cast<std::uint32_t>(n);
+            ++g_rows_this_file;
             ++g_log_rows;
             if (g_file_bytes >= ams::config::LogFileMaxBytes) {
                 seal_file();                   // rotate; next file opens next tick
                 break;
             }
+        }
+
+        // (3b) Time-based rotation. Without this a file is only sealed on the
+        // size cap (~13 min of rows), so an ordinary bench session ends leaving
+        // a .TMP that no tool treats as a finished log. Checked outside the
+        // drain loop so it still fires during a lull in the ring.
+        if (g_file_open &&
+            ams::log_rotation::should_rotate(g_file_bytes, g_rows_this_file,
+                                             now - g_file_open_ms)) {
+            seal_file();                       // next file opens next tick
         }
 
         // (4) Periodic flush -- bounds data lost on a power-cut to one window.
