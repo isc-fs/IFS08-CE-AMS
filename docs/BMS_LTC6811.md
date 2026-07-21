@@ -190,21 +190,31 @@ pull-up to LTC6811 `VREF2` (~3.0 V) forms the divider. Recovering
 temperature is a two-step:
 
 ```
-R_ntc = R_series * V_aux / (V_ref - V_aux)
-1/T   = 1/T0 + (1/B) * ln(R_ntc / R_25)
-T_°C  = T - 273.15
+R_ntc = NtcPullupOhm * V_aux / (NtcVrefMv - V_aux)
+T_degC = interpolate(ntc::ResistanceOhm, R_ntc)
 ```
 
-Placeholder calibration constants (`ams_config.hpp`, all tagged
-`COMMISSION`):
+The part is a **Fenghua CMFB103F3950FANT** (R25 = 10 kΩ, B25/50 = 3950 K,
+B25/85 = 4021 K) and the divider pull-up (R145 / R170) is **6.8 kΩ**.
 
-| Constant | Default | Source |
+Temperature comes from the manufacturer's **R-T table**
+([`ntc_table.hpp`](../Core/Inc/app/ntc_table.hpp), generated from
+[`ntc_rt_table.csv`](ntc_rt_table.csv)) by reverse interpolation — *not* from a
+single-beta Steinhart fit. Beta is only accurate near its fitting interval, and
+this part quotes two different betas depending on the interval.
+
+| Constant | Value | Source |
 |---|---:|---|
-| `NtcBeta` | 3380 K | Murata NCP15XH103J datasheet |
-| `NtcR25` | 10 000 Ω | BMS_LITE BOM |
-| `NtcSeriesR` | 10 000 Ω | BMS_LITE BOM |
+| `NtcPullupOhm` | 6 800 Ω | BMS_LITE R145 / R170 |
 | `NtcVrefMv` | 3000 | LTC6811 VREF2 nominal |
-| `NtcT0Kelvin` | 298.15 | 25 °C |
+| `NtcMinValidC` / `NtcMaxValidC` | −40 / +150 °C | plausibility gate |
+
+> **Historical trap.** This used to be a beta fit with **two** wrong constants
+> that partially cancelled: `NtcBeta = 3380` (a Murata NCP15XH103J, not the
+> fitted part) and `NtcSeriesR = 10000` (not the 6.8 kΩ actually on the board).
+> Net was ~7 °C **cold** at 50 °C, so `BalanceTempMax = 50` tripped at ~56 °C
+> true. Fixing **either constant alone made it worse** — which is why the table
+> and the divider correction had to land together.
 
 `BmsService::update_temperature` rejects readings outside
 `[NtcMinValidC, NtcMaxValidC] = [-40, +150]` °C as

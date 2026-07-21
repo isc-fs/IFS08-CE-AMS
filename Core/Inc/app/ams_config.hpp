@@ -732,23 +732,22 @@ inline constexpr std::uint8_t Adg731ChannelMap[TempsPerLtc] = {
 // 100-uV units). Thermistor resistance is recovered from the
 // observed AUX voltage:
 //
-//   R_ntc = NtcSeriesR * V_aux / (NtcVrefMv - V_aux)
+//   R_ntc = NtcPullupOhm * V_aux / (NtcVrefMv - V_aux)
 //
-// Temperature is then derived via the Beta model:
+// Temperature then comes from the manufacturer R-T table
+// (Core/Inc/app/ntc_table.hpp, generated from docs/ntc_rt_table.csv), NOT a
+// single-beta Steinhart fit.
 //
-//   1/T = 1/T0 + (1/B) * ln(R_ntc / R0)
+// NTC divider + part. Conversion is a TABLE lookup (ntc_table.hpp), not a
+// single-beta Steinhart fit -- see that header for why.
 //
-// with T0 = 298.15 K (25 degC), R0 = NtcR25.
-//
-// Placeholder values match the BMS_LITE BOM (Murata NCP15XH103J,
-// B = 3380 K, R25 = 10 Ohm, series resistor 10 Ohm). Real bench
-// calibration during BMS_LITE bring-up may shift these slightly --
-// procedure in docs/COMMISSIONING.md §3.
-inline constexpr std::uint32_t NtcBeta      = 3380;   // K
-inline constexpr std::uint32_t NtcR25       = 10000;  // Ohm
-inline constexpr std::uint32_t NtcSeriesR   = 10000;  // Ohm
-inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2
-inline constexpr float         NtcT0Kelvin  = 298.15f;
+// NtcPullupOhm was NtcSeriesR = 10000, which was wrong: the divider pull-up on
+// BMS_LITE is R145 / R170 = 6.8 kOhm. Combined with a beta borrowed from a
+// different part (3380 vs the fitted 3950) the two errors partially cancelled
+// and the whole path read ~7 degC COLD at 50 degC. Renamed as well as
+// corrected so a stale "series resistor" mental model cannot survive the fix.
+inline constexpr std::uint32_t NtcPullupOhm = 6800;   // R145 / R170 pull-up to VREF2
+inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2 nominal
 
 // Plausibility window for accepted NTC readings. Anything outside
 // this range is dropped (slot left at its previous value) so an

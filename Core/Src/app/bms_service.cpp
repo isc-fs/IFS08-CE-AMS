@@ -2,11 +2,12 @@
 
 #include "bms_service.hpp"
 
+#include "ntc_table.hpp"
+
 #include "ams_config.hpp"
 #include "ltc6811.hpp"
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -77,32 +78,32 @@ std::int16_t ntc_mV_to_tempC(std::uint16_t v_aux_mV) noexcept {
         return std::numeric_limits<std::int16_t>::min();
     }
 
-    // R_ntc = R_series * V_aux / (V_ref - V_aux)
-    const float v_aux_f = static_cast<float>(v_aux_mV);
-    const float v_ref_f = static_cast<float>(NtcVrefMv);
-    const float r_ntc   = static_cast<float>(NtcSeriesR) * v_aux_f
-                          / (v_ref_f - v_aux_f);
+    // R_ntc = R_pullup * V_aux / (V_ref - V_aux). Integer maths: the divider
+    // is exact here and the table lookup does the rest, so there is no reason
+    // to go through float.
+    const std::uint32_t v_aux = v_aux_mV;
+    const std::uint32_t v_ref = NtcVrefMv;
+    const std::uint32_t r_ntc =
+        (static_cast<std::uint32_t>(NtcPullupOhm) * v_aux) / (v_ref - v_aux);
 
-    // Beta model: 1/T = 1/T0 + (1/B) * ln(R/R25)
-    const float ratio = r_ntc / static_cast<float>(NtcR25);
-    if (!(ratio > 0.0f)) {
+    // Table lookup (ntc_table.hpp) rather than a single-beta Steinhart fit:
+    // beta is only accurate near its fitting interval, and this part's own
+    // datasheet quotes two different betas (3950 at 25/50, 4021 at 25/85).
+    std::int32_t decideg = 0;
+    if (!ntc::resistance_to_decideg(r_ntc, decideg)) {
         return std::numeric_limits<std::int16_t>::min();
     }
-    const float inv_T = (1.0f / NtcT0Kelvin)
-                       + (std::log(ratio) / static_cast<float>(NtcBeta));
-    if (!(inv_T > 0.0f)) {
-        return std::numeric_limits<std::int16_t>::min();
-    }
-    const float t_K = 1.0f / inv_T;
-    const float t_C = t_K - 273.15f;
-
-    if (t_C < static_cast<float>(NtcMinValidC) ||
-        t_C > static_cast<float>(NtcMaxValidC)) {
+    // Plausibility gate in tenths, so an unpopulated channel that decodes to a
+    // physically impossible temperature is dropped rather than reported.
+    if (decideg < static_cast<std::int32_t>(NtcMinValidC) * 10 ||
+        decideg > static_cast<std::int32_t>(NtcMaxValidC) * 10) {
         return std::numeric_limits<std::int16_t>::min();
     }
 
-    // Round to nearest degree.
-    return static_cast<std::int16_t>(t_C + (t_C >= 0.0f ? 0.5f : -0.5f));
+    // Round to nearest degree, away from zero. Integer throughout -- the whole
+    // path is now float-free.
+    const std::int32_t rounded = (decideg + (decideg >= 0 ? 5 : -5)) / 10;
+    return static_cast<std::int16_t>(rounded);
 }
 
 }  // namespace
