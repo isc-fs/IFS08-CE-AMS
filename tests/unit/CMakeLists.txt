@@ -46,6 +46,7 @@ add_executable(ams_unit_tests
     test_can_busoff_recovery.cpp
     test_current_service.cpp
     test_datalogging.cpp
+    test_log_rotation.cpp
     test_dsl_parity.cpp
     test_dsl_dbc_consistency.cpp
     test_ltc6811_decode.cpp

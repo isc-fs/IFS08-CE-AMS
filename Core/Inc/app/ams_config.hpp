@@ -149,7 +149,20 @@ inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
 
 // Seal (rotate) the active file once it reaches this size. Bounded, rotated
 // files make #406 listing / CRC / resume / "only new logs" tractable.
-inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~4 min/file at full per-cell rows)
+// Size cap per file. A real 314-column row is ~1.35 kB (76 B of scalars +
+// 95 cells + 200 temps), so at 4 Hz the card takes ~5.3 KiB/s and 4 MiB is
+// ~13 MINUTES of logging -- not the ~4 min this comment used to claim.
+inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~13 min/file at full per-cell rows)
+
+// Time cap per file. Without this, a file is only sealed to .CSV on the size
+// cap, so any run shorter than ~13 min leaves a .TMP that no tool treats as a
+// finished log (the #406 extractor lists sealed files only). Rotating on time
+// as well means an ordinary bench or test session produces real .CSV files
+// while it runs, instead of one perpetual .TMP.
+//
+// 5 min ~= 1.6 MB per file: short enough that little is at risk if power is
+// cut mid-file, long enough not to litter the card.
+inline constexpr std::uint32_t LogFileMaxMs      = 5u * 60u * 1000u;    // 5 min
 
 // 8.3 names (LFN off in ffconf.h; no RTC wall-clock -- #406/#407). The active
 // file is written as ".TMP" and renamed to ".CSV" on seal, so the extractor
