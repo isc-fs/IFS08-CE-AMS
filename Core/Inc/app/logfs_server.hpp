@@ -32,7 +32,8 @@
 //   LIST  args [cursor:u16]                -> ack [next_cursor:u16][count:u8][entry × count]
 //         entry = {index:u16, size:u32, mtime:u32, name[12]}  (22 B, stride-parsed)
 //         next_cursor == CursorEnd (0xFFFF) means the listing is complete.
-//   OPEN  args [index:u16]                 -> ack [handle:u16][size:u32]
+//   OPEN  args [index:u16]                 -> ack [handle:u16][size:u32][crc32:u32]
+//         crc32 == 0 means "not available -- use LOGFS_CRC", not a zero CRC.
 //   READ  args [handle:u16][offset:u32][len:u16]
 //                                          -> ack [data × n], n <= min(len, 512)
 //         A SHORT read means end-of-file. That is the host's normal
@@ -69,7 +70,7 @@ struct Entry {
 //   bool  card_present()
 //   bool  list_begin(u16 cursor)              // seek; false on FS error
 //   bool  list_next(Entry& out)               // false = no more entries
-//   bool  open(u16 index, u32& size_out)
+//   bool  open(u16 index, u32& size_out, u32& crc_out)   // crc 0 = unknown
 //   int   read(u16 index, u32 off, u8* out, u16 len)   // -1 err, else n
 //   bool  crc32(u16 index, u32& crc_out)
 //   void  close(u16 index)
@@ -199,14 +200,22 @@ private:
         open_handle_ = NoHandle;
 
         std::uint32_t size = 0;
-        if (!be_.open(index, size)) return nack(out, cap, req.opcode, diag::NackFileNotFound);
+        std::uint32_t crc  = 0;
+        if (!be_.open(index, size, crc)) {
+            return nack(out, cap, req.opcode, diag::NackFileNotFound);
+        }
 
         open_index_  = index;
         open_handle_ = next_handle();
 
-        std::uint8_t body[6];
+        // crc32 == 0 means "not available, ask LOGFS_CRC" -- NOT a literal zero
+        // CRC (#452). Sealing writes a sidecar, so it is populated for anything
+        // this firmware wrote; older cards have none and OPEN must not stall to
+        // stream 4 MiB computing one.
+        std::uint8_t body[10];
         diag::put_u16(body, open_handle_);
         diag::put_u32(body + 2, size);
+        diag::put_u32(body + 6, crc);
         return diag::build_ack(out, cap, req.opcode, body, sizeof body);
     }
 

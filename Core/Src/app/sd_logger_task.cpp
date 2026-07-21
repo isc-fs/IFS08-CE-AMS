@@ -328,14 +328,30 @@ public:
         }
     }
 
-    bool open(std::uint16_t index, std::uint32_t& size_out) noexcept {
+    // crc_out is the SEALED CRC from the .CRC sidecar, or 0 meaning "not
+    // available" (a log written before sidecars existed). It is NEVER computed
+    // by streaming here: OPEN must stay O(1), or a 4 MiB file would blow both
+    // the host timeout and BL_ISOTP_TIMEOUT_MS. A host wanting the CRC of a
+    // sidecar-less file asks for it explicitly with LOGFS_CRC.
+    //
+    // The sidecar is read BEFORE rd_ is opened, deliberately. _FS_LOCK counts
+    // files AND directories and SdLoggerTask permanently holds one slot with
+    // the active .TMP, so reading it afterwards would need a third slot -- the
+    // exact FR_TOO_MANY_OPEN_FILES that made the CRC opcode fall back to
+    // streaming every time (#452).
+    bool open(std::uint16_t index, std::uint32_t& size_out,
+              std::uint32_t& crc_out) noexcept {
         close_file();
+        crc_out = 0;
+        if (!read_sidecar(index, crc_out)) crc_out = 0;
+
         char path[16];
         std::snprintf(path, sizeof path, ams::config::LogSealedNameFmt,
                       static_cast<unsigned long>(index));
         if (f_open(&rd_, path, FA_READ) != FR_OK) return false;
-        rd_open_ = true;
-        size_out = static_cast<std::uint32_t>(f_size(&rd_));
+        rd_open_    = true;
+        open_crc_   = crc_out;
+        size_out    = static_cast<std::uint32_t>(f_size(&rd_));
         return true;
     }
 
@@ -352,6 +368,8 @@ public:
     // The fallback exists for cards written before sidecars, and costs seconds
     // on a 4 MiB file -- which is why the sidecar exists.
     bool crc32(std::uint16_t index, std::uint32_t& crc_out) noexcept {
+        // Cached at OPEN, so the common path costs nothing and needs no slot.
+        if (rd_open_ && open_crc_ != 0u) { crc_out = open_crc_; return true; }
         if (read_sidecar(index, crc_out)) return true;
         // No sidecar: a log written before sidecars existed, or one whose
         // sidecar write failed. Stream it. Seconds on a 4 MiB file, which is
@@ -414,6 +432,7 @@ private:
 
     DIR           dir_{};
     FIL           rd_{};
+    std::uint32_t open_crc_ = 0;   // sealed CRC captured at open(), 0 = unknown
     bool          dir_open_ = false;
     bool          rd_open_  = false;
     std::uint16_t skip_     = 0;

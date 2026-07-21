@@ -414,7 +414,12 @@ std::uint8_t            s_diag_msg[ams::isotp::MaxMsg];
 void pump_diag_tx() noexcept {
     if (!s_diag_tx_active) return;
     std::uint8_t f[ams::isotp::FrameLen];
-    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0) {
+    // Leave DiagTxReservedSlots free so the flight telemetry matrix, which is
+    // scheduled AFTER this in the same loop pass and ships non-blocking, always
+    // finds room. Filling to zero silently blacked out telemetry for the whole
+    // multi-minute pull (#449).
+    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) >
+           ams::config::DiagTxReservedSlots) {
         if (!s_diag_tx.next(f)) { s_diag_tx_active = false; return; }
         if (!send_acu(DiagTxId, ams::isotp::FrameLen, f)) {
             // Lost the race for the slot; the frame is already consumed from

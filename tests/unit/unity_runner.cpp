@@ -139,6 +139,8 @@ void test_logfs_no_card_nacks_every_opcode(void);
 void test_logfs_owns_only_its_opcodes(void);
 void test_logfs_unknown_opcode_nacks_unsupported(void);
 void test_logfs_full_file_pull_sequence(void);
+void test_logfs_open_reply_is_ten_bytes(void);
+void test_logfs_open_reports_zero_crc_when_no_sidecar(void);
 
 // test_crc32.cpp
 void test_crc32_check_vector(void);
@@ -168,6 +170,7 @@ void test_dispatch_traffic_keeps_long_transfer_alive(void);
 void test_dispatch_unknown_opcode_nacks(void);
 void test_dispatch_delete_opcode_is_unsupported(void);
 void test_dispatch_session_check_precedes_opcode_check(void);
+void test_dispatch_connect_ack_carries_protocol_version(void);
 
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
@@ -521,6 +524,8 @@ int main(void) {
     RUN_TEST(test_logfs_owns_only_its_opcodes);
     RUN_TEST(test_logfs_unknown_opcode_nacks_unsupported);
     RUN_TEST(test_logfs_full_file_pull_sequence);
+    RUN_TEST(test_logfs_open_reply_is_ten_bytes);
+    RUN_TEST(test_logfs_open_reports_zero_crc_when_no_sidecar);
 
     RUN_TEST(test_crc32_check_vector);
     RUN_TEST(test_crc32_empty_is_zero);
@@ -548,6 +553,7 @@ int main(void) {
     RUN_TEST(test_dispatch_unknown_opcode_nacks);
     RUN_TEST(test_dispatch_delete_opcode_is_unsupported);
     RUN_TEST(test_dispatch_session_check_precedes_opcode_check);
+    RUN_TEST(test_dispatch_connect_ack_carries_protocol_version);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);

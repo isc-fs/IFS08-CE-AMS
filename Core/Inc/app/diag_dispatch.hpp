@@ -52,7 +52,15 @@ public:
             // than one that interrupts a session nobody is driving.
             logfs_.release();
             session_.connect(peer, now_ms);
-            return build_ack(out, cap, req.opcode, nullptr, 0);
+            // Body is [major, minor] of the APP diag protocol (#452): gives the
+            // host version negotiation without another round trip. Distinct
+            // from the bootloader's protocol version -- this describes the
+            // APP_CTRL contract only.
+            {
+                const std::uint8_t ver[2] = { DiagProtoVersionMajor,
+                                              DiagProtoVersionMinor };
+                return build_ack(out, cap, req.opcode, ver, sizeof ver);
+            }
 
         case OpDisconnect:
             logfs_.release();

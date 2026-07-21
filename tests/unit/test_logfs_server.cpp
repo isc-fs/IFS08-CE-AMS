@@ -30,6 +30,7 @@ public:
     bool fail_seek = false;
     bool fail_read = false;
     bool fail_crc  = false;
+    bool sidecar_missing = false;
     int  opens     = 0;
     int  closes    = 0;
 
@@ -51,10 +52,12 @@ public:
         return true;
     }
 
-    bool open(std::uint16_t index, std::uint32_t& size_out) noexcept {
+    bool open(std::uint16_t index, std::uint32_t& size_out,
+              std::uint32_t& crc_out) noexcept {
         if (index >= kFileCount) return false;
         ++opens;
         size_out = size_of(index);
+        crc_out  = sidecar_missing ? 0u : (0xC0FFEE00u + index);
         return true;
     }
 
@@ -111,7 +114,7 @@ std::uint16_t do_open(S& srv, std::uint16_t index) {
     diag::put_u16(a, index);
     Req r(diag::OpLogfsOpen, a, 2);
     const std::uint16_t n = srv.handle(r.req, g_out, sizeof g_out);
-    if (n != 8u || g_out[0] != static_cast<std::uint8_t>(diag::MsgType::Ack)) return 0;
+    if (n != 12u || g_out[0] != static_cast<std::uint8_t>(diag::MsgType::Ack)) return 0;
     return diag::get_u16(g_out + 2);
 }
 
@@ -211,6 +214,7 @@ extern "C" void test_logfs_open_returns_handle_and_size(void) {
     const std::uint16_t h = do_open(srv, 2u);
     TEST_ASSERT_NOT_EQUAL(logfs::NoHandle, h);
     TEST_ASSERT_EQUAL_UINT32(300u, diag::get_u32(g_out + 4));
+    TEST_ASSERT_EQUAL_HEX32(0xC0FFEE02u, diag::get_u32(g_out + 8));  // sealed CRC
     TEST_ASSERT_TRUE(srv.has_open_file());
 }
 
@@ -467,4 +471,40 @@ extern "C" void test_logfs_full_file_pull_sequence(void) {
     }
     TEST_ASSERT_EQUAL_UINT32(500u, off);
     TEST_ASSERT_EQUAL_INT(4, reads);                 // 128*3 + 116
+}
+
+// --- OPEN carries the sealed CRC (#452 wire contract) -----------------------
+
+// The host reads [handle:u16][size:u32][crc32:u32] by fixed offset, so the
+// reply length and field order are wire.
+extern "C" void test_logfs_open_reply_is_ten_bytes(void) {
+    FakeFs fs;
+    logfs::Server<FakeFs> srv(fs);
+    std::uint8_t a[2];
+    diag::put_u16(a, 1u);
+    Req r(diag::OpLogfsOpen, a, 2);
+    const std::uint16_t n = srv.handle(r.req, g_out, sizeof g_out);
+
+    TEST_ASSERT_EQUAL_UINT16(2u + 10u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+    TEST_ASSERT_EQUAL_UINT32(200u, diag::get_u32(g_out + 4));
+    TEST_ASSERT_EQUAL_HEX32(0xC0FFEE01u, diag::get_u32(g_out + 8));
+}
+
+// crc32 == 0 is the agreed "not available, use LOGFS_CRC" marker -- a log
+// written before sidecars existed. OPEN must still succeed and must NOT stall
+// computing one.
+extern "C" void test_logfs_open_reports_zero_crc_when_no_sidecar(void) {
+    FakeFs fs;
+    fs.sidecar_missing = true;
+    logfs::Server<FakeFs> srv(fs);
+    std::uint8_t a[2];
+    diag::put_u16(a, 0u);
+    Req r(diag::OpLogfsOpen, a, 2);
+    const std::uint16_t n = srv.handle(r.req, g_out, sizeof g_out);
+
+    TEST_ASSERT_EQUAL_UINT16(2u + 10u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);                          // still an ACK
+    TEST_ASSERT_EQUAL_UINT32(100u, diag::get_u32(g_out + 4));        // size still valid
+    TEST_ASSERT_EQUAL_HEX32(0u, diag::get_u32(g_out + 8));           // "unknown"
 }

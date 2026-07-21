@@ -97,8 +97,11 @@ extern "C" void test_dispatch_refuses_logfs_without_session(void) {
 extern "C" void test_dispatch_connect_then_logfs_reaches_server(void) {
     Fixture f;
     const std::uint16_t c = f.app(diag::OpConnect, kHost, 1000u);
-    TEST_ASSERT_EQUAL_UINT16(2u, c);
+    // [Ack][opcode][major][minor] -- the version body is wire (#452).
+    TEST_ASSERT_EQUAL_UINT16(4u, c);
     TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+    TEST_ASSERT_EQUAL_UINT8(diag::DiagProtoVersionMajor, g_out[2]);
+    TEST_ASSERT_EQUAL_UINT8(diag::DiagProtoVersionMinor, g_out[3]);
 
     (void)f.app(diag::OpLogfsRead, kHost, 1100u);
     TEST_ASSERT_EQUAL_INT(1, f.logfs.handled);
@@ -136,7 +139,7 @@ extern "C" void test_dispatch_connect_is_idempotent(void) {
     Fixture f;
     f.connect(1000u);
     const std::uint16_t n = f.app(diag::OpConnect, kHost, 1100u);
-    TEST_ASSERT_EQUAL_UINT16(2u, n);
+    TEST_ASSERT_EQUAL_UINT16(4u, n);
     TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
     (void)f.app(diag::OpLogfsList, kHost, 1200u);
     TEST_ASSERT_EQUAL_INT(1, f.logfs.handled);
@@ -227,4 +230,17 @@ extern "C" void test_dispatch_session_check_precedes_opcode_check(void) {
     Fixture f;
     (void)f.app(0x7Fu, kHost, 1000u);
     TEST_ASSERT_EQUAL_HEX8(diag::NackBadSession, g_out[2]);
+}
+
+// The CONNECT ACK carries the APP diag protocol version so the host can
+// negotiate without another round trip (#452). Pinned literally: the host
+// compares majors, so a silent bump would strand it.
+extern "C" void test_dispatch_connect_ack_carries_protocol_version(void) {
+    Fixture f;
+    const std::uint16_t n = f.app(diag::OpConnect, kHost, 1000u);
+    TEST_ASSERT_EQUAL_UINT16(4u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+    TEST_ASSERT_EQUAL_HEX8(diag::OpConnect, g_out[1]);
+    TEST_ASSERT_EQUAL_UINT8(1u, g_out[2]);   // major
+    TEST_ASSERT_EQUAL_UINT8(0u, g_out[3]);   // minor
 }

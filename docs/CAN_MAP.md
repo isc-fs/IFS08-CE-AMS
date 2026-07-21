@@ -646,10 +646,10 @@ there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
 
 | Opcode | Name | Args | ACK payload |
 |---|---|---|---|
-| `0x01` | CONNECT | — | — |
+| `0x01` | CONNECT | — | `major:u8`, `minor:u8` (app diag proto, currently 1.0) |
 | `0x02` | DISCONNECT | — | — |
 | `0x21` | LIST | `cursor:u16` | `next_cursor:u16`, `count:u8`, `entry × count` |
-| `0x22` | OPEN | `index:u16` | `handle:u16`, `size:u32` |
+| `0x22` | OPEN | `index:u16` | `handle:u16`, `size:u32`, `crc32:u32` |
 | `0x23` | READ | `handle:u16`, `offset:u32`, `len:u16` | `data` (≤ 512 B) |
 | `0x24` | CRC | `handle:u16` | `crc32:u32` |
 | `0x25` | CLOSE | `handle:u16` | — |
@@ -658,12 +658,18 @@ there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
 name[12]}` — so a listing is parsed by stride. `mtime` is the packed FAT
 stamp (`fdate << 16 | ftime`). `next_cursor == 0xFFFF` ends the listing.
 
+On OPEN, **`crc32 == 0` means "not available — use `LOGFS_CRC`"**, not a literal
+zero CRC. Every file this firmware seals gets a `.CRC` sidecar, but cards
+written before sidecars existed have none, and OPEN must never block streaming
+4 MiB to compute one.
+
 **A short READ means end-of-file**, and is an ACK, not an error — that is
 the host's normal termination signal. An oversized `len` is clamped to 512
 rather than rejected.
 
 **v1 is read-only.** There is no DELETE (`0x26` is deliberately
-unimplemented and NACKs as unsupported): an extraction tool that can also
+unimplemented and NACKs as unsupported; `0x27` is reserved for a
+finalize-current-log opcode, not yet a committed contract): an extraction tool that can also
 erase logs is the wrong tool to hand a pit crew.
 
 ### NACK codes

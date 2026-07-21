@@ -60,6 +60,13 @@ enum class MsgType : std::uint8_t {
 // Session opcodes deliberately reuse the bootloader's numbering so the host's
 // existing session handling works unchanged; they are still scoped to APP_CTRL.
 // ---------------------------------------------------------------------------
+// Version of the APP_CTRL diag contract, returned in the CONNECT ACK body as
+// [major, minor] (#452). Distinct from the bootloader's protocol version: this
+// describes the application's opcode/payload shapes only. Bump MAJOR on any
+// incompatible wire change, MINOR on a backward-compatible addition.
+inline constexpr std::uint8_t DiagProtoVersionMajor = 1u;
+inline constexpr std::uint8_t DiagProtoVersionMinor = 0u;
+
 inline constexpr std::uint8_t OpConnect    = 0x01u;
 inline constexpr std::uint8_t OpDisconnect = 0x02u;
 
@@ -70,6 +77,9 @@ inline constexpr std::uint8_t OpLogfsRead  = 0x23u;
 inline constexpr std::uint8_t OpLogfsCrc   = 0x24u;
 inline constexpr std::uint8_t OpLogfsClose = 0x25u;
 // 0x26 LOGFS_DELETE intentionally NOT implemented -- v1 is read-only.
+// 0x27 reserved for a finalize-current-log opcode (#448/#452): flush, close,
+// rotate, seal, ACK the sealed index. Reserved here so nothing else claims the
+// number; NOT a committed contract until signed off.
 
 // ---------------------------------------------------------------------------
 // NACK codes.
