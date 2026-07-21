@@ -82,6 +82,16 @@ public:
 
     void close(std::uint16_t) noexcept { ++closes; }
 
+    // Active-file seal. nothing_to_seal models "no rows written yet".
+    bool nothing_to_seal = false;
+    int  finalizes       = 0;
+    bool finalize(std::uint16_t& sealed_index_out) noexcept {
+        ++finalizes;
+        if (nothing_to_seal) return false;
+        sealed_index_out = kFileCount;   // the newly sealed index
+        return true;
+    }
+
     static std::uint32_t size_of(std::uint16_t i) noexcept {
         return 100u * (static_cast<std::uint32_t>(i) + 1u);   // 100,200,300,400,500
     }
@@ -507,4 +517,75 @@ extern "C" void test_logfs_open_reports_zero_crc_when_no_sidecar(void) {
     TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);                          // still an ACK
     TEST_ASSERT_EQUAL_UINT32(100u, diag::get_u32(g_out + 4));        // size still valid
     TEST_ASSERT_EQUAL_HEX32(0u, diag::get_u32(g_out + 8));           // "unknown"
+}
+
+// --- FINALIZE (0x27) --------------------------------------------------------
+
+// The point of the opcode: seal the run that just happened and hand back its
+// index, so the host can go straight to OPEN instead of waiting for rotation.
+extern "C" void test_logfs_finalize_seals_and_returns_index(void) {
+    FakeFs fs;
+    logfs::Server<FakeFs> srv(fs);
+    Req r(diag::OpLogfsFinalize, nullptr, 0);
+    const std::uint16_t n = srv.handle(r.req, g_out, sizeof g_out);
+
+    TEST_ASSERT_EQUAL_UINT16(4u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+    TEST_ASSERT_EQUAL_HEX8(diag::OpLogfsFinalize, g_out[1]);
+    TEST_ASSERT_EQUAL_UINT16(FakeFs::kFileCount, diag::get_u16(g_out + 2));
+    TEST_ASSERT_EQUAL_INT(1, fs.finalizes);
+}
+
+// An eager operator must not be able to litter the card with header-only files.
+extern "C" void test_logfs_finalize_refuses_when_nothing_written(void) {
+    FakeFs fs;
+    fs.nothing_to_seal = true;
+    logfs::Server<FakeFs> srv(fs);
+    Req r(diag::OpLogfsFinalize, nullptr, 0);
+    (void)srv.handle(r.req, g_out, sizeof g_out);
+
+    TEST_ASSERT_EQUAL_HEX8(0x02, g_out[0]);
+    TEST_ASSERT_EQUAL_HEX8(diag::NackFileNotFound, g_out[2]);
+}
+
+// Finalizing changes the file set, so any handle the host is holding must be
+// dropped rather than left pointing at something ambiguous.
+extern "C" void test_logfs_finalize_releases_open_handle(void) {
+    FakeFs fs;
+    logfs::Server<FakeFs> srv(fs);
+    const std::uint16_t h = do_open(srv, 0u);
+    TEST_ASSERT_NOT_EQUAL(logfs::NoHandle, h);
+
+    Req r(diag::OpLogfsFinalize, nullptr, 0);
+    (void)srv.handle(r.req, g_out, sizeof g_out);
+    TEST_ASSERT_FALSE(srv.has_open_file());
+    TEST_ASSERT_EQUAL_INT(1, fs.closes);
+
+    // ...and the stale handle is refused, not silently honoured.
+    std::uint8_t a[8];
+    diag::put_u16(a, h);
+    diag::put_u32(a + 2, 0u);
+    diag::put_u16(a + 6, 16u);
+    Req rd(diag::OpLogfsRead, a, 8);
+    (void)srv.handle(rd.req, g_out, sizeof g_out);
+    TEST_ASSERT_EQUAL_HEX8(diag::NackBadHandle, g_out[2]);
+}
+
+// No card is still its own answer -- finalize must not reach the backend.
+extern "C" void test_logfs_finalize_no_card_nacks(void) {
+    FakeFs fs;
+    fs.present = false;
+    logfs::Server<FakeFs> srv(fs);
+    Req r(diag::OpLogfsFinalize, nullptr, 0);
+    (void)srv.handle(r.req, g_out, sizeof g_out);
+    TEST_ASSERT_EQUAL_HEX8(diag::NackNoSdCard, g_out[2]);
+    TEST_ASSERT_EQUAL_INT(0, fs.finalizes);
+}
+
+// 0x27 is ours; 0x26 (DELETE) must STILL be refused -- v1 stays read-only, and
+// the ownership test is enumerated so a widening range cannot swallow it.
+extern "C" void test_logfs_owns_finalize_but_not_delete(void) {
+    TEST_ASSERT_TRUE(logfs::Server<FakeFs>::owns(diag::OpLogfsFinalize));
+    TEST_ASSERT_FALSE(logfs::Server<FakeFs>::owns(0x26u));
+    TEST_ASSERT_FALSE(logfs::Server<FakeFs>::owns(0x28u));
 }

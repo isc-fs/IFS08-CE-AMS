@@ -77,9 +77,14 @@ inline constexpr std::uint8_t OpLogfsRead  = 0x23u;
 inline constexpr std::uint8_t OpLogfsCrc   = 0x24u;
 inline constexpr std::uint8_t OpLogfsClose = 0x25u;
 // 0x26 LOGFS_DELETE intentionally NOT implemented -- v1 is read-only.
-// 0x27 reserved for a finalize-current-log opcode (#448/#452): flush, close,
-// rotate, seal, ACK the sealed index. Reserved here so nothing else claims the
-// number; NOT a committed contract until signed off.
+
+// Seal the ACTIVE log so the run that just happened becomes retrievable
+// (#448/#452). Without it the operator's only route to "give me the log from
+// the run that just faulted" was to wait for rotation or power-cycle the node,
+// and the power-cycle route used to DESTROY the file (fixed in #442, but the
+// wait remained). Flush -> close -> rename to .CSV -> write the CRC sidecar;
+// the ACK carries the sealed index so the host can go straight to OPEN.
+inline constexpr std::uint8_t OpLogfsFinalize = 0x27u;
 
 // ---------------------------------------------------------------------------
 // NACK codes.
