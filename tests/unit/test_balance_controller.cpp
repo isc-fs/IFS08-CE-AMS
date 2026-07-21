@@ -230,3 +230,84 @@ extern "C" void test_balance_threshold_strict_inequality(void) {
     TEST_ASSERT_FALSE(mask.cell[4][18]);
     TEST_ASSERT_FALSE(any_set(mask));
 }
+
+// ---------------------------------------------------------------------------
+// Config-invariant tripwires.
+//
+// These exist because of a silent failure that survived two releases: the
+// balancing gate was wired to config::TempFaultsTrusted, which is false while
+// the ADG731 mux path is unvalidated. The WarioCharger 0x103 toggle was
+// received and accepted, VehicleService resolved it to On -- and compute_mask
+// then returned an all-zero mask forever. Balancing could not run in ANY FSM
+// state on ANY image, and nothing failed to say so.
+// ---------------------------------------------------------------------------
+
+// The two trust flags answer different questions and must stay independent
+// knobs: "trust these temps enough to open the contactors" is not the same as
+// "trust them enough to let balancing run". Re-coupling them silently kills the
+// operator toggle again.
+extern "C" void test_balance_temp_trust_is_decoupled_from_fault_trust(void) {
+    // Balancing must be reachable while the cell-temp FAULTS stay disarmed --
+    // that combination is the whole point of the split.
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+
+    const auto mask = balance::compute_mask(
+        state, fsm::State::Charge,
+        /*temps_trusted=*/config::BalanceTempsTrusted, config::BalanceCmd::On);
+
+    if (config::BalanceTempsTrusted) {
+        TEST_ASSERT_TRUE_MESSAGE(
+            any_set(mask),
+            "BalanceTempsTrusted is true but balancing still produced no mask");
+    } else {
+        TEST_ASSERT_FALSE_MESSAGE(
+            any_set(mask),
+            "BalanceTempsTrusted is false so balancing must be fully inert");
+    }
+}
+
+// Loud reminder rather than a silent dead toggle: if this build cannot balance,
+// say so here instead of leaving an operator to discover it on a charger.
+extern "C" void test_balance_operator_toggle_is_reachable_on_this_build(void) {
+    TEST_ASSERT_TRUE_MESSAGE(
+        config::BalanceTempsTrusted,
+        "BalanceTempsTrusted is false -- the WarioCharger 0x103 toggle cannot "
+        "discharge in ANY FSM state on this build. If that is intended, update "
+        "this test and docs/CAN_MAP.md 0x103 together so it stays deliberate.");
+}
+
+// The operator switch must reach discharge in every FSM state on the build as
+// configured -- not just with a hand-passed temps_trusted=true.
+extern "C" void test_balance_on_discharges_in_all_states_as_configured(void) {
+    if (!config::BalanceTempsTrusted) return;   // covered by the tripwire above
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+
+    for (auto st : { fsm::State::Start, fsm::State::Precharge,
+                     fsm::State::Transition, fsm::State::Run,
+                     fsm::State::Charge, fsm::State::Error }) {
+        TEST_ASSERT_TRUE_MESSAGE(
+            balance::compute_mask(state, st,
+                                  /*temps_trusted=*/config::BalanceTempsTrusted,
+                                  config::BalanceCmd::On).cell[0][0],
+            "operator ON must discharge in every FSM state");
+    }
+}
+
+// The thermal lockout is balancing's only heat protection and must survive the
+// trust split -- it applies to the operator override too.
+extern "C" void test_balance_lockout_still_applies_with_trust_flag(void) {
+    auto state = make_uniform_state(4100, config::BalanceTempMax + 1);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+    state.max_tempC     = config::BalanceTempMax + 1;
+
+    TEST_ASSERT_FALSE_MESSAGE(
+        any_set(balance::compute_mask(state, fsm::State::Charge,
+                                      /*temps_trusted=*/config::BalanceTempsTrusted,
+                                      config::BalanceCmd::On)),
+        "operator ON must NOT override the BalanceTempMax lockout");
+}

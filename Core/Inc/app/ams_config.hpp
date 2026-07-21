@@ -469,6 +469,41 @@ inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-
 inline constexpr std::uint16_t BalanceDeltaMv     = 50;    // mV above min to start balancing
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
 inline constexpr std::uint8_t  BalanceMaxActive   = 4;     // cells per module discharging at once
+
+// Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
+//
+// Deliberately separate from TempFaultsTrusted, which arms the FSM cell-temp
+// FAULTS. The two ask different questions:
+//
+//   TempFaultsTrusted   -- "do we trust these temps enough to OPEN THE
+//                          CONTACTORS on them?"  Answer: not yet. A misread
+//                          from the unvalidated ADG731 mux path would trip the
+//                          car for no reason, so the faults stay disarmed.
+//   BalanceTempsTrusted -- "do we trust these temps enough to let balancing
+//                          run?"  Balancing's only thermal protection is the
+//                          BalanceTempMax lockout, which reads the same path.
+//
+// Coupling them meant the WarioCharger balance toggle (0x103) was accepted and
+// then produced an all-zero mask forever -- balancing could never run, in any
+// FSM state, on any image. Splitting them lets the operator switch work while
+// temp FAULTS stay disarmed.
+//
+// ---------------------------------------------------------------------------
+// RESIDUAL RISK -- read before changing this to true on a car.
+// ---------------------------------------------------------------------------
+// With this true and TempFaultsTrusted false, passive balancing dissipates into
+// the cells while its ONLY thermal guard reads a path we have not validated.
+// Unpopulated NTC slots read a plausible-looking ~25 C, so a genuinely hot cell
+// whose sensor is mis-routed by the mux would NOT raise max_tempC and would NOT
+// trip the lockout. The mitigations are: the 5 s operator dead-man
+// (BalanceOverrideFreshMs) bounds an unattended run, only BalanceMaxActive
+// cells per module bleed at once, and only cells >BalanceDeltaMv above the pack
+// minimum are selected at all.
+//
+// Balance with cell temperatures observed by some other means until the ADG731
+// mux path is validated end-to-end and TempFaultsTrusted itself goes true --
+// at which point this flag becomes redundant and should be deleted.
+inline constexpr bool          BalanceTempsTrusted = true;   // COMMISSION -- see residual risk above
 inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollVoltMs = 250 ms
 
 // LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",

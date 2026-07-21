@@ -255,6 +255,10 @@ void test_balance_op_off_forces_no_discharge(void);
 void test_balance_op_on_runs_outside_charge(void);
 void test_balance_op_on_respects_temp_trust(void);
 void test_balance_threshold_strict_inequality(void);
+void test_balance_temp_trust_is_decoupled_from_fault_trust(void);
+void test_balance_operator_toggle_is_reachable_on_this_build(void);
+void test_balance_on_discharges_in_all_states_as_configured(void);
+void test_balance_lockout_still_applies_with_trust_flag(void);
 
 // test_sil_scenarios.cpp
 void test_sil_nominal_startup_to_run(void);
@@ -529,6 +533,10 @@ int main(void) {
     RUN_TEST(test_balance_op_on_runs_outside_charge);
     RUN_TEST(test_balance_op_on_respects_temp_trust);
     RUN_TEST(test_balance_threshold_strict_inequality);
+    RUN_TEST(test_balance_temp_trust_is_decoupled_from_fault_trust);
+    RUN_TEST(test_balance_operator_toggle_is_reachable_on_this_build);
+    RUN_TEST(test_balance_on_discharges_in_all_states_as_configured);
+    RUN_TEST(test_balance_lockout_still_applies_with_trust_flag);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_bms_dropout_in_run);

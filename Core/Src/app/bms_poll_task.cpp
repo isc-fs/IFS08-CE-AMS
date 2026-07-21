@@ -282,12 +282,14 @@ void maybe_run_balance_update() {
     const auto       veh    = VehicleService::instance().snapshot();
     const auto       op_cmd = VehicleService::effective_balance_cmd(
         osKernelGetTickCount(), veh.last_balance_override_tick, veh.balance_cmd);
-    // temps_trusted = config::TempFaultsTrusted: while the ADG731 temp path is
-    // unvalidated on flight, balancing's max_tempC thermal lockout can't be
-    // trusted, so compute_mask returns an all-zero (no-discharge) mask. Flips
-    // on with the same flag that arms the cell-temp faults.
+    // Balancing gates on config::BalanceTempsTrusted, NOT TempFaultsTrusted:
+    // "trust these temps enough to balance on" is a different question from
+    // "trust them enough to open the contactors on". Coupling the two meant the
+    // WarioCharger 0x103 toggle was accepted and then produced an all-zero mask
+    // forever. See the residual-risk note on BalanceTempsTrusted -- the
+    // BalanceTempMax lockout inside compute_mask still applies.
     const auto       mask   = balance::compute_mask(
-        state, fsm_curr, /*temps_trusted=*/config::TempFaultsTrusted, op_cmd);
+        state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
