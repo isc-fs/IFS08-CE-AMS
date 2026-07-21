@@ -314,11 +314,17 @@ void encode_aux_segment(std::uint8_t* out, std::uint16_t aux1_mV) {
     out[7] = static_cast<std::uint8_t>(pec & 0xFFu);
 }
 
-// Per the Beta model with R25 = 10 k, R_series = 10 k, V_ref = 3 V,
-// B = 3380 K: room temperature (25 degC) gives R = 10 k, voltage
-// divider midpoint -> V_aux = 1.5 V = 1500 mV. Use that as the
-// reference test input where we want exactly 25 degC out.
-constexpr std::uint16_t Aux25C_mV = 1500;
+// Divider voltage at 25 degC, from the manufacturer R-T table
+// (docs/ntc_rt_table.csv): R25 = 10 kOhm against the 6.8 kOhm pull-up
+// (NtcPullupOhm) on VREF2 = 3000 mV gives
+//     V = 3000 * 10000 / (6800 + 10000) = 1786 mV.
+//
+// This was 1500 mV, justified as "the voltage divider midpoint". That is only
+// 25 degC if the pull-up EQUALS R25 -- it was 10 k in config at the time, but
+// the board fits 6.8 k, so the test encoded the same wrong constant as the
+// firmware and the pair agreed with each other while both disagreed with the
+// hardware. 1500 mV is really ~34 degC on the real divider.
+constexpr std::uint16_t Aux25C_mV = 1786;
 
 }  // namespace
 
@@ -345,8 +351,9 @@ extern "C" void test_bms_temp_sweep_room_temp_on_one_channel(void) {
 
 extern "C" void test_bms_temp_hotter_voltage_gives_hotter_reading(void) {
     // NTC resistance falls as it heats. A hotter NTC -> lower R_ntc
-    // -> lower V_aux. Feed a voltage below the 25 degC midpoint and
+    // -> lower V_aux. Feed a voltage below the 25 degC point (1786 mV) and
     // check we read a temperature strictly greater than 25 degC.
+    // 900 mV is ~56 degC on the real divider.
     std::uint8_t reply[AuxReplyBytes];
     for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
         encode_aux_segment(reply + ic * Seg, /* mV */ 900u);
