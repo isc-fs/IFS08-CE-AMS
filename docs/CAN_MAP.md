@@ -653,6 +653,7 @@ there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
 | `0x23` | READ | `handle:u16`, `offset:u32`, `len:u16` | `data` (≤ 512 B) |
 | `0x24` | CRC | `handle:u16` | `crc32:u32` |
 | `0x25` | CLOSE | `handle:u16` | — |
+| `0x27` | FINALIZE | — | `index:u16` |
 
 `entry` is a fixed **22 bytes** — `{index:u16, size:u32, mtime:u32,
 name[12]}` — so a listing is parsed by stride. `mtime` is the packed FAT
@@ -667,9 +668,16 @@ written before sidecars existed have none, and OPEN must never block streaming
 the host's normal termination signal. An oversized `len` is clamped to 512
 rather than rejected.
 
+**`FINALIZE` (`0x27`)** seals the *active* log — flush, close, rename to
+`.CSV`, write the CRC sidecar — and returns the sealed index, so the run that
+just happened is immediately listable and openable rather than waiting on
+rotation. It NACKs `FILE_NOT_FOUND` when there is nothing to seal (no active
+file, or no rows written yet), so an eager operator cannot fill the card with
+header-only files. Any open read handle is released, since the file set has
+changed.
+
 **v1 is read-only.** There is no DELETE (`0x26` is deliberately
-unimplemented and NACKs as unsupported; `0x27` is reserved for a
-finalize-current-log opcode, not yet a committed contract): an extraction tool that can also
+unimplemented and NACKs as unsupported): an extraction tool that can also
 erase logs is the wrong tool to hand a pit crew.
 
 ### NACK codes

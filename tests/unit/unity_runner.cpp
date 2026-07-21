@@ -141,6 +141,11 @@ void test_logfs_unknown_opcode_nacks_unsupported(void);
 void test_logfs_full_file_pull_sequence(void);
 void test_logfs_open_reply_is_ten_bytes(void);
 void test_logfs_open_reports_zero_crc_when_no_sidecar(void);
+void test_logfs_finalize_seals_and_returns_index(void);
+void test_logfs_finalize_refuses_when_nothing_written(void);
+void test_logfs_finalize_releases_open_handle(void);
+void test_logfs_finalize_no_card_nacks(void);
+void test_logfs_owns_finalize_but_not_delete(void);
 
 // test_crc32.cpp
 void test_crc32_check_vector(void);
@@ -526,6 +531,11 @@ int main(void) {
     RUN_TEST(test_logfs_full_file_pull_sequence);
     RUN_TEST(test_logfs_open_reply_is_ten_bytes);
     RUN_TEST(test_logfs_open_reports_zero_crc_when_no_sidecar);
+    RUN_TEST(test_logfs_finalize_seals_and_returns_index);
+    RUN_TEST(test_logfs_finalize_refuses_when_nothing_written);
+    RUN_TEST(test_logfs_finalize_releases_open_handle);
+    RUN_TEST(test_logfs_finalize_no_card_nacks);
+    RUN_TEST(test_logfs_owns_finalize_but_not_delete);
 
     RUN_TEST(test_crc32_check_vector);
     RUN_TEST(test_crc32_empty_is_zero);

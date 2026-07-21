@@ -382,6 +382,20 @@ public:
 
     void close(std::uint16_t) noexcept { close_file(); }
 
+    // Seal the ACTIVE log (#448/#452) so the run that just happened becomes
+    // listable without waiting for rotation. Safe to call seal_file() directly:
+    // the LOGFS server is serviced ON this thread, between drains, so nothing
+    // else is touching g_fil.
+    //
+    // Refused when the file has no rows yet -- sealing a header-only file would
+    // hand the operator an empty log and burn an index.
+    bool finalize(std::uint16_t& sealed_index_out) noexcept {
+        if (!g_mounted || !g_file_open || g_rows_this_file == 0) return false;
+        sealed_index_out = static_cast<std::uint16_t>(g_file_idx);
+        seal_file();   // f_close -> rename .TMP->.CSV -> CRC sidecar -> ++idx
+        return true;
+    }
+
 private:
     // "LOGnnnn.CSV" -> nnnn. Rejects .TMP (still growing) and .CRC (sidecar).
     static bool parse_sealed_name(const char* n, std::uint16_t& idx) noexcept {

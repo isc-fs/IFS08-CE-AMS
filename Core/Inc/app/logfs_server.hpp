@@ -40,6 +40,10 @@
 //         termination signal, so a truncated reply is not an error.
 //   CRC   args [handle:u16]                -> ack [crc32:u32]  (whole file)
 //   CLOSE args [handle:u16]                -> ack []
+//   FINAL args []                          -> ack [index:u16]  (0x27)
+//         Seals the ACTIVE log and returns its index, so the run that just
+//         happened is immediately listable/openable. NACKs FILE_NOT_FOUND when
+//         there is nothing to seal.
 
 #pragma once
 
@@ -74,6 +78,7 @@ struct Entry {
 //   int   read(u16 index, u32 off, u8* out, u16 len)   // -1 err, else n
 //   bool  crc32(u16 index, u32& crc_out)
 //   void  close(u16 index)
+//   bool  finalize(u16& sealed_index_out)   // false = nothing to seal
 //
 // list_* is an ITERATOR rather than a fill-my-array call on purpose: the
 // server runs on SdLoggerTask, whose stack is 4 KiB and shared with FatFs. A
@@ -90,9 +95,19 @@ class Server {
 public:
     explicit Server(Backend& be) noexcept : be_(be) {}
 
-    // True if `opcode` is one this server owns.
+    // True if `opcode` is one this server owns. Enumerated rather than a range
+    // so 0x26 (DELETE, deliberately unimplemented -- v1 is read-only) keeps
+    // falling through to NACK UNSUPPORTED as the range grows around it.
     [[nodiscard]] static bool owns(std::uint8_t opcode) noexcept {
-        return opcode >= diag::OpLogfsList && opcode <= diag::OpLogfsClose;
+        switch (opcode) {
+        case diag::OpLogfsList:
+        case diag::OpLogfsOpen:
+        case diag::OpLogfsRead:
+        case diag::OpLogfsCrc:
+        case diag::OpLogfsClose:
+        case diag::OpLogfsFinalize: return true;
+        default:                    return false;
+        }
     }
 
     // Handle a request. Returns the reply length written to `out` (always > 0:
@@ -111,6 +126,7 @@ public:
             case diag::OpLogfsRead:  return do_read(req, out, cap);
             case diag::OpLogfsCrc:   return do_crc(req, out, cap);
             case diag::OpLogfsClose: return do_close(req, out, cap);
+            case diag::OpLogfsFinalize: return do_finalize(req, out, cap);
             default:                 return nack(out, cap, req.opcode, diag::NackUnsupported);
         }
     }
@@ -266,6 +282,26 @@ private:
         be_.close(open_index_);
         open_handle_ = NoHandle;
         return diag::build_ack(out, cap, req.opcode, nullptr, 0u);
+    }
+
+    // Seal the active log and report its index. Takes no arguments: there is
+    // only ever one active file, and naming it would invite a host racing a
+    // rotation. Refused when nothing has been written, so an eager operator
+    // cannot litter the card with header-only files.
+    std::uint16_t do_finalize(const diag::Request& req, std::uint8_t* out,
+                              std::uint16_t cap) noexcept {
+        // Any open read handle points into the file set we are about to change;
+        // drop it rather than leave the host holding something ambiguous.
+        release();
+
+        std::uint16_t sealed = 0;
+        if (!be_.finalize(sealed)) {
+            // Nothing to seal: no active file, or no rows in it yet.
+            return nack(out, cap, req.opcode, diag::NackFileNotFound);
+        }
+        std::uint8_t body[2];
+        diag::put_u16(body, sealed);
+        return diag::build_ack(out, cap, req.opcode, body, sizeof body);
     }
 
     // Monotonic, skipping 0. Wrapping is harmless: only one handle is ever
