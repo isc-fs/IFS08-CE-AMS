@@ -534,6 +534,31 @@ inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module d
 inline constexpr bool          BalanceTempsTrusted = true;   // COMMISSION -- see residual risk above
 inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollVoltMs = 250 ms
 
+// Settle time after clearing the DCC bits and before starting a cell-voltage
+// conversion, so no bleed current is flowing while the cells are measured.
+//
+// WHY THIS EXISTS -- the ADCV DCP=0 bit is not sufficient on this board.
+// DCP=0 does make the LTC6811 suspend its own S-pin switch for the conversion,
+// but BMS_LITE does not bleed through that switch: each cell drives an EXTERNAL
+// TSM2323 PMOS whose gate sits behind R167 (10k) / C32 (10n), tau ~100 us. The
+// conversion starts immediately on ADCV, and the first channels convert in a
+// few hundred microseconds -- the same order as the gate turn-off -- so the
+// earliest cells can be sampled while current is still flowing.
+//
+// WHY IT MATTERS: the bleed current does not return through the sense path on
+// the board (on-board sensing is close to Kelvin), it returns through the
+// harness. 179 mA across a plausible 50-200 mOhm of tap/connector/fuse
+// impedance is 9-36 mV, and it has OPPOSITE SIGN on the bled cell (reads low)
+// and its neighbours (read HIGH, because the shared tap node moves). Against
+// BalanceDeltaMv = 50 mV that is a first-order corruption of the very signal
+// balancing selects on -- observed on the bench as neighbouring cells reading
+// high whenever balancing is active.
+//
+// 2 ms is ~20x the gate RC and covers the LTC input-filter settle, at a cost of
+// under 1 % of balancing duty. Cheap insurance on a C/101 balancer where a
+// wrong selection wastes hours.
+inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
+
 // LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",
 // 7 Hz first stage) is the canonical choice for race-pack
 // metrology: ~2.3 ms to convert all 12 cell channels with the

@@ -397,6 +397,40 @@ latch discharge beyond one balancing window.
 chain, packs each IC's DCC into `ltc6811::pack_cfga_payload`, ships
 the frame with `Bus::write_chain_command(CmdWRCFGA, ...)`.
 
+### Quiescing before a measurement
+
+The mask is recomputed at 1 Hz but **persists on the chain** between
+writes, so an ordinary 250 ms voltage poll would otherwise measure while
+cells are bleeding. `run_voltage_poll` therefore clears DCC, waits
+`BalanceQuiesceMs`, measures, and restores the cached mask:
+
+```
+WRCFGA(DCC=0) → wait 2 ms → ADCV → RDCVA..D → WRCFGA(cached mask)
+```
+
+**`ADCV`'s `DCP=0` bit is not sufficient on this board.** It suspends the
+LTC's own S-pin switch, but BMS_LITE bleeds through an *external*
+TSM2323 PMOS whose gate sits behind ~10 kΩ / 10 nF (τ ≈ 100 µs). The
+conversion begins immediately on `ADCV` and the first channels finish in
+a few hundred microseconds, so the earliest cells can be sampled while
+current is still flowing.
+
+That matters because the bleed current does **not** return through the
+board's sense path (on-board sensing is close to Kelvin) — it returns
+through the harness. ~179 mA across a plausible 50–200 mΩ of
+tap/connector/fuse impedance is **9–36 mV**, with *opposite sign* on the
+bled cell (reads low) and both its neighbours (read **high**, because the
+shared tap node moves). Against `BalanceDeltaMv = 50 mV` that corrupts
+the very signal the selection rule uses, and it was observed on the bench
+as neighbouring cells reading high whenever balancing was active.
+
+Cost is under 1 % of balancing duty. `g_balance_quiesce_count` (pit-diag)
+climbs at the poll rate while balancing is discharging, so the bench can
+confirm the sequence is running from CAN alone. After a `recover_chain`
+the cached mask is dropped rather than restored — a slept chain has reset
+CFGR, and re-asserting pre-sleep bits the controller has not re-derived
+would be wrong.
+
 ### Policy summary
 
 `balance::compute_mask(state, fsm_state)` returns an all-zero mask
