@@ -468,7 +468,35 @@ inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-
 // accumulator box.
 inline constexpr std::uint16_t BalanceDeltaMv     = 50;    // mV above min to start balancing
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
-inline constexpr std::uint8_t  BalanceMaxActive   = 4;     // cells per module discharging at once
+// Simultaneous dischargers per module. This is a BOARD DISSIPATION limit, not
+// a policy one -- compute_mask is stateless and re-picks the top-N by excess
+// every second, so every imbalanced cell is bled either way. Raising this makes
+// balancing proportionally FASTER; it does not unlock cells that were stuck.
+//
+// BMS_LITE per-cell bleed path (schematic, per-cell sheet): external TSM2323
+// PMOS switching R71 || R72 = 47R || 47R = 23.5 R, both 2512.
+//
+//   cell V   current   W per cell   W per 2512 (1 W part)
+//   4.2 V    179 mA    0.75 W       0.37 W   (~37 % of rating)
+//   4.0 V    170 mA    0.68 W       0.34 W
+//   3.7 V    157 mA    0.58 W       0.29 W
+//
+// Board / pack totals at 4.2 V (worst case):
+//
+//   MaxActive    per module    all 5 modules
+//        4        3.0 W          15 W        (previous)
+//        8        6.0 W          30 W        <-- here
+//       19       14.3 W          71 W        (all cells; not attempted)
+//
+// The resistors are the comfortable part -- the constraint is heat out of the
+// accumulator box. 8 was chosen to double balancing throughput while keeping
+// each 2512 near a third of its rating.
+//
+// COMMISSION: still not measured. Watch cell/board temperature on a bench run
+// at this setting before trusting it in a sealed box, and note that the
+// BalanceTempMax lockout that would catch an overheating board reads the same
+// unvalidated NTC path (see BalanceTempsTrusted).
+inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module discharging at once
 
 // Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
 //

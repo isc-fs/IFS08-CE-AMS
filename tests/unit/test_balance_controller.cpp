@@ -92,23 +92,36 @@ extern "C" void test_balance_single_hot_cell_in_charge(void) {
 //    largest excess.
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_caps_at_max_active_per_module(void) {
+    // Written relative to config::BalanceMaxActive so a change to the
+    // dissipation budget does not silently invalidate the test. Put TWO more
+    // cells over the threshold than the cap allows, with strictly increasing
+    // excess, so the cap is genuinely exercised and the selection is ordered.
+    constexpr std::uint8_t kCap  = config::BalanceMaxActive;
+    constexpr std::uint8_t kOver = static_cast<std::uint8_t>(kCap + 2);
+    static_assert(kOver <= config::CellsPerModule,
+                  "test needs more cells per module than the cap + 2");
+
     auto state = make_uniform_state(4100, 25);
-    // Cells 0..5 of module 1 sit at +60..+110 mV (all > delta = 50).
-    // Top-4 by excess should be cells 5, 4, 3, 2 (excess 110, 100, 90, 80).
-    for (std::uint8_t c = 0; c < 6; ++c) {
+    for (std::uint8_t c = 0; c < kOver; ++c) {
         state.cell_mV[1][c] = static_cast<std::uint16_t>(4100 + 60 + 10 * c);
     }
-    state.max_cell_mV = state.cell_mV[1][5];
+    state.max_cell_mV = state.cell_mV[1][kOver - 1];
 
-    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto);
-    TEST_ASSERT_EQUAL_UINT8(config::BalanceMaxActive,
-                            count_set_in_module(mask, 1));
-    TEST_ASSERT_TRUE(mask.cell[1][5]);
-    TEST_ASSERT_TRUE(mask.cell[1][4]);
-    TEST_ASSERT_TRUE(mask.cell[1][3]);
-    TEST_ASSERT_TRUE(mask.cell[1][2]);
-    TEST_ASSERT_FALSE(mask.cell[1][1]);
-    TEST_ASSERT_FALSE(mask.cell[1][0]);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true,
+                                            config::BalanceCmd::Auto);
+
+    // Exactly the cap discharges, never more -- this is the board dissipation
+    // limit, so an off-by-one here is watts on a real board.
+    TEST_ASSERT_EQUAL_UINT8(kCap, count_set_in_module(mask, 1));
+
+    // ...and they are the HIGHEST cells: the top kCap by excess are set, the
+    // two lowest over-threshold cells are not.
+    for (std::uint8_t c = static_cast<std::uint8_t>(kOver - kCap); c < kOver; ++c) {
+        TEST_ASSERT_TRUE_MESSAGE(mask.cell[1][c], "a top-excess cell was not selected");
+    }
+    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][0], "lowest over-threshold cell must not balance");
+    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][1], "2nd-lowest over-threshold cell must not balance");
 }
 
 // ---------------------------------------------------------------------------
