@@ -36,15 +36,21 @@ BmsService::BmsService() {
     state_.min_tempC   = std::numeric_limits<std::int16_t>::max();
     state_.max_tempC   = std::numeric_limits<std::int16_t>::min();
 
-    // Default cell_tempC to 25 degC so unpopulated NTC slots can't
-    // dominate the max/min on the first temp poll. Real readings
-    // overwrite each slot once update_temperature commits a valid
-    // Steinhart/Beta conversion.
+    // Seed every cell-temp slot to the NO-READING sentinel, not to a plausible
+    // temperature. This used to be 25 degC "so unpopulated NTC slots can't
+    // dominate the max/min" -- but that inverted the problem: an unpopulated or
+    // mis-muxed channel then reported comfortable room temperature forever, so
+    // max_tempC looked healthy whatever the pack did, and every threshold built
+    // on it was defeated no matter how accurate the conversion was.
+    //
+    // recompute_summaries_ now skips sentinels and counts what remains in
+    // valid_temp_channels, so "no data" is visible instead of disguised.
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
-            state_.cell_tempC[m][t] = 25;
+            state_.cell_tempC[m][t] = config::NtcNoReading;
         }
     }
+    state_.valid_temp_channels = 0;
 
     // Default cell_mV to a nominal-healthy sentinel for the SAME reason
     // (#279): before the first poll, or for a module that the boot
@@ -137,8 +143,12 @@ void BmsService::recompute_summaries_() noexcept {
             }
             for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
                 const std::int16_t tc = state_.cell_tempC[m][t];
-                if (tc < min_t)    min_t    = tc;
-                if (tc > max_t)    max_t    = tc;
+                // A channel that has never converted is NOT data. Folding the
+                // sentinel into min/avg would drag them to nonsense, and
+                // folding a fabricated value into max would hide a hot pack.
+                if (tc == config::NtcNoReading) continue;
+                if (tc < min_t)     min_t     = tc;
+                if (tc > max_t)     max_t     = tc;
                 if (tc > mod_max_t) mod_max_t = tc;
                 sum_t += tc;
                 ++n_t;
@@ -160,6 +170,11 @@ void BmsService::recompute_summaries_() noexcept {
     state_.min_tempC       = min_t;
     state_.max_tempC       = max_t;
     state_.avg_tempC       = (n_t > 0) ? static_cast<std::int16_t>(sum_t / static_cast<std::int32_t>(n_t)) : 0;
+    // Count of channels that actually produced data. With 0, min/max_tempC are
+    // the untouched sentinels (INT16_MAX / INT16_MIN) and callers must treat
+    // them as "unknown" -- notably balancing, whose only thermal guard is
+    // max_tempC and which would otherwise read INT16_MIN as "nice and cool".
+    state_.valid_temp_channels = static_cast<std::uint16_t>(n_t);
 }
 
 bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,

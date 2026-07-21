@@ -753,6 +753,29 @@ inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2 nominal
 // this range is dropped (slot left at its previous value) so an
 // unpopulated mux channel can't drive max_tempC into orbit and trip
 // safety::ForceError on a clean pack.
+// Sentinel stored in cell_tempC for a channel that has never produced a valid
+// reading -- unpopulated mux input, open/shorted NTC, or a PEC-failed poll.
+//
+// This used to be a seeded 25 degC, which is the single most dangerous value it
+// could have been: unpopulated channels read as comfortably room temperature,
+// so max_tempC looked healthy no matter what the pack was doing, and every
+// threshold built on it was defeated regardless of how accurate the conversion
+// was. A sentinel makes "no data" distinguishable from "cool".
+inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
+
+// Minimum valid cell-temp channels before balancing may run at all.
+//
+// COMMISSION: deliberately LOW. Its job today is to catch a completely dead
+// temperature path, not to guarantee coverage -- and setting it above the
+// number of channels actually populated would silently disable balancing,
+// which is the exact failure mode this whole area keeps producing. The board
+// has up to 200 channels (5 modules x 40) but how many are fitted is unknown
+// and the LTC_2 half may not be wired at all.
+//
+// RAISE THIS to the measured populated count once a bench sweep establishes it
+// (M1). BmsState::valid_temp_channels is what to read.
+inline constexpr std::uint16_t BalanceMinValidTempCh = 5;
+
 inline constexpr std::int16_t NtcMinValidC = -40;
 inline constexpr std::int16_t NtcMaxValidC = 150;
 
