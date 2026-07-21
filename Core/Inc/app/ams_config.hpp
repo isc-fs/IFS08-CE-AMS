@@ -149,7 +149,20 @@ inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
 
 // Seal (rotate) the active file once it reaches this size. Bounded, rotated
 // files make #406 listing / CRC / resume / "only new logs" tractable.
-inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~4 min/file at full per-cell rows)
+// Size cap per file. A real 314-column row is ~1.35 kB (76 B of scalars +
+// 95 cells + 200 temps), so at 4 Hz the card takes ~5.3 KiB/s and 4 MiB is
+// ~13 MINUTES of logging -- not the ~4 min this comment used to claim.
+inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~13 min/file at full per-cell rows)
+
+// Time cap per file. Without this, a file is only sealed to .CSV on the size
+// cap, so any run shorter than ~13 min leaves a .TMP that no tool treats as a
+// finished log (the #406 extractor lists sealed files only). Rotating on time
+// as well means an ordinary bench or test session produces real .CSV files
+// while it runs, instead of one perpetual .TMP.
+//
+// 5 min ~= 1.6 MB per file: short enough that little is at risk if power is
+// cut mid-file, long enough not to litter the card.
+inline constexpr std::uint32_t LogFileMaxMs      = 5u * 60u * 1000u;    // 5 min
 
 // 8.3 names (LFN off in ffconf.h; no RTC wall-clock -- #406/#407). The active
 // file is written as ".TMP" and renamed to ".CSV" on seal, so the extractor
@@ -458,8 +471,96 @@ inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-
 // accumulator box.
 inline constexpr std::uint16_t BalanceDeltaMv     = 50;    // mV above min to start balancing
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
-inline constexpr std::uint8_t  BalanceMaxActive   = 4;     // cells per module discharging at once
+// Simultaneous dischargers per module. This is a BOARD DISSIPATION limit, not
+// a policy one -- compute_mask is stateless and re-picks the top-N by excess
+// every second, so every imbalanced cell is bled either way. Raising this makes
+// balancing proportionally FASTER; it does not unlock cells that were stuck.
+//
+// BMS_LITE per-cell bleed path (schematic, per-cell sheet): external TSM2323
+// PMOS switching R71 || R72 = 47R || 47R = 23.5 R, both 2512.
+//
+//   cell V   current   W per cell   W per 2512 (1 W part)
+//   4.2 V    179 mA    0.75 W       0.37 W   (~37 % of rating)
+//   4.0 V    170 mA    0.68 W       0.34 W
+//   3.7 V    157 mA    0.58 W       0.29 W
+//
+// Board / pack totals at 4.2 V (worst case):
+//
+//   MaxActive    per module    all 5 modules
+//        4        3.0 W          15 W        (previous)
+//        8        6.0 W          30 W        <-- here
+//       19       14.3 W          71 W        (all cells; not attempted)
+//
+// The resistors are the comfortable part -- the constraint is heat out of the
+// accumulator box. 8 was chosen to double balancing throughput while keeping
+// each 2512 near a third of its rating.
+//
+// COMMISSION: still not measured. Watch cell/board temperature on a bench run
+// at this setting before trusting it in a sealed box, and note that the
+// BalanceTempMax lockout that would catch an overheating board reads the same
+// unvalidated NTC path (see BalanceTempsTrusted).
+inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module discharging at once
+
+// Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
+//
+// Deliberately separate from TempFaultsTrusted, which arms the FSM cell-temp
+// FAULTS. The two ask different questions:
+//
+//   TempFaultsTrusted   -- "do we trust these temps enough to OPEN THE
+//                          CONTACTORS on them?"  Answer: not yet. A misread
+//                          from the unvalidated ADG731 mux path would trip the
+//                          car for no reason, so the faults stay disarmed.
+//   BalanceTempsTrusted -- "do we trust these temps enough to let balancing
+//                          run?"  Balancing's only thermal protection is the
+//                          BalanceTempMax lockout, which reads the same path.
+//
+// Coupling them meant the WarioCharger balance toggle (0x103) was accepted and
+// then produced an all-zero mask forever -- balancing could never run, in any
+// FSM state, on any image. Splitting them lets the operator switch work while
+// temp FAULTS stay disarmed.
+//
+// ---------------------------------------------------------------------------
+// RESIDUAL RISK -- read before changing this to true on a car.
+// ---------------------------------------------------------------------------
+// With this true and TempFaultsTrusted false, passive balancing dissipates into
+// the cells while its ONLY thermal guard reads a path we have not validated.
+// Unpopulated NTC slots read a plausible-looking ~25 C, so a genuinely hot cell
+// whose sensor is mis-routed by the mux would NOT raise max_tempC and would NOT
+// trip the lockout. The mitigations are: the 5 s operator dead-man
+// (BalanceOverrideFreshMs) bounds an unattended run, only BalanceMaxActive
+// cells per module bleed at once, and only cells >BalanceDeltaMv above the pack
+// minimum are selected at all.
+//
+// Balance with cell temperatures observed by some other means until the ADG731
+// mux path is validated end-to-end and TempFaultsTrusted itself goes true --
+// at which point this flag becomes redundant and should be deleted.
+inline constexpr bool          BalanceTempsTrusted = true;   // COMMISSION -- see residual risk above
 inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollVoltMs = 250 ms
+
+// Settle time after clearing the DCC bits and before starting a cell-voltage
+// conversion, so no bleed current is flowing while the cells are measured.
+//
+// WHY THIS EXISTS -- the ADCV DCP=0 bit is not sufficient on this board.
+// DCP=0 does make the LTC6811 suspend its own S-pin switch for the conversion,
+// but BMS_LITE does not bleed through that switch: each cell drives an EXTERNAL
+// TSM2323 PMOS whose gate sits behind R167 (10k) / C32 (10n), tau ~100 us. The
+// conversion starts immediately on ADCV, and the first channels convert in a
+// few hundred microseconds -- the same order as the gate turn-off -- so the
+// earliest cells can be sampled while current is still flowing.
+//
+// WHY IT MATTERS: the bleed current does not return through the sense path on
+// the board (on-board sensing is close to Kelvin), it returns through the
+// harness. 179 mA across a plausible 50-200 mOhm of tap/connector/fuse
+// impedance is 9-36 mV, and it has OPPOSITE SIGN on the bled cell (reads low)
+// and its neighbours (read HIGH, because the shared tap node moves). Against
+// BalanceDeltaMv = 50 mV that is a first-order corruption of the very signal
+// balancing selects on -- observed on the bench as neighbouring cells reading
+// high whenever balancing is active.
+//
+// 2 ms is ~20x the gate RC and covers the LTC input-filter settle, at a cost of
+// under 1 % of balancing duty. Cheap insurance on a C/101 balancer where a
+// wrong selection wastes hours.
+inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
 
 // LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",
 // 7 Hz first stage) is the canonical choice for race-pack

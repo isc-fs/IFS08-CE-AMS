@@ -78,6 +78,12 @@ extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
 // pit-diag stream can surface it.
 extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
 
+// Times the voltage poll cleared the DCC bits before measuring (#balance
+// measurement integrity). Climbs at the poll rate whenever balancing is
+// actually discharging, and stays flat when it is not -- so the bench can
+// confirm from CAN alone that the quiesce is running.
+extern "C" volatile std::uint32_t g_balance_quiesce_count = 0;
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -85,6 +91,14 @@ namespace {
 volatile std::uint32_t g_balance_cycles_total  = 0;
 volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
+
+// Last CFGA payload actually written to the chain, and whether it asserted any
+// DCC bit. The mask is only recomputed every BalanceUpdatePolls (1 Hz) but
+// PERSISTS on the chain between writes, so quiescing for a measurement has to
+// put it back afterwards -- otherwise clearing it every 250 ms poll would
+// destroy three quarters of the balancing duty.
+std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
+bool         s_balance_active = false;
 
 // ---------------------------------------------------------------------------
 // Chain-sleep recovery.
@@ -125,6 +139,11 @@ void recover_chain() noexcept {
 
     auto& bus = ltc6820::Bus::default_instance();
     bus.wakeup();
+
+    // The chain slept, so CFGR is back at defaults and nothing is discharging.
+    // Drop the balance cache: restoring a pre-sleep mask would re-assert bits
+    // the controller has not re-derived since. The next 1 Hz update recomputes.
+    s_balance_active = false;
 
     const auto   cfg = ltc6811::pack_cfga_payload(/*dcc_bits=*/0u);
     std::uint8_t per_ic[config::LtcChainLength][6];
@@ -230,6 +249,47 @@ VoltAttempt attempt_voltage_poll() {
     return { any_fresh, clean };
 }
 
+// Turn every discharge FET off and wait for it to actually happen, so the
+// cell-voltage conversion is not corrupted by bleed current in the harness.
+// See config::BalanceQuiesceMs for why ADCV's DCP=0 alone is not enough here.
+//
+// Returns true if it quiesced (and therefore owes a restore). A no-op when
+// nothing is balancing, which is the common case outside Charge.
+bool quiesce_balancing() noexcept {
+    using namespace ams;
+    if (!s_balance_active) return false;
+
+    std::uint8_t zeros[config::LtcChainLength][6];
+    const auto   off = ltc6811::pack_cfga_payload(0u);
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) zeros[i][k] = off[k];
+    }
+
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, zeros)) {
+        // Could not prove discharge is off. Measure anyway -- stale cell data
+        // starves the safety predicates, which is worse than a noisy read --
+        // but do not claim a restore is owed, and count the error.
+        ++g_ltc_spi_err_count;
+        return false;
+    }
+    ++g_balance_quiesce_count;
+    osDelay(config::BalanceQuiesceMs);
+    return true;
+}
+
+// Put the balancing mask back after a measurement.
+void restore_balancing() noexcept {
+    using namespace ams;
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, s_last_cfga)) {
+        // Balancing stays off until the next 1 Hz update rewrites it. Harmless:
+        // the policy is stateless, so it simply resumes next cycle.
+        ++g_ltc_spi_err_count;
+        s_balance_active = false;
+    }
+}
+
 void run_voltage_poll() {
     using namespace ams;
 
@@ -238,6 +298,13 @@ void run_voltage_poll() {
     if (s_consecutive_poll_failures >= RecoverAfterFailedPolls) {
         recover_chain();
     }
+
+    // 0b. Stop bleeding before measuring. The bleed return path is the harness,
+    //     not the board, so current flowing during a conversion shifts the
+    //     shared tap node: the bled cell reads low and BOTH its neighbours read
+    //     high, by 9-36 mV against a 50 mV selection threshold. Left in, the
+    //     selection rule chases its own artifact.
+    const bool quiesced = quiesce_balancing();
 
     // 1. Attempt the read up to (1 + VoltPollRetries) times. Each attempt
     //    digests whatever ICs are PEC-clean (refreshing those modules), so a
@@ -253,6 +320,11 @@ void run_voltage_poll() {
         any_fresh = any_fresh || r.any_module_fresh;
         if (r.clean_ltcs >= config::LtcChainLength) break;  // whole chain clean
     }
+
+    // 2. Resume bleeding. Done here rather than waiting for the 1 Hz balance
+    //    update, which would otherwise leave discharge off for three polls out
+    //    of four.
+    if (quiesced) restore_balancing();
 
     if (any_fresh) {
         s_consecutive_poll_failures = 0;
@@ -282,12 +354,14 @@ void maybe_run_balance_update() {
     const auto       veh    = VehicleService::instance().snapshot();
     const auto       op_cmd = VehicleService::effective_balance_cmd(
         osKernelGetTickCount(), veh.last_balance_override_tick, veh.balance_cmd);
-    // temps_trusted = config::TempFaultsTrusted: while the ADG731 temp path is
-    // unvalidated on flight, balancing's max_tempC thermal lockout can't be
-    // trusted, so compute_mask returns an all-zero (no-discharge) mask. Flips
-    // on with the same flag that arms the cell-temp faults.
+    // Balancing gates on config::BalanceTempsTrusted, NOT TempFaultsTrusted:
+    // "trust these temps enough to balance on" is a different question from
+    // "trust them enough to open the contactors on". Coupling the two meant the
+    // WarioCharger 0x103 toggle was accepted and then produced an all-zero mask
+    // forever. See the residual-risk note on BalanceTempsTrusted -- the
+    // BalanceTempMax lockout inside compute_mask still applies.
     const auto       mask   = balance::compute_mask(
-        state, fsm_curr, /*temps_trusted=*/config::TempFaultsTrusted, op_cmd);
+        state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
@@ -332,6 +406,14 @@ void maybe_run_balance_update() {
         ++g_ltc_spi_err_count;
         return;
     }
+
+    // Cache what is now on the chain so the next voltage poll can quiesce and
+    // restore it. s_balance_active gates that work away entirely when nothing
+    // is discharging, which is every cycle outside Charge.
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) s_last_cfga[i][k] = per_ic[i][k];
+    }
+    s_balance_active = any_dcc;
 
     ++g_balance_cycles_total;
     if (any_dcc) ++g_balance_cycles_active;

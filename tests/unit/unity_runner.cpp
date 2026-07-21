@@ -352,6 +352,10 @@ void test_balance_op_off_forces_no_discharge(void);
 void test_balance_op_on_runs_outside_charge(void);
 void test_balance_op_on_respects_temp_trust(void);
 void test_balance_threshold_strict_inequality(void);
+void test_balance_temp_trust_is_decoupled_from_fault_trust(void);
+void test_balance_operator_toggle_is_reachable_on_this_build(void);
+void test_balance_on_discharges_in_all_states_as_configured(void);
+void test_balance_lockout_still_applies_with_trust_flag(void);
 
 // test_sil_scenarios.cpp
 void test_sil_nominal_startup_to_run(void);
@@ -372,6 +376,21 @@ void test_logcsv_row_matches_header_columns(void);
 void test_logcsv_row_scalar_values(void);
 void test_logcsv_row_cell_and_temp_values(void);
 void test_logcsv_truncation_returns_zero(void);
+
+// test_log_rotation.cpp
+void test_logrot_empty_card_starts_at_zero(void);
+void test_logrot_skips_sealed_files(void);
+void test_logrot_orphan_tmp_does_not_reuse_index(void);
+void test_logrot_orphan_tmp_is_sealed(void);
+void test_logrot_seals_every_orphan_on_the_way(void);
+void test_logrot_failed_seal_still_consumes_index(void);
+void test_logrot_tmp_beside_existing_csv_is_not_sealed(void);
+void test_logrot_successive_runs_advance(void);
+void test_logrot_rotates_on_size(void);
+void test_logrot_rotates_on_time(void);
+void test_logrot_time_rotation_needs_rows(void);
+void test_logrot_fresh_file_does_not_rotate(void);
+void test_logrot_time_cap_is_shorter_than_size_cap(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -702,6 +721,10 @@ int main(void) {
     RUN_TEST(test_balance_op_on_runs_outside_charge);
     RUN_TEST(test_balance_op_on_respects_temp_trust);
     RUN_TEST(test_balance_threshold_strict_inequality);
+    RUN_TEST(test_balance_temp_trust_is_decoupled_from_fault_trust);
+    RUN_TEST(test_balance_operator_toggle_is_reachable_on_this_build);
+    RUN_TEST(test_balance_on_discharges_in_all_states_as_configured);
+    RUN_TEST(test_balance_lockout_still_applies_with_trust_flag);
 
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_bms_dropout_in_run);
@@ -720,6 +743,20 @@ int main(void) {
     RUN_TEST(test_logcsv_row_scalar_values);
     RUN_TEST(test_logcsv_row_cell_and_temp_values);
     RUN_TEST(test_logcsv_truncation_returns_zero);
+
+    RUN_TEST(test_logrot_empty_card_starts_at_zero);
+    RUN_TEST(test_logrot_skips_sealed_files);
+    RUN_TEST(test_logrot_orphan_tmp_does_not_reuse_index);
+    RUN_TEST(test_logrot_orphan_tmp_is_sealed);
+    RUN_TEST(test_logrot_seals_every_orphan_on_the_way);
+    RUN_TEST(test_logrot_failed_seal_still_consumes_index);
+    RUN_TEST(test_logrot_tmp_beside_existing_csv_is_not_sealed);
+    RUN_TEST(test_logrot_successive_runs_advance);
+    RUN_TEST(test_logrot_rotates_on_size);
+    RUN_TEST(test_logrot_rotates_on_time);
+    RUN_TEST(test_logrot_time_rotation_needs_rows);
+    RUN_TEST(test_logrot_fresh_file_does_not_rotate);
+    RUN_TEST(test_logrot_time_cap_is_shorter_than_size_cap);
 
     return UNITY_END();
 }

@@ -5,7 +5,8 @@
 // Consumer loop (LogDrainPeriodMs cadence):
 //   1. ensure mounted   -- non-fatal f_mount; no card -> retry next tick
 //   2. ensure file open -- LOGnnnn.TMP + CSV header
-//   3. drain the ring   -- format each LogRecord -> f_write; rotate at LogFileMaxBytes
+//   3. drain the ring   -- format each LogRecord -> f_write; rotate on
+//                          LogFileMaxBytes OR LogFileMaxMs, sealing .TMP -> .CSV
 //   4. periodic f_sync  -- bound power-cut loss
 //
 // Any I/O error (card pulled mid-write, etc.) tears down to the unmounted
@@ -19,6 +20,7 @@
 #include "diag_dispatch.hpp"
 #include "diag_proto.hpp"
 #include "log_record.hpp"
+#include "log_rotation.hpp"
 #include "log_ring.hpp"
 #include "logfs_server.hpp"
 
@@ -112,6 +114,10 @@ std::uint32_t g_file_bytes = 0;
 // the #406 CRC opcode can answer without re-reading a 4 MiB file off the card
 // (which would stall this task, and with it the drain, for seconds).
 std::uint32_t g_file_crc   = ams::crc::Crc32Init;
+std::uint32_t g_file_open_ms = 0;   // tick at which the active file was opened
+// Rows in the ACTIVE file. Gates time-based rotation so a stalled producer
+// cannot litter the card with header-only files.
+std::uint32_t g_rows_this_file = 0;
 char          g_rowbuf[ams::log_csv::MaxRowBytes];
 char          g_name[16];
 
@@ -128,32 +134,30 @@ void configure_hsd1() noexcept {
     hsd1.Init.ClockDiv            = 3;   // 132 MHz / (2*3) = 22 MHz
 }
 
-// Lowest LOGnnnn.CSV index not present on the card -> the next free file.
-// Probed once per mount; O(existing logs), negligible at the rotation rate.
-std::uint32_t next_free_index() noexcept {
-    FILINFO fno;
-    for (std::uint32_t i = 0; i < 10000u; ++i) {
-        std::snprintf(g_name, sizeof g_name, ams::config::LogSealedNameFmt,
-                      static_cast<unsigned long>(i));
-        if (f_stat(g_name, &fno) != FR_OK) return i;   // not present -> free
-    }
-    return 0;   // card already full of logs -> wrap (best-effort)
-}
+// Stream a whole file and return its CRC-32. Used for files whose running CRC
+// was lost (an orphan .TMP from a run that ended with the power), and as the
+// CRC opcode's fallback for cards written before sidecars existed.
+//
+// Reuses g_rowbuf as the read buffer -- it is only live inside the drain loop,
+// and both callers run outside it (mount, and a diag request serviced between
+// drains). Costs one full read of the file: seconds on 4 MiB, which is exactly
+// why the sidecar exists.
+bool compute_file_crc(const char* path, std::uint32_t& crc_out) noexcept {
+    FIL f;
+    if (f_open(&f, path, FA_READ) != FR_OK) return false;
 
-// Open LOGnnnn.TMP for the current index and write the CSV header.
-bool open_new_file() noexcept {
-    std::snprintf(g_name, sizeof g_name, ams::config::LogActiveNameFmt,
-                  static_cast<unsigned long>(g_file_idx));
-    if (f_open(&g_fil, g_name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
-    const std::size_t hn = ams::log_csv::build_header(g_rowbuf, sizeof g_rowbuf);
-    UINT bw = 0;
-    if (hn == 0 || f_write(&g_fil, g_rowbuf, hn, &bw) != FR_OK || bw != hn) {
-        f_close(&g_fil);
-        return false;
+    std::uint32_t running = ams::crc::Crc32Init;
+    for (;;) {
+        UINT br = 0;
+        if (f_read(&f, g_rowbuf, sizeof g_rowbuf, &br) != FR_OK) {
+            (void)f_close(&f);
+            return false;
+        }
+        if (br == 0) break;
+        running = ams::crc::update(running, g_rowbuf, br);
     }
-    g_file_bytes = static_cast<std::uint32_t>(hn);
-    g_file_crc   = ams::crc::update(ams::crc::Crc32Init, g_rowbuf, hn);
-    g_file_open  = true;
+    (void)f_close(&f);
+    crc_out = ams::crc::finalize(running);
     return true;
 }
 
@@ -178,6 +182,76 @@ void write_crc_sidecar(std::uint32_t idx, std::uint32_t crc) noexcept {
     (void)f_write(&f, text, static_cast<UINT>(tn), &bw);
     (void)f_close(&f);
 }
+
+// Seal an orphaned LOGnnnn.TMP left behind by a previous run.
+//
+// A .TMP is only renamed to .CSV at rotation, and power simply vanishes at
+// shutdown -- so every run that ends before LogFileMaxBytes leaves one behind.
+// An orphan is by definition from a run that is over and never coming back, so
+// promoting it to .CSV is always correct.
+//
+// This is what makes short runs produce a readable log at all, and it is why
+// the index scan below must consider .TMP as well: it previously looked only
+// at .CSV, so the next boot picked the same index and reopened the orphan with
+// FA_CREATE_ALWAYS -- truncating the whole previous run.
+bool seal_orphan(std::uint32_t idx) noexcept {
+    char active[16];
+    char sealed[16];
+    std::snprintf(active, sizeof active, ams::config::LogActiveNameFmt,
+                  static_cast<unsigned long>(idx));
+    std::snprintf(sealed, sizeof sealed, ams::config::LogSealedNameFmt,
+                  static_cast<unsigned long>(idx));
+    if (f_rename(active, sealed) != FR_OK) return false;
+
+    // The running CRC died with the power that ended that run, so it has to be
+    // recomputed by streaming the file. Done ONCE, at mount, for a file that is
+    // now sealed and immutable -- unlike the CRC opcode's fallback, which would
+    // otherwise re-stream the same 4 MiB on every host request. Best-effort: a
+    // missing sidecar costs the host time, never correctness.
+    std::uint32_t crc = 0;
+    if (compute_file_crc(sealed, crc)) write_crc_sidecar(idx, crc);
+
+    ++g_log_files;
+    return true;
+}
+
+// Lowest index with neither a sealed .CSV nor an active .TMP. Orphans found on
+// the way are sealed. Policy lives in log_rotation.hpp (host-tested); the
+// callbacks here are the only part that touches FatFs.
+//
+// Probed once per mount; O(existing logs), negligible at the rotation rate.
+std::uint32_t next_free_index() noexcept {
+    return ams::log_rotation::next_index(
+        [](std::uint32_t i, bool sealed) noexcept {
+            FILINFO fno;
+            std::snprintf(g_name, sizeof g_name,
+                          sealed ? ams::config::LogSealedNameFmt
+                                 : ams::config::LogActiveNameFmt,
+                          static_cast<unsigned long>(i));
+            return f_stat(g_name, &fno) == FR_OK;
+        },
+        [](std::uint32_t i) noexcept { return seal_orphan(i); });
+}
+
+// Open LOGnnnn.TMP for the current index and write the CSV header.
+bool open_new_file() noexcept {
+    std::snprintf(g_name, sizeof g_name, ams::config::LogActiveNameFmt,
+                  static_cast<unsigned long>(g_file_idx));
+    if (f_open(&g_fil, g_name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
+    const std::size_t hn = ams::log_csv::build_header(g_rowbuf, sizeof g_rowbuf);
+    UINT bw = 0;
+    if (hn == 0 || f_write(&g_fil, g_rowbuf, hn, &bw) != FR_OK || bw != hn) {
+        f_close(&g_fil);
+        return false;
+    }
+    g_file_bytes     = static_cast<std::uint32_t>(hn);
+    g_file_crc       = ams::crc::update(ams::crc::Crc32Init, g_rowbuf, hn);
+    g_file_open_ms   = osKernelGetTickCount();
+    g_rows_this_file = 0;
+    g_file_open      = true;
+    return true;
+}
+
 
 // Close LOGnnnn.TMP and rename to LOGnnnn.CSV so the #406 extractor only ever
 // sees finished (sealed) files. Advance to the next index.
@@ -279,18 +353,13 @@ public:
     // on a 4 MiB file -- which is why the sidecar exists.
     bool crc32(std::uint16_t index, std::uint32_t& crc_out) noexcept {
         if (read_sidecar(index, crc_out)) return true;
-        if (!rd_open_) return false;
-        if (f_lseek(&rd_, 0) != FR_OK) return false;
-
-        std::uint32_t running = ams::crc::Crc32Init;
-        for (;;) {
-            UINT br = 0;
-            if (f_read(&rd_, g_rowbuf, sizeof g_rowbuf, &br) != FR_OK) return false;
-            if (br == 0) break;
-            running = ams::crc::update(running, g_rowbuf, br);
-        }
-        crc_out = ams::crc::finalize(running);
-        return true;
+        // No sidecar: a log written before sidecars existed, or one whose
+        // sidecar write failed. Stream it. Seconds on a 4 MiB file, which is
+        // the whole reason seal writes a sidecar in the first place.
+        char path[16];
+        std::snprintf(path, sizeof path, ams::config::LogSealedNameFmt,
+                      static_cast<unsigned long>(index));
+        return compute_file_crc(path, crc_out);
     }
 
     void close(std::uint16_t) noexcept { close_file(); }
@@ -493,11 +562,22 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
             }
             g_file_bytes += static_cast<std::uint32_t>(n);
             g_file_crc    = ams::crc::update(g_file_crc, g_rowbuf, n);
+            ++g_rows_this_file;
             ++g_log_rows;
             if (g_file_bytes >= ams::config::LogFileMaxBytes) {
                 seal_file();                   // rotate; next file opens next tick
                 break;
             }
+        }
+
+        // (3b) Time-based rotation. Without this a file is only sealed on the
+        // size cap (~13 min of rows), so an ordinary bench session ends leaving
+        // a .TMP that no tool treats as a finished log. Checked outside the
+        // drain loop so it still fires during a lull in the ring.
+        if (g_file_open &&
+            ams::log_rotation::should_rotate(g_file_bytes, g_rows_this_file,
+                                             now - g_file_open_ms)) {
+            seal_file();                       // next file opens next tick
         }
 
         // (4) Periodic flush -- bounds data lost on a power-cut to one window.

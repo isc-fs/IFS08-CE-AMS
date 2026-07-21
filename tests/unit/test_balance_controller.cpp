@@ -92,23 +92,36 @@ extern "C" void test_balance_single_hot_cell_in_charge(void) {
 //    largest excess.
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_caps_at_max_active_per_module(void) {
+    // Written relative to config::BalanceMaxActive so a change to the
+    // dissipation budget does not silently invalidate the test. Put TWO more
+    // cells over the threshold than the cap allows, with strictly increasing
+    // excess, so the cap is genuinely exercised and the selection is ordered.
+    constexpr std::uint8_t kCap  = config::BalanceMaxActive;
+    constexpr std::uint8_t kOver = static_cast<std::uint8_t>(kCap + 2);
+    static_assert(kOver <= config::CellsPerModule,
+                  "test needs more cells per module than the cap + 2");
+
     auto state = make_uniform_state(4100, 25);
-    // Cells 0..5 of module 1 sit at +60..+110 mV (all > delta = 50).
-    // Top-4 by excess should be cells 5, 4, 3, 2 (excess 110, 100, 90, 80).
-    for (std::uint8_t c = 0; c < 6; ++c) {
+    for (std::uint8_t c = 0; c < kOver; ++c) {
         state.cell_mV[1][c] = static_cast<std::uint16_t>(4100 + 60 + 10 * c);
     }
-    state.max_cell_mV = state.cell_mV[1][5];
+    state.max_cell_mV = state.cell_mV[1][kOver - 1];
 
-    const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto);
-    TEST_ASSERT_EQUAL_UINT8(config::BalanceMaxActive,
-                            count_set_in_module(mask, 1));
-    TEST_ASSERT_TRUE(mask.cell[1][5]);
-    TEST_ASSERT_TRUE(mask.cell[1][4]);
-    TEST_ASSERT_TRUE(mask.cell[1][3]);
-    TEST_ASSERT_TRUE(mask.cell[1][2]);
-    TEST_ASSERT_FALSE(mask.cell[1][1]);
-    TEST_ASSERT_FALSE(mask.cell[1][0]);
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true,
+                                            config::BalanceCmd::Auto);
+
+    // Exactly the cap discharges, never more -- this is the board dissipation
+    // limit, so an off-by-one here is watts on a real board.
+    TEST_ASSERT_EQUAL_UINT8(kCap, count_set_in_module(mask, 1));
+
+    // ...and they are the HIGHEST cells: the top kCap by excess are set, the
+    // two lowest over-threshold cells are not.
+    for (std::uint8_t c = static_cast<std::uint8_t>(kOver - kCap); c < kOver; ++c) {
+        TEST_ASSERT_TRUE_MESSAGE(mask.cell[1][c], "a top-excess cell was not selected");
+    }
+    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][0], "lowest over-threshold cell must not balance");
+    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][1], "2nd-lowest over-threshold cell must not balance");
 }
 
 // ---------------------------------------------------------------------------
@@ -229,4 +242,85 @@ extern "C" void test_balance_threshold_strict_inequality(void) {
     const auto mask = balance::compute_mask(state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto);
     TEST_ASSERT_FALSE(mask.cell[4][18]);
     TEST_ASSERT_FALSE(any_set(mask));
+}
+
+// ---------------------------------------------------------------------------
+// Config-invariant tripwires.
+//
+// These exist because of a silent failure that survived two releases: the
+// balancing gate was wired to config::TempFaultsTrusted, which is false while
+// the ADG731 mux path is unvalidated. The WarioCharger 0x103 toggle was
+// received and accepted, VehicleService resolved it to On -- and compute_mask
+// then returned an all-zero mask forever. Balancing could not run in ANY FSM
+// state on ANY image, and nothing failed to say so.
+// ---------------------------------------------------------------------------
+
+// The two trust flags answer different questions and must stay independent
+// knobs: "trust these temps enough to open the contactors" is not the same as
+// "trust them enough to let balancing run". Re-coupling them silently kills the
+// operator toggle again.
+extern "C" void test_balance_temp_trust_is_decoupled_from_fault_trust(void) {
+    // Balancing must be reachable while the cell-temp FAULTS stay disarmed --
+    // that combination is the whole point of the split.
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+
+    const auto mask = balance::compute_mask(
+        state, fsm::State::Charge,
+        /*temps_trusted=*/config::BalanceTempsTrusted, config::BalanceCmd::On);
+
+    if (config::BalanceTempsTrusted) {
+        TEST_ASSERT_TRUE_MESSAGE(
+            any_set(mask),
+            "BalanceTempsTrusted is true but balancing still produced no mask");
+    } else {
+        TEST_ASSERT_FALSE_MESSAGE(
+            any_set(mask),
+            "BalanceTempsTrusted is false so balancing must be fully inert");
+    }
+}
+
+// Loud reminder rather than a silent dead toggle: if this build cannot balance,
+// say so here instead of leaving an operator to discover it on a charger.
+extern "C" void test_balance_operator_toggle_is_reachable_on_this_build(void) {
+    TEST_ASSERT_TRUE_MESSAGE(
+        config::BalanceTempsTrusted,
+        "BalanceTempsTrusted is false -- the WarioCharger 0x103 toggle cannot "
+        "discharge in ANY FSM state on this build. If that is intended, update "
+        "this test and docs/CAN_MAP.md 0x103 together so it stays deliberate.");
+}
+
+// The operator switch must reach discharge in every FSM state on the build as
+// configured -- not just with a hand-passed temps_trusted=true.
+extern "C" void test_balance_on_discharges_in_all_states_as_configured(void) {
+    if (!config::BalanceTempsTrusted) return;   // covered by the tripwire above
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+
+    for (auto st : { fsm::State::Start, fsm::State::Precharge,
+                     fsm::State::Transition, fsm::State::Run,
+                     fsm::State::Charge, fsm::State::Error }) {
+        TEST_ASSERT_TRUE_MESSAGE(
+            balance::compute_mask(state, st,
+                                  /*temps_trusted=*/config::BalanceTempsTrusted,
+                                  config::BalanceCmd::On).cell[0][0],
+            "operator ON must discharge in every FSM state");
+    }
+}
+
+// The thermal lockout is balancing's only heat protection and must survive the
+// trust split -- it applies to the operator override too.
+extern "C" void test_balance_lockout_still_applies_with_trust_flag(void) {
+    auto state = make_uniform_state(4100, config::BalanceTempMax + 1);
+    state.cell_mV[0][0] = 4200;
+    state.max_cell_mV   = 4200;
+    state.max_tempC     = config::BalanceTempMax + 1;
+
+    TEST_ASSERT_FALSE_MESSAGE(
+        any_set(balance::compute_mask(state, fsm::State::Charge,
+                                      /*temps_trusted=*/config::BalanceTempsTrusted,
+                                      config::BalanceCmd::On)),
+        "operator ON must NOT override the BalanceTempMax lockout");
 }
