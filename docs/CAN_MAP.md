@@ -618,10 +618,11 @@ signal frame — it is a request/response protocol over **ISO-TP
 
 | Direction | ID | Note |
 |---|---|---|
-| Host → AMS | `0x000 + NodeID` | `0x001` today; `0x002` after [#403](https://github.com/isc-fs/IFS08-CE-AMS/issues/403) |
-| AMS → host | `0x010 + NodeID` | |
+| Host → AMS | `0x000 + NodeID` = **`0x002`** | AMS is node **2** ([#403](https://github.com/isc-fs/IFS08-CE-AMS/issues/403); role map ECU=1 / AMS=2 / uDV=3) |
+| AMS → host | `0x010 + NodeID` = **`0x012`** | |
 
-> **`0x002` is shared with the boot trigger above, and that is safe.**
+> **`0x002` is shared with the boot trigger above, and that is safe.** This is
+> now live, not hypothetical — the AMS is node 2.
 > `matches_trigger` requires **DLC 4** *and* the exact `B0 07 AD 11`
 > payload; an ISO-TP frame is always **DLC 8**, and `0xB0` can never be a
 > valid ISO-TP PCI byte (only `0x0`–`0x3` are). The trigger check runs
