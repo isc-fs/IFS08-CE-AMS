@@ -41,6 +41,30 @@ struct Mask {
 // the FSM won't even fault on, or balance when the operator hasn't asked. The
 // firmware caller passes config::TempFaultsTrusted and the freshness-resolved
 // VehicleService::effective_balance_cmd.
+// Are two module-local cell indices PHYSICALLY adjacent 2512 pairs?
+//
+// Verified from the BMS_LITE PCB placement (pcbs/BMS_LITE): each LTC drives one
+// horizontal row of cell positions, and firmware cell index maps MONOTONICALLY
+// onto that row -- LTC_1 carries module cells 0..(CellsPerLtcUpper-1) left to
+// right, LTC_2 carries the rest. So two cells share a board edge iff they are
+// consecutive indices in the SAME LTC half. The two halves sit in separate
+// board regions (a wide X gap on the layout), so there is no cross-half
+// adjacency -- index 8 and 9 are far apart, not neighbours.
+//
+// ASSUMPTION, flagged for one-time bench confirmation: this rests on the
+// schematic cell number equalling the LTC channel number (cell1 -> C1 ...),
+// which the layout is internally consistent with (monotonic rows, DNP counts
+// matching the 9/10 split) but which has not been traced electrically. Confirm
+// once by lighting a known non-adjacent index set and checking with an IR probe
+// that alternating physical resistors heat.
+[[nodiscard]] inline bool physically_adjacent(std::uint8_t a, std::uint8_t b) noexcept {
+    const bool a_upper = a < config::CellsPerLtcUpper;
+    const bool b_upper = b < config::CellsPerLtcUpper;
+    if (a_upper != b_upper) return false;                 // different LTC rows
+    const std::uint8_t d = (a > b) ? (a - b) : (b - a);
+    return d == 1u;
+}
+
 [[nodiscard]] inline Mask compute_mask(const BmsState&    s,
                                        fsm::State         fsm_state,
                                        bool               temps_trusted,
@@ -99,34 +123,44 @@ struct Mask {
         // the floor. K = BalanceMaxActive. Insertion sort into a
         // small array -- 19 cells * 4 slots = ~76 compares worst
         // case, well below noise at 1 Hz cadence.
-        struct Cand {
-            std::uint8_t  cell;
-            std::uint16_t excess;
-        };
-        Cand top[config::BalanceMaxActive] = {};
-        std::uint8_t n_top = 0;
+        // Select up to BalanceMaxActive cells, highest excess first, with NO
+        // two PHYSICALLY ADJACENT resistors on at once (see physically_adjacent
+        // + BalanceSpreadNoAdjacent). Spreads the discharge heat across the
+        // board instead of concentrating a hot cluster of 2512 pads -- measured
+        // at ~71 C per pad at 8/module, so keeping neighbours cold bounds the
+        // local hot-spot over a multi-hour C/101 balancing session.
+        //
+        // Greedy: repeatedly take the highest-excess cell that is over the delta
+        // and not adjacent to one already chosen. It may select FEWER than the
+        // cap when the imbalanced cells cluster -- which is correct: a smaller
+        // set that never overlaps is exactly the goal, and the skipped cells are
+        // bled on later cycles once their neighbours come down. 8*19 compares
+        // per module, trivial at 1 Hz.
+        std::uint8_t chosen[config::BalanceMaxActive] = {};
+        std::uint8_t n_chosen = 0;
 
-        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
-            const std::uint16_t v = s.cell_mV[m][c];
-            if (v <= floor_mV + config::BalanceDeltaMv) continue;
-            const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
+        for (std::uint8_t pick = 0; pick < config::BalanceMaxActive; ++pick) {
+            std::uint16_t best_excess = 0;
+            int           best_cell   = -1;
+            for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+                const std::uint16_t v = s.cell_mV[m][c];
+                if (v <= floor_mV + config::BalanceDeltaMv) continue;  // matched
+                if (out.cell[m][c]) continue;                          // taken
 
-            if (n_top < config::BalanceMaxActive) {
-                top[n_top++] = { c, excess };
-            } else {
-                // Replace the smallest entry if this one is bigger.
-                std::uint8_t smallest = 0;
-                for (std::uint8_t i = 1; i < n_top; ++i) {
-                    if (top[i].excess < top[smallest].excess) smallest = i;
+                if (config::BalanceSpreadNoAdjacent) {
+                    bool adj = false;
+                    for (std::uint8_t i = 0; i < n_chosen; ++i) {
+                        if (physically_adjacent(c, chosen[i])) { adj = true; break; }
+                    }
+                    if (adj) continue;
                 }
-                if (excess > top[smallest].excess) {
-                    top[smallest] = { c, excess };
-                }
+
+                const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
+                if (excess > best_excess) { best_excess = excess; best_cell = c; }
             }
-        }
-
-        for (std::uint8_t i = 0; i < n_top; ++i) {
-            out.cell[m][top[i].cell] = true;
+            if (best_cell < 0) break;                          // nothing eligible
+            out.cell[m][static_cast<std::uint8_t>(best_cell)] = true;
+            chosen[n_chosen++] = static_cast<std::uint8_t>(best_cell);
         }
     }
     return out;
