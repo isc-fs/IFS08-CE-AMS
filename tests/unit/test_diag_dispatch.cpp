@@ -12,6 +12,7 @@
 #include "unity.h"
 
 #include <cstdint>
+#include <initializer_list>
 
 namespace {
 
@@ -24,8 +25,20 @@ public:
     int          handled  = 0;
     std::uint8_t last_op  = 0;
 
+    // Mirrors logfs::Server::owns exactly -- enumerated, so 0x26 (DELETE,
+    // unimplemented) stays unowned while 0x27 (FINALIZE) is owned. This was a
+    // stale 0x21..0x25 RANGE and silently made the FINALIZE gate test assert
+    // against UNSUPPORTED instead of the vehicle-state refusal.
     static bool owns(std::uint8_t opcode) noexcept {
-        return opcode >= diag::OpLogfsList && opcode <= diag::OpLogfsClose;
+        switch (opcode) {
+        case diag::OpLogfsList:
+        case diag::OpLogfsOpen:
+        case diag::OpLogfsRead:
+        case diag::OpLogfsCrc:
+        case diag::OpLogfsClose:
+        case diag::OpLogfsFinalize: return true;
+        default:                    return false;
+        }
     }
 
     std::uint16_t handle(const diag::Request& req, std::uint8_t* out,
@@ -48,10 +61,14 @@ struct Fixture {
     FakeLogfs                   logfs;
     diag::Dispatcher<FakeLogfs> disp{session, logfs};
 
+    // Default to Start: log extraction is only permitted with the car stopped
+    // and the TS off (#449), so every pre-existing test runs in that state.
+    fsm::State state = fsm::State::Start;
+
     std::uint16_t send(std::uint8_t type, std::uint8_t opcode, std::uint8_t peer,
                        std::uint32_t now) {
         const std::uint8_t msg[2] = {type, opcode};
-        return disp.handle(msg, sizeof msg, peer, now, g_out, sizeof g_out);
+        return disp.handle(msg, sizeof msg, peer, now, state, g_out, sizeof g_out);
     }
     std::uint16_t app(std::uint8_t opcode, std::uint8_t peer, std::uint32_t now) {
         return send(static_cast<std::uint8_t>(diag::MsgType::AppCtrl), opcode, peer, now);
@@ -77,8 +94,8 @@ extern "C" void test_dispatch_ignores_bootloader_namespace(void) {
 extern "C" void test_dispatch_ignores_runt_message(void) {
     Fixture f;
     const std::uint8_t one[1] = {0x06u};
-    TEST_ASSERT_EQUAL_UINT16(0u, f.disp.handle(one, 1u, kHost, 1000u, g_out, sizeof g_out));
-    TEST_ASSERT_EQUAL_UINT16(0u, f.disp.handle(nullptr, 8u, kHost, 1000u, g_out, sizeof g_out));
+    TEST_ASSERT_EQUAL_UINT16(0u, f.disp.handle(one, 1u, kHost, 1000u, f.state, g_out, sizeof g_out));
+    TEST_ASSERT_EQUAL_UINT16(0u, f.disp.handle(nullptr, 8u, kHost, 1000u, f.state, g_out, sizeof g_out));
 }
 
 // --- session gating ---------------------------------------------------------
@@ -243,4 +260,99 @@ extern "C" void test_dispatch_connect_ack_carries_protocol_version(void) {
     TEST_ASSERT_EQUAL_HEX8(diag::OpConnect, g_out[1]);
     TEST_ASSERT_EQUAL_UINT8(1u, g_out[2]);   // major
     TEST_ASSERT_EQUAL_UINT8(0u, g_out[3]);   // minor
+}
+
+// --- vehicle-state gate (#449) ----------------------------------------------
+//
+// Operational rule: log extraction runs ONLY with the car stopped and the
+// tractive system off. Beyond "don't invite a multi-minute bus-heavy operation
+// while the car can move", there is a concrete mechanism: our diag TX id
+// (0x010 + NodeID) is numerically LOWER than the VCU heartbeat 0x100, so every
+// queued LOGFS frame WINS arbitration against the heartbeat the FSM depends
+// on -- and VcuStale latches Error, which opens the contactors.
+
+extern "C" void test_dispatch_refuses_logfs_with_ts_live(void) {
+    for (auto st : { fsm::State::Precharge, fsm::State::Transition,
+                     fsm::State::Run, fsm::State::Charge }) {
+        Fixture f;
+        f.state = fsm::State::Start;
+        f.connect();                       // connect while still permitted
+        f.state = st;                      // ...then the car comes alive
+
+        (void)f.app(diag::OpLogfsList, kHost, 1100u);
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x02, g_out[0], "must NACK with TS live");
+        TEST_ASSERT_EQUAL_HEX8_MESSAGE(diag::NackVehicleState, g_out[2],
+                                       "must say WHY: vehicle state");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, f.logfs.handled,
+                                      "must not reach the card with TS live");
+    }
+}
+
+extern "C" void test_dispatch_allows_logfs_in_start(void) {
+    Fixture f;
+    f.state = fsm::State::Start;
+    f.connect();
+    (void)f.app(diag::OpLogfsList, kHost, 1100u);
+    TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+    TEST_ASSERT_EQUAL_INT(1, f.logfs.handled);
+}
+
+// Every LOGFS opcode is gated, not just the bulk ones -- FINALIZE especially,
+// since sealing the active log mid-run is exactly what an impatient operator
+// would try while the car is live.
+extern "C" void test_dispatch_gate_covers_every_logfs_opcode(void) {
+    const std::uint8_t ops[] = {diag::OpLogfsList,  diag::OpLogfsOpen,
+                                diag::OpLogfsRead,  diag::OpLogfsCrc,
+                                diag::OpLogfsClose, diag::OpLogfsFinalize};
+    for (std::uint8_t op : ops) {
+        Fixture f;
+        f.state = fsm::State::Start;
+        f.connect();
+        f.state = fsm::State::Run;
+        (void)f.app(op, kHost, 1100u);
+        TEST_ASSERT_EQUAL_HEX8(diag::NackVehicleState, g_out[2]);
+    }
+}
+
+// CONNECT/DISCONNECT stay permitted in any state: they cost nothing on the bus
+// and let the host discover WHY it is being refused rather than guessing at a
+// silent node.
+extern "C" void test_dispatch_session_ops_work_in_any_state(void) {
+    for (auto st : { fsm::State::Run, fsm::State::Charge, fsm::State::Error }) {
+        Fixture f;
+        f.state = st;
+        TEST_ASSERT_EQUAL_UINT16(4u, f.app(diag::OpConnect, kHost, 1000u));
+        TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+        TEST_ASSERT_EQUAL_UINT16(2u, f.app(diag::OpDisconnect, kHost, 1100u));
+        TEST_ASSERT_EQUAL_HEX8(0x01, g_out[0]);
+    }
+}
+
+// A pull in progress when the car comes alive must drop its handle, not just
+// stop serving -- otherwise the host holds a handle across a state change.
+extern "C" void test_dispatch_releases_handle_when_car_goes_live(void) {
+    Fixture f;
+    f.state = fsm::State::Start;
+    f.connect();
+    (void)f.app(diag::OpLogfsOpen, kHost, 1100u);
+    const int before = f.logfs.releases;
+
+    f.state = fsm::State::Run;
+    (void)f.app(diag::OpLogfsRead, kHost, 1200u);
+    TEST_ASSERT_EQUAL_HEX8(diag::NackVehicleState, g_out[2]);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(before + 1, f.logfs.releases,
+                                  "handle must be released when the car goes live");
+}
+
+// Error has the contactors open and the TS down, and is where the car sits
+// after the fault whose log an operator most wants (#448). It is currently NOT
+// permitted -- pinned so widening it is a deliberate act, not a drift.
+extern "C" void test_dispatch_error_state_currently_refused(void) {
+    Fixture f;
+    f.state = fsm::State::Start;
+    f.connect();
+    f.state = fsm::State::Error;
+    (void)f.app(diag::OpLogfsList, kHost, 1100u);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(diag::NackVehicleState, g_out[2],
+                                   "Error is not currently a permitted state");
 }

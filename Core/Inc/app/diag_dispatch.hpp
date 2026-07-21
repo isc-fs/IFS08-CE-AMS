@@ -20,10 +20,40 @@
 #pragma once
 
 #include "diag_proto.hpp"
+#include "state_machine.hpp"
 
 #include <cstdint>
 
 namespace ams::diag {
+
+// May log extraction run in this vehicle state?
+//
+// Operational rule (#449): extraction is permitted ONLY with the car stopped
+// and the tractive system OFF -- never in Run with TS live. Two reasons, and
+// the second is the sharp one:
+//
+//   * A pull is a multi-minute, bus-heavy operation, and nobody should be
+//     inviting it while the car can move.
+//   * Our diag TX id (0x010 + NodeID) is NUMERICALLY LOWER than the VCU
+//     heartbeat 0x100, so every queued LOGFS frame WINS arbitration against
+//     the heartbeat the FSM depends on. VcuStale is 200 ms and latches Error,
+//     which opens the contactors. A reply burst is only ~17-33 ms so the
+//     margin is large, but the failure mode is "log pull drops the AIRs" and
+//     it is not worth carrying at all when the alternative is simply not
+//     extracting while the car is live.
+//
+// Start is the only permitted state: the contactors are open and the TS is
+// down by construction.
+//
+// NOTE the consequence for the post-fault case -- see the comment on
+// Error below.
+[[nodiscard]] inline bool logfs_allowed_in(fsm::State s) noexcept {
+    // Error ALSO has the contactors open and the TS down, and it is the state
+    // the car sits in after the fault whose log an operator most wants (#448).
+    // It is deliberately NOT permitted here pending an explicit call, because
+    // widening a safety gate should be a decision rather than an inference.
+    return s == fsm::State::Start;
+}
 
 template <class LogfsServer>
 class Dispatcher {
@@ -37,6 +67,7 @@ public:
                                        std::uint16_t       len,
                                        std::uint8_t        peer,
                                        std::uint32_t       now_ms,
+                                       fsm::State          vehicle_state,
                                        std::uint8_t*       out,
                                        std::uint16_t       cap) noexcept {
         Request req;
@@ -75,6 +106,16 @@ public:
             return build_nack(out, cap, req.opcode, NackBadSession);
         }
         if (LogfsServer::owns(req.opcode)) {
+            // Vehicle-state gate (#449). Checked AFTER the session so a host
+            // that has connected gets a specific reason rather than a generic
+            // refusal, and BEFORE reaching the card so a live car never starts
+            // a multi-minute transfer. CONNECT/DISCONNECT stay permitted in any
+            // state: they cost nothing and let the host discover WHY it is
+            // being refused instead of guessing.
+            if (!logfs_allowed_in(vehicle_state)) {
+                logfs_.release();   // drop any handle held from a permitted state
+                return build_nack(out, cap, req.opcode, NackVehicleState);
+            }
             return logfs_.handle(req, out, cap);
         }
         return build_nack(out, cap, req.opcode, NackUnsupported);

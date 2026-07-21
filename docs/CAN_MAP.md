@@ -695,7 +695,31 @@ Values ≤ `0x10` are the bootloader's, reused verbatim.
 | `0x12` | NO_SD_CARD |
 | `0x13` | FS_ERROR |
 | `0x14` | READ_ERROR |
+| `0x15` | VEHICLE_STATE — refused: the car must be stopped with the TS off |
 | `0xFE` | UNSUPPORTED |
+
+### Vehicle-state gate
+
+**Log extraction is permitted only in `Start` — car stopped, tractive system
+off.** Any LOGFS opcode in `Precharge` / `Transition` / `Run` / `Charge` is
+refused with `NACK VEHICLE_STATE (0x15)`, and any open read handle is released.
+
+Beyond the obvious (a pull is a multi-minute, bus-heavy operation and should not
+be invited while the car can move) there is a concrete mechanism: the diag TX id
+`0x010 + NodeID` is numerically **lower** than the VCU heartbeat `0x100`, so
+every queued LOGFS frame **wins arbitration** against the heartbeat the safety
+FSM depends on. `VcuStaleMs` is 200 ms and latches `Error`, which opens the
+contactors. A single reply burst is only ~17–33 ms so the margin is wide, but
+the failure mode is *"a log pull opens the AIRs"* and it is not worth carrying
+when the alternative is simply not extracting while the car is live.
+
+`CONNECT` / `DISCONNECT` remain available in **any** state: they cost nothing on
+the bus and let a host discover *why* it is being refused rather than facing a
+silent node.
+
+> `Error` also has the contactors open and the TS down, and is where the car
+> sits after the fault whose log an operator most wants (#448). It is currently
+> **not** permitted — pending an explicit decision rather than an inference.
 
 ### Session
 

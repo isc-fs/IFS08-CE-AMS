@@ -102,6 +102,10 @@ inline constexpr std::uint8_t NackBadHandle    = 0x11u;  // was 0x08 in #439 -- 
 inline constexpr std::uint8_t NackNoSdCard     = 0x12u;
 inline constexpr std::uint8_t NackFsError      = 0x13u;
 inline constexpr std::uint8_t NackReadError    = 0x14u;
+// Refused because the vehicle is not in a state where log extraction is
+// permitted -- the tractive system must be OFF and the car stopped (#449).
+// Distinct from BAD_SESSION: the host is talking correctly, the CAR is wrong.
+inline constexpr std::uint8_t NackVehicleState = 0x15u;
 inline constexpr std::uint8_t NackUnsupported  = 0xFEu;  // BL: UNSUPPORTED
 
 // ---------------------------------------------------------------------------
