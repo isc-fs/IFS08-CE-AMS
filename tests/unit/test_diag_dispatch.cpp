@@ -25,8 +25,20 @@ public:
     int          handled  = 0;
     std::uint8_t last_op  = 0;
 
+    // Mirrors logfs::Server::owns exactly -- enumerated, so 0x26 (DELETE,
+    // unimplemented) stays unowned while 0x27 (FINALIZE) is owned. This was a
+    // stale 0x21..0x25 RANGE and silently made the FINALIZE gate test assert
+    // against UNSUPPORTED instead of the vehicle-state refusal.
     static bool owns(std::uint8_t opcode) noexcept {
-        return opcode >= diag::OpLogfsList && opcode <= diag::OpLogfsClose;
+        switch (opcode) {
+        case diag::OpLogfsList:
+        case diag::OpLogfsOpen:
+        case diag::OpLogfsRead:
+        case diag::OpLogfsCrc:
+        case diag::OpLogfsClose:
+        case diag::OpLogfsFinalize: return true;
+        default:                    return false;
+        }
     }
 
     std::uint16_t handle(const diag::Request& req, std::uint8_t* out,
