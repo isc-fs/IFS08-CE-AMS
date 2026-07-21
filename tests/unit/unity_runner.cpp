@@ -385,6 +385,21 @@ void test_logcsv_row_scalar_values(void);
 void test_logcsv_row_cell_and_temp_values(void);
 void test_logcsv_truncation_returns_zero(void);
 
+// test_ntc_table.cpp
+void test_ntc_table_is_strictly_decreasing(void);
+void test_ntc_table_covers_expected_range(void);
+void test_ntc_r25_is_10k(void);
+void test_ntc_exact_table_points_round_trip(void);
+void test_ntc_datasheet_resistances(void);
+void test_ntc_divider_voltage_recovers_temperature(void);
+void test_ntc_thresholds_are_now_true_degrees(void);
+void test_ntc_interpolates_between_points(void);
+void test_ntc_is_monotonic_over_the_whole_range(void);
+void test_ntc_rejects_out_of_range_resistance(void);
+void test_ntc_accepts_exact_endpoints(void);
+void test_ntc_pullup_is_6k8(void);
+void test_ntc_hot_endpoint_resolves_from_resistance(void);
+
 // test_log_rotation.cpp
 void test_logrot_empty_card_starts_at_zero(void);
 void test_logrot_skips_sealed_files(void);
@@ -759,6 +774,20 @@ int main(void) {
     RUN_TEST(test_logcsv_row_scalar_values);
     RUN_TEST(test_logcsv_row_cell_and_temp_values);
     RUN_TEST(test_logcsv_truncation_returns_zero);
+
+    RUN_TEST(test_ntc_table_is_strictly_decreasing);
+    RUN_TEST(test_ntc_table_covers_expected_range);
+    RUN_TEST(test_ntc_r25_is_10k);
+    RUN_TEST(test_ntc_exact_table_points_round_trip);
+    RUN_TEST(test_ntc_datasheet_resistances);
+    RUN_TEST(test_ntc_divider_voltage_recovers_temperature);
+    RUN_TEST(test_ntc_thresholds_are_now_true_degrees);
+    RUN_TEST(test_ntc_interpolates_between_points);
+    RUN_TEST(test_ntc_is_monotonic_over_the_whole_range);
+    RUN_TEST(test_ntc_rejects_out_of_range_resistance);
+    RUN_TEST(test_ntc_accepts_exact_endpoints);
+    RUN_TEST(test_ntc_pullup_is_6k8);
+    RUN_TEST(test_ntc_hot_endpoint_resolves_from_resistance);
 
     RUN_TEST(test_logrot_empty_card_starts_at_zero);
     RUN_TEST(test_logrot_skips_sealed_files);

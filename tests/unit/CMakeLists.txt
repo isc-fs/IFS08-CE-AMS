@@ -48,6 +48,7 @@ add_executable(ams_unit_tests
     test_current_service.cpp
     test_datalogging.cpp
     test_log_rotation.cpp
+    test_ntc_table.cpp
     test_dsl_parity.cpp
     test_dsl_dbc_consistency.cpp
     test_diag_dispatch.cpp
