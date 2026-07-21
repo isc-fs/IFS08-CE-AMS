@@ -97,7 +97,7 @@ resistor dissipation + module airflow.
 |---|---|---|---|---|---|
 | `BalanceDeltaMv` | 50 | mV | Imbalance above pack-min that starts a cell bleeding. | | ☐ |
 | `BalanceTempMax` | 50 | °C | Abort balancing above this `max_tempC` (≤ `CellOverTempC`). | | ☐ |
-| `BalanceMaxActive` | 4 | cells/module | Max simultaneous dischargers per module — set against the resistor power budget + airflow. | | ☐ |
+| `BalanceMaxActive` | 8 | cells/module | Max simultaneous dischargers per module. 47R\|\|47R = 23.5R per cell → 0.75 W/cell @4.2 V, so 8 = 6.0 W per module / 30 W pack. Resistors (2512, 1 W) run ~37 % — the limit is heat out of the box. **Measure board temperature at this setting.** | | ☐ |
 
 ## 6. CAN map confirmation  (`COMMISSIONING.md` §7 / `CAN_MAP.md`)
 
