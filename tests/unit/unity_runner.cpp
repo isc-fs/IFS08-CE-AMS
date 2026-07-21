@@ -176,6 +176,12 @@ void test_dispatch_unknown_opcode_nacks(void);
 void test_dispatch_delete_opcode_is_unsupported(void);
 void test_dispatch_session_check_precedes_opcode_check(void);
 void test_dispatch_connect_ack_carries_protocol_version(void);
+void test_dispatch_refuses_logfs_with_ts_live(void);
+void test_dispatch_allows_logfs_in_start(void);
+void test_dispatch_gate_covers_every_logfs_opcode(void);
+void test_dispatch_session_ops_work_in_any_state(void);
+void test_dispatch_releases_handle_when_car_goes_live(void);
+void test_dispatch_error_state_currently_refused(void);
 
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
@@ -583,6 +589,12 @@ int main(void) {
     RUN_TEST(test_dispatch_delete_opcode_is_unsupported);
     RUN_TEST(test_dispatch_session_check_precedes_opcode_check);
     RUN_TEST(test_dispatch_connect_ack_carries_protocol_version);
+    RUN_TEST(test_dispatch_refuses_logfs_with_ts_live);
+    RUN_TEST(test_dispatch_allows_logfs_in_start);
+    RUN_TEST(test_dispatch_gate_covers_every_logfs_opcode);
+    RUN_TEST(test_dispatch_session_ops_work_in_any_state);
+    RUN_TEST(test_dispatch_releases_handle_when_car_goes_live);
+    RUN_TEST(test_dispatch_error_state_currently_refused);
     RUN_TEST(test_bootloader_trigger_exact_match);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);

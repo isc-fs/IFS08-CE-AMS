@@ -23,6 +23,7 @@
 #include "log_rotation.hpp"
 #include "log_ring.hpp"
 #include "logfs_server.hpp"
+#include "state_machine.hpp"
 
 #include "cmsis_os2.h"
 #include "main.h"
@@ -32,6 +33,10 @@
 #include <cstring>
 
 extern "C" {
+// FSM state mirror written by MainTask. Read-only here, and only to refuse
+// log extraction while the tractive system is live (#449).
+extern volatile std::uint8_t g_state_telemetry;
+
 // hsd1 is OWNED here. With MX_SDMMC1_SD_Init decoupled in CubeMX (#407) the
 // handle is no longer defined in main.c, so the logger -- which now owns SD
 // bring-up -- defines it; bsp_driver_sd.c (the FatFs BSP) externs and drives
@@ -479,9 +484,14 @@ osSemaphoreId_t g_diag_sem = nullptr;
 // "say nothing" -- e.g. a CMD-typed frame, which belongs to the bootloader's
 // namespace and which the application must not answer even to refuse.
 void serve_diag_request() noexcept {
+    // Vehicle-state gate (#449): extraction is permitted only with the car
+    // stopped and the TS off. g_state_telemetry is MainTask's FSM mirror.
+    const auto vehicle_state = static_cast<ams::fsm::State>(g_state_telemetry);
+
     const std::uint16_t n = g_diag_disp.handle(g_diag_req, g_diag_req_len,
                                                ams::config::AmsNodeId,
                                                osKernelGetTickCount(),
+                                               vehicle_state,
                                                g_diag_rsp, sizeof g_diag_rsp);
 
     g_diag_rsp_len = n;
