@@ -479,8 +479,8 @@ inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balanc
 // BMS_LITE per-cell bleed path (schematic, per-cell sheet): external TSM2323
 // PMOS switching R71 || R72 = 47R || 47R = 23.5 R, both 2512.
 //
-//   cell V   current   W per cell   W per 2512 (1 W part)
-//   4.2 V    179 mA    0.75 W       0.37 W   (~37 % of rating)
+//   cell V   current   W per cell   W per 2512 (2 W part)
+//   4.2 V    179 mA    0.75 W       0.37 W   (~19 % of rating)
 //   4.0 V    170 mA    0.68 W       0.34 W
 //   3.7 V    157 mA    0.58 W       0.29 W
 //
@@ -491,9 +491,11 @@ inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balanc
 //        8        6.0 W          30 W        <-- here
 //       19       14.3 W          71 W        (all cells; not attempted)
 //
-// The resistors are the comfortable part -- the constraint is heat out of the
-// accumulator box. 8 was chosen to double balancing throughput while keeping
-// each 2512 near a third of its rating.
+// The resistors are the comfortable part -- they are 2 W devices running at
+// ~0.37 W, under a fifth of rating. The constraint is heat OUT OF THE
+// ACCUMULATOR BOX, and that is unchanged by the part rating: 8 simultaneous
+// dischargers is 6.0 W per module and 30 W across the pack however good the
+// resistors are.
 //
 // COMMISSION: still not measured. Watch cell/board temperature on a bench run
 // at this setting before trusting it in a sealed box, and note that the
