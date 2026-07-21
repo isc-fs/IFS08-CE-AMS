@@ -36,6 +36,24 @@ struct SdLogStats {
 };
 SdLogStats sd_log_stats() noexcept;
 
+// ---------------------------------------------------------------------------
+// LOGFS diag transport hooks (#406 / #439).
+//
+// The CAN side reassembles an ISO-TP message and hands it here; this task
+// executes it against FatFs and leaves the reply for collection. All
+// filesystem work therefore happens on ONE thread -- see logfs_server.hpp for
+// why that is preferred even though FatFs is reentrant in this build.
+//
+// Both calls are non-blocking, so the CAN task never waits on the SD card.
+// ---------------------------------------------------------------------------
+
+// Post a reassembled request. False if one is already in flight (the caller
+// should answer NACK BUSY, 0x08) or the logger has not started yet.
+bool sd_diag_submit(const std::uint8_t* msg, std::uint16_t len) noexcept;
+
+// Collect the reply, or 0 if it is not ready yet. Clears the slot.
+std::uint16_t sd_diag_collect(std::uint8_t* out, std::uint16_t cap) noexcept;
+
 }  // namespace ams
 
 extern "C" {

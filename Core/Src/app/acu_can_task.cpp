@@ -33,6 +33,9 @@
 #include "can_busoff_recovery.hpp"
 #include "can_frame.hpp"
 #include "current_service.hpp"
+#include "diag_proto.hpp"
+#include "isotp.hpp"
+#include "app/sd_logger_task.h"
 #include "pit_diag_emitter.hpp"
 #include "fw_health.hpp"
 #include "state_machine.hpp"
@@ -381,6 +384,80 @@ void tx_fw_health() noexcept {
                      ams::fw_health::last_fault()));
 }
 
+// ---------------------------------------------------------------------------
+// LOGFS diag transport (#406 / #439).
+//
+// Bootloader addressing: host -> node on 0x000 + NodeID, node -> host on
+// 0x010 + NodeID. Nothing needs a new hardware filter -- the global filter
+// already accepts every standard frame into FIFO0.
+//
+// Note the request ID equals the boot-trigger ID (0x002) once the AMS moves to
+// node 2 (#403). That is safe and stays safe: matches_trigger demands DLC 4
+// AND the exact B0 07 AD 11 payload, while an ISO-TP frame is always DLC 8 --
+// and 0xB0 could never be a valid ISO-TP PCI byte anyway (only 0x0-0x3 are).
+// The trigger check runs first, so a LOGFS frame passes through it untouched.
+// ---------------------------------------------------------------------------
+constexpr std::uint32_t DiagRxId = 0x000u + ams::config::AmsNodeId;
+constexpr std::uint32_t DiagTxId = 0x010u + ams::config::AmsNodeId;
+
+ams::isotp::Reassembler s_diag_rx;
+ams::isotp::Segmenter   s_diag_tx;
+bool                    s_diag_tx_active = false;
+std::uint8_t            s_diag_msg[ams::isotp::MaxMsg];
+
+// Push as much of the outbound message as the TX FIFO will take right now.
+//
+// Deliberately NOT a blocking drain: a 512-byte reply is ~76 frames against a
+// 3-deep FIFO, i.e. ~19 ms of bus time. Sitting on that would stall the 10 ms
+// telemetry cadence this task also owns. Instead it dribbles out whatever fits
+// each pass, and the loop below shortens its wait while a transfer is live.
+void pump_diag_tx() noexcept {
+    if (!s_diag_tx_active) return;
+    std::uint8_t f[ams::isotp::FrameLen];
+    // Leave DiagTxReservedSlots free so the flight telemetry matrix, which is
+    // scheduled AFTER this in the same loop pass and ships non-blocking, always
+    // finds room. Filling to zero silently blacked out telemetry for the whole
+    // multi-minute pull (#449).
+    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) >
+           ams::config::DiagTxReservedSlots) {
+        if (!s_diag_tx.next(f)) { s_diag_tx_active = false; return; }
+        if (!send_acu(DiagTxId, ams::isotp::FrameLen, f)) {
+            // Lost the race for the slot; the frame is already consumed from
+            // the segmenter, so the message is broken -- abandon it and let
+            // the host time out and retry rather than send a corrupt stream.
+            ++g_acu_tx_fail;
+            s_diag_tx_active = false;
+            return;
+        }
+    }
+}
+
+// Feed one received diag frame into the reassembler; submit a completed
+// message to SdLoggerTask, which owns the filesystem.
+void handle_diag_frame(const ams::CanFrame& frame, std::uint32_t now) noexcept {
+    const auto st = s_diag_rx.feed(frame.data, frame.dlc, 0u, now);
+
+    if (s_diag_rx.fc_pending()) {
+        std::uint8_t fc[ams::isotp::FrameLen];
+        ams::isotp::build_fc_cts(fc);
+        (void)send_acu(DiagTxId, ams::isotp::FrameLen, fc);
+        s_diag_rx.clear_fc_pending();
+    }
+    if (st != ams::isotp::RxStatus::MsgComplete) return;
+
+    if (!ams::sd_diag_submit(s_diag_rx.data(), s_diag_rx.size())) {
+        // Already serving one, or the logger has not started. Answer BUSY so
+        // the host retries instead of waiting out its timeout.
+        ams::diag::Request req;
+        std::uint8_t       nack[8];
+        if (ams::diag::parse_request(s_diag_rx.data(), s_diag_rx.size(), req)) {
+            const std::uint16_t n = ams::diag::build_nack(nack, sizeof nack, req.opcode,
+                                                          ams::diag::NackBusy);
+            if (n != 0 && s_diag_tx.begin(nack, n)) s_diag_tx_active = true;
+        }
+    }
+}
+
 }  // namespace
 
 extern "C" void ams_acu_can_task_run(void *argument) {
@@ -408,7 +485,12 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         const auto next_pit      = s_pit_diag_enabled
                                        ? (last_pit_scan + ams::config::PitDiagScanPeriodMs)
                                        : (now + 0xFFFFu);
-        const auto deadline      = std::min({ next_fast, next_mid, next_slow, next_pit });
+        // While a diag reply is going out, come back every tick to top up the
+        // TX FIFO. Otherwise a ~76-frame message would trickle at the slowest
+        // telemetry cadence and take seconds instead of tens of milliseconds.
+        const auto next_diag     = s_diag_tx_active ? (now + 1u) : (now + 0xFFFFu);
+        const auto deadline      = std::min({ next_fast, next_mid, next_slow, next_pit,
+                                              next_diag });
         const auto timeout       = (deadline > now) ? deadline - now : 0u;
 
         if (osMessageQueueGet(acu_rx_queueHandle, &frame, nullptr, timeout) == osOK) {
@@ -437,11 +519,25 @@ extern "C" void ams_acu_can_task_run(void *argument) {
                     ams::Bootloader::request_reboot(
                         ams::config::JumpReason::CanTrigger);
                 }
-                if (!ams::VehicleService::instance().update_from_frame(frame)) {
+                // LOGFS (#406) rides the same ID the trigger uses once the AMS
+                // is node 2, which is why this must come AFTER the check above.
+                if (frame.id == DiagRxId &&
+                    frame.bus == static_cast<std::uint8_t>(ams::CanBus::Acu)) {
+                    handle_diag_frame(frame, now);
+                } else if (!ams::VehicleService::instance().update_from_frame(frame)) {
                     ++g_acu_rx_dropped_unknown;
                 }
             }
         }
+
+        // Diag: collect a finished reply from SdLoggerTask and start shipping
+        // it, then top up the TX FIFO. Both are non-blocking, so the card can
+        // never stall this task.
+        if (!s_diag_tx_active) {
+            const std::uint16_t n = ams::sd_diag_collect(s_diag_msg, sizeof s_diag_msg);
+            if (n != 0 && s_diag_tx.begin(s_diag_msg, n)) s_diag_tx_active = true;
+        }
+        pump_diag_tx();
 
         // AcuCanTask serviced its RX queue this pass -> CAN-RX liveness (#411).
         ams::fw_health::poke(ams::fw_health::CanRx);

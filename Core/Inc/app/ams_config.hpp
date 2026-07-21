@@ -169,6 +169,9 @@ inline constexpr std::uint32_t LogFileMaxMs      = 5u * 60u * 1000u;    // 5 min
 // only ever sees finished logs. Index is a rotation counter, not a timestamp.
 inline constexpr char          LogActiveNameFmt[] = "LOG%04lu.TMP";
 inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
+// CRC-32 sidecar written beside a sealed CSV (#406): 8 ASCII hex digits.
+// Kept out of the CSV itself so the log stays directly spreadsheet-openable.
+inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
@@ -558,6 +561,22 @@ inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollV
 // under 1 % of balancing duty. Cheap insurance on a C/101 balancer where a
 // wrong selection wastes hours.
 inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
+
+// FDCAN1 TX FIFO slots kept free for the flight telemetry matrix while a LOGFS
+// reply is being shipped (#449).
+//
+// A pull is a MULTI-MINUTE operation. pump_diag_tx() used to fill the 16-deep
+// FIFO to zero free slots, and it runs before the telemetry scheduler in the
+// same loop pass -- so for the whole transfer the flight matrix found no slots
+// and send_or_fail dropped pack currents / voltages / temps SILENTLY (the only
+// evidence being g_acu_tx_fail, which is itself best-effort). Diag also wins
+// arbitration: 0x011/0x012 out-prioritise every AMS telemetry ID.
+//
+// It fails safe -- a dropped ok_precharge means no R2D, never a spurious one --
+// but an invisible telemetry blackout is a debugging trap. Reserving 6 of 16
+// still lets diag move ~10 frames per 1 ms pass, far more than the ~1 frame per
+// pass the transfer actually needs.
+inline constexpr std::uint8_t  DiagTxReservedSlots = 6;
 
 // LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",
 // 7 Hz first stage) is the canonical choice for race-pack
