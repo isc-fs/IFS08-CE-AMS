@@ -87,17 +87,17 @@ public:
     //
     // Per-IC cell-slot mapping inside the module's 19-cell window:
     //
-    //   LTC_1 (chain index 2N, "upper", 10 cells)
+    //   LTC_1 (chain index 2N, "upper", FIRST -- 9 cells)  [#423]
     //     RDCVA -> module cells 0,1,2
     //     RDCVB -> module cells 3,4,5
     //     RDCVC -> module cells 6,7,8
-    //     RDCVD -> module cell 9 (slots 2,3 of group D unused)
-    //
-    //   LTC_2 (chain index 2N+1, "lower", 9 cells)
-    //     RDCVA -> module cells 10,11,12
-    //     RDCVB -> module cells 13,14,15
-    //     RDCVC -> module cells 16,17,18
     //     RDCVD -> discarded
+    //
+    //   LTC_2 (chain index 2N+1, "lower", SECOND -- 10 cells)  [#423]
+    //     RDCVA -> module cells 9,10,11
+    //     RDCVB -> module cells 12,13,14
+    //     RDCVC -> module cells 15,16,17
+    //     RDCVD -> module cell 18 (slots 1,2 of group D unused)
     //
     // Per-IC PEC handling: if ANY of the 4 register groups for an IC
     // fails PEC, that IC is marked offline this cycle and its cell
@@ -141,6 +141,15 @@ public:
     // True iff all 5 modules have reported within BmsStaleMs and
     // module_online_mask covers them. Used by SafetyTask.
     [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
+
+    // Bitmask of chain-index ICs that were PEC-clean on the most recent
+    // update_from_ltc_response (bit i = IC i clean). Single-writer
+    // (BmsPollTask); read from that same task right after the update, so the
+    // voltage-poll retry can tell a fully-clean read (all LtcChainLength bits
+    // set) from a partial one without copying the whole snapshot.
+    [[nodiscard]] std::uint16_t ltc_online_mask() const noexcept {
+        return state_.ltc_online_mask;
+    }
 
 private:
     BmsService();

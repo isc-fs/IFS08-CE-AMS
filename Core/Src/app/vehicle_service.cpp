@@ -44,18 +44,21 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         return true;
     }
 
-    // Operator balance-control override (#336). Magic-gated: "BALO"
-    // suppresses autonomous balancing, "BALX" resumes it. Both stamp the
-    // freshness tick; an unrecognised payload is ignored (bus-noise safe).
+    // Operator balance-control override (#336): 3-state master switch on 0x103.
+    // "BALO" -> Off, "BALN" -> On, "BALX" -> Auto. An unrecognised payload is
+    // ignored (bus-noise safe) and leaves the prior command + tick in place.
     if (f.id == config::BalanceOverrideReqId) {
         if (f.dlc < config::BalanceOverrideReqDlc) return false;
-        bool on = true, off = true;
+        bool is_off = true, is_on = true, is_auto = true;
         for (std::size_t i = 0; i < config::BalanceOverrideReqDlc; ++i) {
-            if (f.data[i] != config::BalanceOverrideOnMagic[i])  on  = false;
-            if (f.data[i] != config::BalanceOverrideOffMagic[i]) off = false;
+            if (f.data[i] != config::BalanceCmdOffMagic[i])  is_off  = false;
+            if (f.data[i] != config::BalanceCmdOnMagic[i])   is_on   = false;
+            if (f.data[i] != config::BalanceCmdAutoMagic[i]) is_auto = false;
         }
-        if (!on && !off) return false;            // neither magic -> ignore
-        state_.balance_override_suppress  = on;   // BALO -> true, BALX -> false
+        if      (is_off)  state_.balance_cmd = config::BalanceCmd::Off;
+        else if (is_on)   state_.balance_cmd = config::BalanceCmd::On;
+        else if (is_auto) state_.balance_cmd = config::BalanceCmd::Auto;
+        else return false;                        // no magic matched -> ignore
         state_.last_balance_override_tick = f.timestamp_ms;
         return true;
     }
@@ -72,14 +75,17 @@ bool VehicleService::charge_requested(std::uint32_t now_tick,
     return age <= config::ChargeReqFreshMs;
 }
 
-bool VehicleService::balance_suppressed(std::uint32_t now_tick,
-                                        std::uint32_t last_override_tick,
-                                        bool          suppress_flag) noexcept {
-    if (!suppress_flag) return false;        // last cmd was BALX (or never)
-    if (last_override_tick == 0u) return false;
+config::BalanceCmd VehicleService::effective_balance_cmd(
+    std::uint32_t      now_tick,
+    std::uint32_t      last_override_tick,
+    config::BalanceCmd last_cmd) noexcept {
+    if (last_override_tick == 0u) return config::BalanceCmd::Off;  // never seen
+    // Future-tick safe (the #276 lesson): a command stamped slightly ahead of
+    // now counts as just-seen, never as ancient.
     const std::uint32_t age =
         (now_tick >= last_override_tick) ? (now_tick - last_override_tick) : 0u;
-    return age <= config::BalanceOverrideFreshMs;
+    if (age > config::BalanceOverrideFreshMs) return config::BalanceCmd::Off;  // dead-man
+    return last_cmd;
 }
 
 VehicleState VehicleService::snapshot() const noexcept {

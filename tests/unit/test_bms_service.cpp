@@ -75,23 +75,22 @@ void build_clean_chain(std::uint8_t* out) {
         const std::uint8_t ic_upper = static_cast<std::uint8_t>(2u * m);
         const std::uint8_t ic_lower = static_cast<std::uint8_t>(2u * m + 1u);
 
-        // LTC_1 (upper, 10 cells). Group D contains only one real
-        // cell (slot 9); the remaining two slots in that segment
-        // must still PEC-validate even though the values are
-        // discarded by the decoder.
+        // LTC_1 (first in chain, 9 cells -> module 0..8). Group D is
+        // entirely discarded but its PEC must still validate or the
+        // decoder marks the IC offline.
         encode_segment(seg_at(0, ic_upper), mV(m, 0), mV(m, 1), mV(m, 2));
         encode_segment(seg_at(1, ic_upper), mV(m, 3), mV(m, 4), mV(m, 5));
         encode_segment(seg_at(2, ic_upper), mV(m, 6), mV(m, 7), mV(m, 8));
-        encode_segment(seg_at(3, ic_upper), mV(m, 9),
-                       /* unused */ 0x0FFFu, /* unused */ 0x0FFFu);
+        encode_segment(seg_at(3, ic_upper), 0x0FFFu, 0x0FFFu, 0x0FFFu);
 
-        // LTC_2 (lower, 9 cells). Group D is entirely discarded but
-        // its PEC must still validate or the decoder will mark the
-        // IC offline.
-        encode_segment(seg_at(0, ic_lower), mV(m, 10), mV(m, 11), mV(m, 12));
-        encode_segment(seg_at(1, ic_lower), mV(m, 13), mV(m, 14), mV(m, 15));
-        encode_segment(seg_at(2, ic_lower), mV(m, 16), mV(m, 17), mV(m, 18));
-        encode_segment(seg_at(3, ic_lower), 0x0FFFu, 0x0FFFu, 0x0FFFu);
+        // LTC_2 (second in chain, 10 cells -> module 9..18). Group D
+        // carries one real cell (slot 0 = C10 = module cell 18); the
+        // remaining two slots must still PEC-validate though discarded.
+        encode_segment(seg_at(0, ic_lower), mV(m, 9),  mV(m, 10), mV(m, 11));
+        encode_segment(seg_at(1, ic_lower), mV(m, 12), mV(m, 13), mV(m, 14));
+        encode_segment(seg_at(2, ic_lower), mV(m, 15), mV(m, 16), mV(m, 17));
+        encode_segment(seg_at(3, ic_lower), mV(m, 18),
+                       /* unused */ 0x0FFFu, /* unused */ 0x0FFFu);
     }
 }
 
@@ -117,11 +116,15 @@ extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     const auto s = BmsService::instance().snapshot();
     // Spot-check across modules + corners of each LTC's cell range.
     TEST_ASSERT_EQUAL_UINT16(3000, s.cell_mV[0][0]);
-    TEST_ASSERT_EQUAL_UINT16(3009, s.cell_mV[0][9]);   // top of LTC_1 module 0
-    TEST_ASSERT_EQUAL_UINT16(3010, s.cell_mV[0][10]);  // bottom of LTC_2 module 0
-    TEST_ASSERT_EQUAL_UINT16(3018, s.cell_mV[0][18]);  // top of LTC_2 module 0
+    TEST_ASSERT_EQUAL_UINT16(3008, s.cell_mV[0][8]);   // last cell of the 9-cell LTC
+    TEST_ASSERT_EQUAL_UINT16(3009, s.cell_mV[0][9]);   // first cell of the 10-cell LTC (#423: was 0)
+    TEST_ASSERT_EQUAL_UINT16(3018, s.cell_mV[0][18]);  // 10th cell of the 10-cell LTC (RDCVD C10)
     TEST_ASSERT_EQUAL_UINT16(3100, s.cell_mV[1][0]);
     TEST_ASSERT_EQUAL_UINT16(3418, s.cell_mV[4][18]); // module 4 last cell
+    // #423 anti-regression: all 19 cells populate contiguously -- no interior 0 pad.
+    for (std::uint8_t c = 0; c < ams::config::CellsPerModule; ++c) {
+        TEST_ASSERT_EQUAL_UINT16(static_cast<std::uint16_t>(3000u + c), s.cell_mV[0][c]);
+    }
 
     TEST_ASSERT_EQUAL_UINT16(0x3FFu, s.ltc_online_mask);
     TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
@@ -189,9 +192,10 @@ extern "C" void test_bms_ltc_null_buffer_rejected(void) {
 }
 
 // ---------------------------------------------------------------------------
-// is_healthy goes false after the freshness window expires.
-// BmsStaleMs is 1500; after the corrupted-IC test above last_rx_tick
-// for module 2 stayed at 1000, so any tick > 2500 must report stale.
+// is_healthy goes false after the freshness window expires. After the
+// corrupted-IC test above, last_rx_tick for module 2 stayed at 1000, so any
+// tick > 1000 + BmsStaleMs reports stale. 2501 is past the window for any
+// BmsStaleMs <= 1500 (window edge is 2000 at the current 1000 ms).
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_ltc_is_healthy_false_after_staleness(void) {
     TEST_ASSERT_FALSE(BmsService::instance().is_healthy(2501));
@@ -228,18 +232,20 @@ extern "C" void test_bms_mask_collapses_when_chain_stops_responding(void) {
         bad[0 * GroupBytes + ic * Seg + 7] ^= 0x01u;
     }
 
-    // Mid-window: at t = 1500 (== BmsStaleMs), delta from t=0 is 1500
-    // which is <= BmsStaleMs (the boundary case is "still fresh").
-    fake_set_tick(1500);
-    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), 1500);
+    // Boundary: at t == BmsStaleMs, delta from t=0 equals BmsStaleMs, which is
+    // <= BmsStaleMs -> still fresh (key off the constant, not a literal, so the
+    // test tracks the configured window).
+    const std::uint32_t boundary = config::BmsStaleMs;
+    fake_set_tick(boundary);
+    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), boundary);
     {
         const auto s = BmsService::instance().snapshot();
         TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
     }
 
-    // Beyond the window: at t = 1501, delta is 1501 > 1500 -> drop.
-    fake_set_tick(1501);
-    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), 1501);
+    // Beyond the window: at t = BmsStaleMs + 1, delta > BmsStaleMs -> drop.
+    fake_set_tick(boundary + 1u);
+    BmsService::instance().update_from_ltc_response(bad, sizeof(bad), boundary + 1u);
     {
         const auto s = BmsService::instance().snapshot();
         TEST_ASSERT_EQUAL_UINT8(0u, s.module_online_mask);

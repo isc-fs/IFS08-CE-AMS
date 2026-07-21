@@ -95,7 +95,14 @@ extern "C" void test_predicates_cell_overtemp(void) {
     ams::VehicleState veh;
     auto in = make_nominal(bms, cur, veh, 10000);
     bms.max_tempC = ams::config::CellOverTempC + 1;
-    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+    // Cell-temp faults are gated behind config::TempFaultsTrusted. While temps
+    // are not trusted (mux path unvalidated) an over-temp must NOT fault; when
+    // the flag flips true it must. This asserts whichever the flag selects.
+    if (ams::config::TempFaultsTrusted) {
+        TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+    } else {
+        TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+    }
 }
 
 extern "C" void test_predicates_bms_stale(void) {
@@ -382,6 +389,43 @@ extern "C" void test_cell_debounce_ignores_non_cell(void) {
     TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::CurrentOverLimit, 3));
     TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::VcuStale, 3));
     TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::ForceError, 3));
+}
+
+// ---------------------------------------------------------------------------
+// BmsStale confirmation debounce: confirms only after N consecutive BmsStale
+// ticks; a single flicker never confirms; any other reason resets the streak.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_stale_debounce_confirms_after_n(void) {
+    ams::safety::BmsStaleDebounce db;
+    const std::uint16_t N = 25;
+    for (std::uint16_t i = 0; i < N - 1; ++i) {
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));  // not yet
+    }
+    TEST_ASSERT_TRUE(db.update(ams::safety::FaultReason::BmsStale, N));       // Nth -> confirm
+    TEST_ASSERT_TRUE(db.update(ams::safety::FaultReason::BmsStale, N));       // stays confirmed
+}
+
+extern "C" void test_bms_stale_debounce_transient_never_confirms(void) {
+    ams::safety::BmsStaleDebounce db;
+    const std::uint16_t N = 25;
+    // A far module flickering just past the window then recovering next poll.
+    for (int cycle = 0; cycle < 50; ++cycle) {
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));  // 1 bad
+        TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::None, N));      // recovered -> reset
+    }
+}
+
+// Any non-BmsStale reason (incl. a different real fault) resets the streak so
+// it can't carry over and never leaks a confirm to another reason.
+extern "C" void test_bms_stale_debounce_resets_on_other_reason(void) {
+    ams::safety::BmsStaleDebounce db;
+    const std::uint16_t N = 3;
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 1
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 2
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsModuleOffline, N));  // reset
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 1 again
+    TEST_ASSERT_FALSE(db.update(ams::safety::FaultReason::BmsStale, N));      // 2
+    TEST_ASSERT_TRUE (db.update(ams::safety::FaultReason::BmsStale, N));      // 3 -> confirm
 }
 
 // ---------------------------------------------------------------------------

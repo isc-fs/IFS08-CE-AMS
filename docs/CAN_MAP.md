@@ -603,6 +603,140 @@ Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matche
 
 ---
 
+## RX/TX — LOGFS log extraction (FDCAN1, ISO-TP)
+
+On-CAN retrieval of the SD datalogs, so a card never has to be pulled from
+a mounted accumulator. Serves [#406](https://github.com/isc-fs/IFS08-CE-AMS/issues/406)
+(MingoCAN) and [#439](https://github.com/isc-fs/IFS08-CE-AMS/issues/439) (`ui.py`)
+with one protocol.
+
+Unlike everything else in this document, LOGFS is **not** a fixed-layout
+signal frame — it is a request/response protocol over **ISO-TP
+(ISO 15765-2)**, so it does not appear in `ams.dbc`.
+
+### Addressing
+
+| Direction | ID | Note |
+|---|---|---|
+| Host → AMS | `0x000 + NodeID` | `0x001` today; `0x002` after [#403](https://github.com/isc-fs/IFS08-CE-AMS/issues/403) |
+| AMS → host | `0x010 + NodeID` | |
+
+> **`0x002` is shared with the boot trigger above, and that is safe.**
+> `matches_trigger` requires **DLC 4** *and* the exact `B0 07 AD 11`
+> payload; an ISO-TP frame is always **DLC 8**, and `0xB0` can never be a
+> valid ISO-TP PCI byte (only `0x0`–`0x3` are). The trigger check runs
+> first in `AcuCanTask`, so a LOGFS frame passes through it untouched.
+
+### Message framing
+
+Each reassembled ISO-TP message is `[msg_type][opcode][payload…]`.
+
+Requests use **`msg_type = 0x06` (`BL_MSG_APP_CTRL`)**, *not* `0x00`
+(`BL_MSG_CMD`). Under `CMD` the application and bootloader would share one
+opcode registry, and `0x2x` is bootloader-adjacent (`0x20` is reserved
+there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
+
+> **Consequence for hosts:** the bootloader *silently drops* `APP_CTRL`. A
+> LOGFS command sent while the node sits in the **bootloader** yields a
+> **timeout, not a NACK** — indistinguishable from a dead node. Probe with a
+> bootloader command (`DISCOVER 0x03` / `GET_FW_INFO 0x04` under `CMD`),
+> which the BL *does* answer, before reporting a cable fault.
+
+### Opcodes (little-endian payloads)
+
+| Opcode | Name | Args | ACK payload |
+|---|---|---|---|
+| `0x01` | CONNECT | — | `major:u8`, `minor:u8` (app diag proto, currently 1.0) |
+| `0x02` | DISCONNECT | — | — |
+| `0x21` | LIST | `cursor:u16` | `next_cursor:u16`, `count:u8`, `entry × count` |
+| `0x22` | OPEN | `index:u16` | `handle:u16`, `size:u32`, `crc32:u32` |
+| `0x23` | READ | `handle:u16`, `offset:u32`, `len:u16` | `data` (≤ 512 B) |
+| `0x24` | CRC | `handle:u16` | `crc32:u32` |
+| `0x25` | CLOSE | `handle:u16` | — |
+| `0x27` | FINALIZE | — | `index:u16` |
+
+`entry` is a fixed **22 bytes** — `{index:u16, size:u32, mtime:u32,
+name[12]}` — so a listing is parsed by stride. `mtime` is the packed FAT
+stamp (`fdate << 16 | ftime`). `next_cursor == 0xFFFF` ends the listing.
+
+On OPEN, **`crc32 == 0` means "not available — use `LOGFS_CRC`"**, not a literal
+zero CRC. Every file this firmware seals gets a `.CRC` sidecar, but cards
+written before sidecars existed have none, and OPEN must never block streaming
+4 MiB to compute one.
+
+**A short READ means end-of-file**, and is an ACK, not an error — that is
+the host's normal termination signal. An oversized `len` is clamped to 512
+rather than rejected.
+
+**`FINALIZE` (`0x27`)** seals the *active* log — flush, close, rename to
+`.CSV`, write the CRC sidecar — and returns the sealed index, so the run that
+just happened is immediately listable and openable rather than waiting on
+rotation. It NACKs `FILE_NOT_FOUND` when there is nothing to seal (no active
+file, or no rows written yet), so an eager operator cannot fill the card with
+header-only files. Any open read handle is released, since the file set has
+changed.
+
+**v1 is read-only.** There is no DELETE (`0x26` is deliberately
+unimplemented and NACKs as unsupported): an extraction tool that can also
+erase logs is the wrong tool to hand a pit crew.
+
+### NACK codes
+
+Values ≤ `0x10` are the bootloader's, reused verbatim.
+
+| Code | Meaning |
+|---|---|
+| `0x02` | OUT_OF_BOUNDS — malformed/truncated args |
+| `0x04` | FILE_NOT_FOUND |
+| `0x06` | BAD_SESSION — no CONNECT, or wrong peer |
+| `0x08` | BUSY — a request is already in flight |
+| `0x11` | BAD_HANDLE — stale handle (note: **not** `0x08`, which is BUSY) |
+| `0x12` | NO_SD_CARD |
+| `0x13` | FS_ERROR |
+| `0x14` | READ_ERROR |
+| `0xFE` | UNSUPPORTED |
+
+### Session
+
+`CONNECT` opens a session; everything except CONNECT/DISCONNECT is refused
+with `BAD_SESSION` without one, so a stray frame cannot stream the card to
+whoever is on the bus. Idle timeout is **10 s**, after which any open file
+handle is released — an operator who unplugs mid-pull does not pin it.
+A CONNECT from a second host takes over, releasing the previous handle.
+
+A `CMD`-typed (`0x00`) frame gets **silence**, not a NACK: the application
+does not answer for the bootloader's namespace.
+
+### Files visible
+
+Only sealed `LOGnnnn.CSV`. The active `LOGnnnn.TMP` is excluded because its
+length would be stale before a host finished reading it, and `LOGnnnn.CRC`
+sidecars are an implementation detail. The sidecar holds the CRC-32
+accumulated as rows were written, so `CRC` answers without re-reading the
+file; absent one, it falls back to streaming.
+
+CRC-32 is **ISO-HDLC / zlib** (poly `0xEDB88320` reflected, init and final
+XOR `0xFFFFFFFF`) — i.e. Python's `zlib.crc32`. Deliberately *not* the
+STM32 hardware CRC default (CRC-32/MPEG-2), which is a different checksum.
+
+### Throughput — plan for it
+
+ISO-TP carries 7 of every 8 bytes, so a 512-byte READ is ~76 frames ≈ 19 ms
+at 500 kbit/s → **~27 KB/s on an idle bus**. With `LogFileMaxBytes` at 4 MiB
+that is **~2.5–3 min per file**, and the bus is not idle. Larger reads buy
+~5%; per-frame overhead dominates. Hosts should show progress, let operators
+pick files from `LIST` sizes, and resume via the offset-based `READ`.
+
+Source: [`Core/Inc/app/isotp.hpp`](../Core/Inc/app/isotp.hpp),
+[`diag_proto.hpp`](../Core/Inc/app/diag_proto.hpp),
+[`diag_dispatch.hpp`](../Core/Inc/app/diag_dispatch.hpp),
+[`logfs_server.hpp`](../Core/Inc/app/logfs_server.hpp),
+[`crc32.hpp`](../Core/Inc/app/crc32.hpp); FatFs backend in
+[`sd_logger_task.cpp`](../Core/Src/app/sd_logger_task.cpp), CAN route in
+[`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
+
+---
+
 ## Timeout summary
 
 | Signal | Timeout | Enforced (legacy) | Refactor plan |

@@ -33,6 +33,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 // FSM state mirror, written by MainTask on every transition (the FSM
 // step body lives inside MainTask since refactor/19 phase 3). Reading
@@ -70,6 +71,19 @@ extern "C" volatile std::uint32_t g_balance_dcc_bits[5] = {0, 0, 0, 0, 0};
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub  = 0;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
 
+// Chain-recovery counter: incremented every time run_voltage_poll re-wakes
+// and reconfigures the chain after consecutive failed polls. Zero on a
+// healthy bus; climbing means the chain is repeatedly dropping out (the
+// inverter-EMI T_SLEEP case this recovery exists for). extern "C" so the
+// pit-diag stream can surface it.
+extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
+
+// Times the voltage poll cleared the DCC bits before measuring (#balance
+// measurement integrity). Climbs at the poll rate whenever balancing is
+// actually discharging, and stays flat when it is not -- so the bench can
+// confirm from CAN alone that the quiesce is running.
+extern "C" volatile std::uint32_t g_balance_quiesce_count = 0;
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -77,6 +91,69 @@ namespace {
 volatile std::uint32_t g_balance_cycles_total  = 0;
 volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
+
+// Last CFGA payload actually written to the chain, and whether it asserted any
+// DCC bit. The mask is only recomputed every BalanceUpdatePolls (1 Hz) but
+// PERSISTS on the chain between writes, so quiescing for a measurement has to
+// put it back afterwards -- otherwise clearing it every 250 ms poll would
+// destroy three quarters of the balancing duty.
+std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
+bool         s_balance_active = false;
+
+// ---------------------------------------------------------------------------
+// Chain-sleep recovery.
+//
+// The LTC6811 drops into T_SLEEP (~2 s) after its last VALID command, and a
+// sleeping IC ignores every normal command -- only the CS-low wake pulse
+// train (Bus::wakeup) brings it back. Until this landed, wakeup() was issued
+// exactly once at boot (app_init_task) and never again, so the chain survived
+// only on uninterrupted poll traffic: any interruption longer than T_SLEEP
+// (e.g. inverter switching noise corrupting commands through a torque event)
+// put the chain to sleep permanently, with no code path able to recover it.
+//
+// So: count consecutive failed polls, and once the chain looks gone, re-wake
+// + reconfigure before each subsequent attempt. Retrying every poll (rather
+// than once) is deliberate -- while the disturbance lasts the wake won't take,
+// and we want the chain back on the first poll after it clears.
+//
+// Waking an already-awake chain is harmless (CS pulses carry no command), so
+// a false positive costs ~500 us, not correctness.
+// ---------------------------------------------------------------------------
+
+// Consecutive failed voltage polls before recovery kicks in. 2 polls =
+// 500 ms at BmsPollVoltMs (250 ms), comfortably inside BmsStaleMs (1500 ms)
+// so a recovered chain never reaches the stale predicate. Not 1: an isolated
+// PEC glitch shouldn't clear DCC bits mid-balance for no reason.
+constexpr std::uint32_t RecoverAfterFailedPolls = 2;
+
+std::uint32_t s_consecutive_poll_failures = 0;
+
+// Re-establish the chain after a suspected T_SLEEP: wake it, then restore
+// CFGR. The reconfigure is NOT optional -- sleeping resets CFGR to defaults,
+// which re-enables the GPIO pull-downs and would short the ADG731 mux / NTC
+// divider that the ADAX temperature path reads, and drops REFON. DCC is
+// written all-zero (discharge off); maybe_run_balance_update restores the
+// real mask on its next cycle.
+void recover_chain() noexcept {
+    using namespace ams;
+
+    auto& bus = ltc6820::Bus::default_instance();
+    bus.wakeup();
+
+    // The chain slept, so CFGR is back at defaults and nothing is discharging.
+    // Drop the balance cache: restoring a pre-sleep mask would re-assert bits
+    // the controller has not re-derived since. The next 1 Hz update recomputes.
+    s_balance_active = false;
+
+    const auto   cfg = ltc6811::pack_cfga_payload(/*dcc_bits=*/0u);
+    std::uint8_t per_ic[config::LtcChainLength][6];
+    for (std::size_t i = 0; i < config::LtcChainLength; ++i) {
+        std::memcpy(per_ic[i], cfg.data(), 6);
+    }
+    (void)bus.write_chain_command(ltc6811::CmdWRCFGA, per_ic);
+
+    ++g_ltc_chain_recover_count;
+}
 
 void volt_timer_cb(void * /*arg*/) {
     osEventFlagsSet(bms_eventsHandle, ams::events::bms::PollVDue);
@@ -92,54 +169,54 @@ void temp_timer_cb(void * /*arg*/) {
 // RDCVD) concatenated into a 320-byte buffer that BmsService digests
 // in one mutex-acquire.
 // ---------------------------------------------------------------------------
-void run_voltage_poll() {
+// Result of one voltage-poll attempt.
+struct VoltAttempt {
+    bool         any_module_fresh;  // >= 1 module had BOTH its LTCs PEC-clean
+    std::uint8_t clean_ltcs;        // count of PEC-clean ICs this attempt
+};
+
+// One voltage-poll attempt: ADCV -> settle -> warm-up -> RDCVA/B/C/D -> digest.
+// update_from_ltc_response refreshes last_rx_tick for whichever modules came
+// back PEC-clean, so calling this repeatedly (the retry loop below) gives each
+// module more chances to report. Returns {false, 0} on any bus-level failure.
+VoltAttempt attempt_voltage_poll() {
     using namespace ams;
 
     auto& bus = ltc6820::Bus::default_instance();
 
     // 1. ADCV broadcast. Discharge-permit = false during normal data
-    //    acquisition (#74 will flip it for balancing windows). All
-    //    cells channel-select = CellSel::All.
+    //    acquisition (#74 flips it for balancing windows). Cells = All.
     const auto adcv = ltc6811::pack_command(
         ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                           /*discharge_permit=*/false,
                           ltc6811::CellSel::All));
     if (!bus.send_command(adcv.data())) {
         ++g_ltc_spi_err_count;
-        return;
+        return { false, 0 };
     }
 
     // 2. ADC settling. Norm-7kHz mode converts all 12 channels in
-    //    ~2.3 ms; we round to 3 ms (config::AdcvSettleMs). osDelay
-    //    rounds up to the next FreeRTOS tick (1 Hz) so worst-case
-    //    wait is 3-4 ms -- well below the 50 ms budget.
+    //    ~2.3 ms; we round to 3 ms (config::AdcvSettleMs).
     osDelay(config::AdcvSettleMs);
 
-    // 3. Warm-up cmd before RDCVA (#214). After the multi-ms idle
-    //    between ADCV+settle and the first RDCV, MOSI drifts toward
-    //    its idle-high level long enough that slaves which re-sync
-    //    on CS edges (e.g. the Pi Pico LTC6820 emulator on the HIL
-    //    bench) sample a stray HIGH as bit 7 of byte 0 of RDCVA --
-    //    PEC then mismatches for every IC in the chain. Issuing a
-    //    no-op RDCFGA first burns the stale-MOSI sample into a cmd
-    //    whose reply we discard; the subsequent RDCV* commands come
-    //    back-to-back with MOSI continuously driven, so bit-sync
-    //    holds. ~700 us at 1 MHz SCK, well under the 50 ms budget.
-    //
-    //    TODO: replace settle delay + warm-up with PLADC polling
-    //    (LTC6811 cmd 0x0714) so we hold CS low across the
-    //    conversion and there's no idle gap to bridge.
+    // 3. Warm-up cmd before RDCVA (#214). After the multi-ms idle between
+    //    ADCV+settle and the first RDCV, MOSI drifts toward its idle-high
+    //    level long enough that slaves which re-sync on CS edges (e.g. the Pi
+    //    Pico LTC6820 emulator on the HIL bench) sample a stray HIGH as bit 7
+    //    of byte 0 of RDCVA -- PEC then mismatches for every IC. A no-op RDCFGA
+    //    first burns the stale-MOSI sample into a cmd whose reply we discard;
+    //    the RDCV* commands then come back-to-back with MOSI continuously
+    //    driven, so bit-sync holds. ~700 us at 1 MHz SCK.
     const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
     std::uint8_t warmup_reply[8 * config::LtcChainLength];
     if (!bus.read_register_group(rdcfga.data(),
                                  warmup_reply, sizeof(warmup_reply))) {
         ++g_ltc_spi_err_count;
-        return;
+        return { false, 0 };
     }
 
-    // 4. Read the four cell-voltage register groups into one
-    //    contiguous buffer that BmsService::update_from_ltc_response
-    //    can walk. Group layout:
+    // 4. Read the four cell-voltage register groups into one contiguous buffer
+    //    that BmsService::update_from_ltc_response can walk. Group layout:
     //      [A: 10 segments][B: 10 segments][C: 10 segments][D: 10 segments]
     constexpr std::size_t SegBytes   = 8;
     constexpr std::size_t GroupBytes = config::LtcChainLength * SegBytes;
@@ -155,15 +232,105 @@ void run_voltage_poll() {
                                      reply + g * GroupBytes,
                                      GroupBytes)) {
             ++g_ltc_spi_err_count;
-            return;  // partial reply -> don't poison BmsService state
+            return { false, 0 };  // partial reply -> don't poison BmsService state
         }
     }
 
-    // 4. Hand the assembled chain response to BmsService. Per-IC PEC
-    //    is checked inside; bus-level failures already returned above.
+    // 5. Digest. Per-IC PEC is checked inside; update returns false iff NO
+    //    module had both its LTCs PEC-clean (the sleep/blackout signature).
     const std::uint32_t now_ms = osKernelGetTickCount();
-    (void)BmsService::instance().update_from_ltc_response(
+    const bool any_fresh = BmsService::instance().update_from_ltc_response(
         reply, sizeof(reply), now_ms);
+
+    // Count PEC-clean ICs so the retry loop can stop early on a fully-clean read.
+    std::uint16_t mask  = BmsService::instance().ltc_online_mask();
+    std::uint8_t  clean = 0;
+    while (mask != 0u) { clean = static_cast<std::uint8_t>(clean + (mask & 1u)); mask >>= 1; }
+    return { any_fresh, clean };
+}
+
+// Turn every discharge FET off and wait for it to actually happen, so the
+// cell-voltage conversion is not corrupted by bleed current in the harness.
+// See config::BalanceQuiesceMs for why ADCV's DCP=0 alone is not enough here.
+//
+// Returns true if it quiesced (and therefore owes a restore). A no-op when
+// nothing is balancing, which is the common case outside Charge.
+bool quiesce_balancing() noexcept {
+    using namespace ams;
+    if (!s_balance_active) return false;
+
+    std::uint8_t zeros[config::LtcChainLength][6];
+    const auto   off = ltc6811::pack_cfga_payload(0u);
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) zeros[i][k] = off[k];
+    }
+
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, zeros)) {
+        // Could not prove discharge is off. Measure anyway -- stale cell data
+        // starves the safety predicates, which is worse than a noisy read --
+        // but do not claim a restore is owed, and count the error.
+        ++g_ltc_spi_err_count;
+        return false;
+    }
+    ++g_balance_quiesce_count;
+    osDelay(config::BalanceQuiesceMs);
+    return true;
+}
+
+// Put the balancing mask back after a measurement.
+void restore_balancing() noexcept {
+    using namespace ams;
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, s_last_cfga)) {
+        // Balancing stays off until the next 1 Hz update rewrites it. Harmless:
+        // the policy is stateless, so it simply resumes next cycle.
+        ++g_ltc_spi_err_count;
+        s_balance_active = false;
+    }
+}
+
+void run_voltage_poll() {
+    using namespace ams;
+
+    // 0. If the last polls failed, the chain has probably hit T_SLEEP and is
+    //    deaf to ordinary commands -- wake + reconfigure before trying again.
+    if (s_consecutive_poll_failures >= RecoverAfterFailedPolls) {
+        recover_chain();
+    }
+
+    // 0b. Stop bleeding before measuring. The bleed return path is the harness,
+    //     not the board, so current flowing during a conversion shifts the
+    //     shared tap node: the bled cell reads low and BOTH its neighbours read
+    //     high, by 9-36 mV against a 50 mV selection threshold. Left in, the
+    //     selection rule chases its own artifact.
+    const bool quiesced = quiesce_balancing();
+
+    // 1. Attempt the read up to (1 + VoltPollRetries) times. Each attempt
+    //    digests whatever ICs are PEC-clean (refreshing those modules), so a
+    //    brief EMI burst that corrupts one attempt often clears on an immediate
+    //    re-read before the affected module drifts toward BmsStale, and retries
+    //    give stragglers more chances. Stop early once the whole chain reads
+    //    clean. A chain that fails EVERY attempt (dead / asleep / continuously
+    //    swamped) still counts as one failed poll, feeding the T_SLEEP recovery
+    //    and the staleness predicate exactly as before.
+    bool any_fresh = false;
+    for (std::uint8_t attempt = 0; attempt <= config::VoltPollRetries; ++attempt) {
+        const VoltAttempt r = attempt_voltage_poll();
+        any_fresh = any_fresh || r.any_module_fresh;
+        if (r.clean_ltcs >= config::LtcChainLength) break;  // whole chain clean
+    }
+
+    // 2. Resume bleeding. Done here rather than waiting for the 1 Hz balance
+    //    update, which would otherwise leave discharge off for three polls out
+    //    of four.
+    if (quiesced) restore_balancing();
+
+    if (any_fresh) {
+        s_consecutive_poll_failures = 0;
+    } else {
+        ++s_consecutive_poll_failures;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -182,27 +349,32 @@ void maybe_run_balance_update() {
     const auto       state    = BmsService::instance().snapshot();
     const fsm::State fsm_curr =
         static_cast<fsm::State>(g_state_telemetry);
-    // Operator balance override (#336): pause autonomous balancing while a
-    // fresh "BALO" (0x103) is in effect. Reverts to auto on "BALX" or when
-    // the override goes stale.
-    const auto       veh      = VehicleService::instance().snapshot();
-    const bool       suppress = VehicleService::balance_suppressed(
-        osKernelGetTickCount(), veh.last_balance_override_tick,
-        veh.balance_override_suppress);
-    const auto       mask     = balance::compute_mask(state, fsm_curr, suppress);
+    // Operator balance master switch (#336): OFF / ON / AUTO on 0x103, with
+    // the freshness dead-man resolved here (stale / never-seen -> Off).
+    const auto       veh    = VehicleService::instance().snapshot();
+    const auto       op_cmd = VehicleService::effective_balance_cmd(
+        osKernelGetTickCount(), veh.last_balance_override_tick, veh.balance_cmd);
+    // Balancing gates on config::BalanceTempsTrusted, NOT TempFaultsTrusted:
+    // "trust these temps enough to balance on" is a different question from
+    // "trust them enough to open the contactors on". Coupling the two meant the
+    // WarioCharger 0x103 toggle was accepted and then produced an all-zero mask
+    // forever. See the residual-risk note on BalanceTempsTrusted -- the
+    // BalanceTempMax lockout inside compute_mask still applies.
+    const auto       mask   = balance::compute_mask(
+        state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
 
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
-        // LTC_1 (upper, chain index 2m) owns module cells 0..9.
+        // LTC_1 (upper, chain index 2m) owns module cells 0..8 (9 cells).
         std::uint16_t dcc_upper = 0;
         for (std::uint8_t c = 0; c < config::CellsPerLtcUpper; ++c) {
             if (mask.cell[m][c]) {
                 dcc_upper = static_cast<std::uint16_t>(dcc_upper | (1u << c));
             }
         }
-        // LTC_2 (lower, chain index 2m+1) owns module cells 10..18.
+        // LTC_2 (lower, chain index 2m+1) owns module cells 9..18 (10 cells).
         std::uint16_t dcc_lower = 0;
         for (std::uint8_t c = 0; c < config::CellsPerLtcLower; ++c) {
             if (mask.cell[m][config::CellsPerLtcUpper + c]) {
@@ -234,6 +406,14 @@ void maybe_run_balance_update() {
         ++g_ltc_spi_err_count;
         return;
     }
+
+    // Cache what is now on the chain so the next voltage poll can quiesce and
+    // restore it. s_balance_active gates that work away entirely when nothing
+    // is discharging, which is every cycle outside Charge.
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) s_last_cfga[i][k] = per_ic[i][k];
+    }
+    s_balance_active = any_dcc;
 
     ++g_balance_cycles_total;
     if (any_dcc) ++g_balance_cycles_active;
