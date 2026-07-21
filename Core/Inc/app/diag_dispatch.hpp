@@ -42,17 +42,22 @@ namespace ams::diag {
 //     it is not worth carrying at all when the alternative is simply not
 //     extracting while the car is live.
 //
-// Start is the only permitted state: the contactors are open and the TS is
-// down by construction.
+// Permitted states are Start and Error. Both have the contactors OPEN and the
+// tractive system DOWN -- which is the property the rule is really about; the
+// state name is incidental.
 //
-// NOTE the consequence for the post-fault case -- see the comment on
-// Error below.
+// Error is not a grudging exception, it is the case the feature exists for.
+// #448's whole purpose is "grab the log from the run that just faulted", and a
+// faulted car sits in Error. ErrorLatch is sticky across resets, so a
+// power-cycled post-fault car boots back INTO Error -- refusing it would have
+// made the primary use case reachable only by clearing the latch first.
+//
+// It is also the state where the arbitration hazard cannot bite: the concern
+// is LOGFS out-prioritising the VCU heartbeat until VcuStale latches Error and
+// opens the contactors. In Error that has already happened. There is no
+// further harm available.
 [[nodiscard]] inline bool logfs_allowed_in(fsm::State s) noexcept {
-    // Error ALSO has the contactors open and the TS down, and it is the state
-    // the car sits in after the fault whose log an operator most wants (#448).
-    // It is deliberately NOT permitted here pending an explicit call, because
-    // widening a safety gate should be a decision rather than an inference.
-    return s == fsm::State::Start;
+    return s == fsm::State::Start || s == fsm::State::Error;
 }
 
 template <class LogfsServer>
