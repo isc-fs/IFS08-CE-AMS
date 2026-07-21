@@ -352,7 +352,7 @@ return {};
 | `watchdog.cpp` | `HAL_IWDG_Refresh(&hiwdg1)` | Reload 100 / prescaler 32 → ~100 ms at LSI 32 kHz. Refreshed on every clean iteration *and* the latched-fault path. |
 | `error_latch.cpp` | RTC_BKP_DR1 magic `0xA115EE51` | Sticky across resets. Cleared only by VBAT loss in flight, or by `App_InitTask::clear()` under `AMS_BMS_HIL_STUB` OR `AMS_HIL_CLEAR_ERROR_LATCH`. |
 | `bootloader.cpp` | `matches_trigger()`, `request_reboot(reason)` | Trigger: 0x002 std, DLC 4, `{0xB0,0x07,0xAD,0x11}`. Reboot writes magic to BKP0R + reason ASCII to BKP2R + `NVIC_SystemReset`. |
-| `firmware_info.cpp` | `firmware_info` struct at fixed offset | Populated from CMake — semver (`VERSION`) + git hash + `AmsNodeId = 0x01` baked at build time; MingoCAN reads it. |
+| `firmware_info.cpp` | `firmware_info` struct at fixed offset | Populated from CMake — semver (`VERSION`) + git hash + `AmsNodeId = 0x02` baked at build time; MingoCAN reads it. |
 | `can_isr.cpp` | `HAL_FDCAN_RxFifo0Callback` | Reads `rxh.DataLength & 0xF` directly; std-only filter keeps the ISR off extended junk. |
 
 ### AMS_OK / SDC enable (#301)
@@ -454,7 +454,7 @@ Single namespace `ams::config` (`ams_config.hpp`) — the canonical home for eve
 | `ChargeModeReqId` | 0x101 | operator charge request |
 | `ChargeModeReqMagic` | `43 48 52 47` ("CHRG") | 0x101 payload gate |
 | `ChargeReqFreshMs` | 1000 | 0x101 freshness at mode lock |
-| `AmsNodeId` | 0x01 | matches BL NVM |
+| `AmsNodeId` | 0x02 | matches BL NVM (role map ECU=1 / AMS=2, #403) |
 
 ### COMMISSION-tagged surface
 

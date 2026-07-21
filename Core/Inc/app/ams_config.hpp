@@ -675,11 +675,15 @@ enum class LastFault : std::uint8_t {
 // flash time that the app it's writing matches the BL it's talking
 // to. Changing this requires re-building both halves.
 //
-// 2026-05-18: BL team adopted node ID 0x01 on MLC1 (matches the value
-// already in NVM from factory). This flip aligns the firmware-side
-// firmware_info.reserved[0] with the BL it now talks to. Confirmed
-// by IFS08_HIL#30 turning A-002/A-003 green.
-inline constexpr std::uint32_t AmsNodeId = 0x01u;
+// 2026-05-18: originally 0x01 (MLC1 single-node bring-up; factory NVM),
+// confirmed by IFS08_HIL#30 turning A-002/A-003 green.
+// #403: the shared-bus role map (can-flasher provision) is ECU=1,
+// AMS=2, uDV=3 -- 0x01 is the ECU's slot, so on a shared bus the AMS
+// collided with the ECU. The AMS moves to 0x02. The flight board's BL
+// MUST be re-provisioned to node 2 (-DBL_NODE_ID=2 and/or NVM provision)
+// before flashing this firmware -- both halves change together. Bench
+// (feat/bms-stub-charge) already runs at 0x02.
+inline constexpr std::uint32_t AmsNodeId = 0x02u;
 
 // Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
 // ORIGIN and the bootloader's BL_APP_BASE.
