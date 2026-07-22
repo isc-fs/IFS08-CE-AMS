@@ -96,36 +96,37 @@ extern "C" void test_balance_single_hot_cell_in_charge(void) {
 //    largest excess.
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_caps_at_max_active_per_module(void) {
-    // Written relative to config::BalanceMaxActive so a change to the
-    // dissipation budget does not silently invalidate the test. Put TWO more
-    // cells over the threshold than the cap allows, with strictly increasing
-    // excess, so the cap is genuinely exercised and the selection is ordered.
-    constexpr std::uint8_t kCap  = config::BalanceMaxActive;
-    constexpr std::uint8_t kOver = static_cast<std::uint8_t>(kCap + 2);
-    static_assert(kOver <= config::CellsPerModule,
-                  "test needs more cells per module than the cap + 2");
-
+    // The cap is a board-dissipation limit, so an off-by-one here is watts on a
+    // real board. With spatial spreading on (BalanceSpreadNoAdjacent), the cap
+    // is only reachable from NON-ADJACENT candidates -- so place kCap+1
+    // over-threshold cells at alternating (even) indices, spanning both LTC
+    // halves, with strictly increasing excess.
+    constexpr std::uint8_t kCap = config::BalanceMaxActive;
+    // Even indices 0,2,4,.. are pairwise non-adjacent and there are 10 of them
+    // in 19 cells -- comfortably more than the cap.
+    std::uint8_t placed[16]; std::uint8_t n_placed = 0;
     auto state = make_uniform_state(4100, 25);
-    for (std::uint8_t c = 0; c < kOver; ++c) {
-        state.cell_mV[1][c] = static_cast<std::uint16_t>(4100 + 60 + 10 * c);
+    std::uint16_t ex = 60;
+    for (std::uint8_t c = 0; c < config::CellsPerModule && n_placed < kCap + 1; c += 2) {
+        state.cell_mV[1][c] = static_cast<std::uint16_t>(4100 + ex);
+        placed[n_placed++] = c; ex += 10;
     }
-    state.max_cell_mV = state.cell_mV[1][kOver - 1];
+    state.max_cell_mV = 4100 + ex;
 
     const auto mask = balance::compute_mask(state, fsm::State::Charge,
                                             /*temps_trusted=*/true,
                                             config::BalanceCmd::Auto);
 
-    // Exactly the cap discharges, never more -- this is the board dissipation
-    // limit, so an off-by-one here is watts on a real board.
+    // Exactly the cap discharges, never more.
     TEST_ASSERT_EQUAL_UINT8(kCap, count_set_in_module(mask, 1));
 
-    // ...and they are the HIGHEST cells: the top kCap by excess are set, the
-    // two lowest over-threshold cells are not.
-    for (std::uint8_t c = static_cast<std::uint8_t>(kOver - kCap); c < kOver; ++c) {
-        TEST_ASSERT_TRUE_MESSAGE(mask.cell[1][c], "a top-excess cell was not selected");
+    // The single LOWEST over-threshold cell (placed[0], smallest excess) is the
+    // one dropped; every higher one is set.
+    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][placed[0]],
+                              "lowest over-threshold cell must be the one dropped");
+    for (std::uint8_t i = 1; i <= kCap; ++i) {
+        TEST_ASSERT_TRUE_MESSAGE(mask.cell[1][placed[i]], "a top-excess cell was not selected");
     }
-    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][0], "lowest over-threshold cell must not balance");
-    TEST_ASSERT_FALSE_MESSAGE(mask.cell[1][1], "2nd-lowest over-threshold cell must not balance");
 }
 
 // ---------------------------------------------------------------------------
@@ -395,4 +396,106 @@ extern "C" void test_balance_runs_with_partial_thermal_coverage(void) {
 
     TEST_ASSERT_TRUE(any_set(balance::compute_mask(
         state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::On)));
+}
+
+// --- spatial spread: never two physically-adjacent resistors on at once ------
+//
+// Adjacency is derived from the BMS_LITE PCB (balance::physically_adjacent):
+// consecutive index within an LTC half, no adjacency across the 9/10 seam.
+
+extern "C" void test_balance_adjacency_predicate(void) {
+    // Same upper half, consecutive -> adjacent.
+    TEST_ASSERT_TRUE (balance::physically_adjacent(0, 1));
+    TEST_ASSERT_TRUE (balance::physically_adjacent(7, 8));
+    // Same lower half, consecutive -> adjacent.
+    TEST_ASSERT_TRUE (balance::physically_adjacent(9, 10));
+    TEST_ASSERT_TRUE (balance::physically_adjacent(17, 18));
+    // Non-consecutive -> not adjacent.
+    TEST_ASSERT_FALSE(balance::physically_adjacent(0, 2));
+    // ACROSS the LTC seam (8 upper, 9 lower) -> NOT adjacent, different rows.
+    TEST_ASSERT_FALSE(balance::physically_adjacent(8, 9));
+    // Symmetric.
+    TEST_ASSERT_TRUE (balance::physically_adjacent(10, 9));
+}
+
+// With spreading on, no two selected cells in a module may be physically
+// adjacent -- the whole point.
+extern "C" void test_balance_no_two_adjacent_selected(void) {
+    // Every cell wildly imbalanced so selection is forced to spread, not to
+    // run out of candidates.
+    auto state = make_uniform_state(3500, 25);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m)
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c)
+            state.cell_mV[m][c] = static_cast<std::uint16_t>(4000 + c);   // all >> delta
+    state.min_cell_mV = 3500;   // floor well below, everything is a candidate
+    state.max_cell_mV = 4100;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        for (std::uint8_t a = 0; a < config::CellsPerModule; ++a) {
+            if (!mask.cell[m][a]) continue;
+            for (std::uint8_t b = 0; b < config::CellsPerModule; ++b) {
+                if (a == b || !mask.cell[m][b]) continue;
+                TEST_ASSERT_FALSE_MESSAGE(balance::physically_adjacent(a, b),
+                                          "two physically-adjacent cells were selected");
+            }
+        }
+    }
+}
+
+// Spreading must still reach a useful count on a fully-imbalanced pack: the
+// halves give 5+5 non-adjacent slots, so the 8 cap is achievable.
+extern "C" void test_balance_spread_still_reaches_cap(void) {
+    auto state = make_uniform_state(3500, 25);
+    for (std::uint8_t c = 0; c < config::CellsPerModule; ++c)
+        state.cell_mV[1][c] = static_cast<std::uint16_t>(4000 + 2 * c);
+    state.min_cell_mV = 3500;
+    state.max_cell_mV = 4100;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    std::uint8_t n = 0;
+    for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) n += mask.cell[1][c] ? 1 : 0;
+    // 5 upper + 5 lower = 10 non-adjacent available, capped at 8.
+    TEST_ASSERT_EQUAL_UINT8(config::BalanceMaxActive, n);
+}
+
+// It still picks the HIGHEST cells subject to the constraint: given a clear
+// gradient, the top non-adjacent set wins.
+extern "C" void test_balance_spread_prefers_higher_cells(void) {
+    auto state = make_uniform_state(3700, 25);
+    // Two clearly-highest cells, non-adjacent, must both be chosen.
+    state.cell_mV[2][0]  = 4200;   // upper, very high
+    state.cell_mV[2][12] = 4190;   // lower, very high, not adjacent to 0
+    state.min_cell_mV = 3700;
+    state.max_cell_mV = 4200;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    TEST_ASSERT_TRUE(mask.cell[2][0]);
+    TEST_ASSERT_TRUE(mask.cell[2][12]);
+}
+
+// When only adjacent cells are imbalanced, spreading takes the alternating
+// subset rather than the whole cluster -- fewer than the cap, by design.
+extern "C" void test_balance_spread_thins_a_cluster(void) {
+    auto state = make_uniform_state(3800, 25);
+    // Cells 0..4 (upper, all consecutive) imbalanced, nothing else.
+    for (std::uint8_t c = 0; c < 5; ++c) state.cell_mV[3][c] = static_cast<std::uint16_t>(3900 + c);
+    state.min_cell_mV = 3800;
+    state.max_cell_mV = 3904;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    std::uint8_t n = 0;
+    for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) n += mask.cell[3][c] ? 1 : 0;
+    // 5 consecutive cells -> at most 3 non-adjacent (0,2,4).
+    TEST_ASSERT_LESS_OR_EQUAL_UINT8(3, n);
+    TEST_ASSERT_GREATER_THAN_UINT8(0, n);
+    // and no two adjacent
+    for (std::uint8_t a = 0; a < config::CellsPerModule; ++a)
+        for (std::uint8_t b = a + 1; b < config::CellsPerModule; ++b)
+            if (mask.cell[3][a] && mask.cell[3][b])
+                TEST_ASSERT_FALSE(balance::physically_adjacent(a, b));
 }

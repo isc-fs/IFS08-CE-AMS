@@ -503,6 +503,18 @@ inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balanc
 // unvalidated NTC path (see BalanceTempsTrusted).
 inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module discharging at once
 
+// Never discharge two PHYSICALLY ADJACENT cells at once, so the 2512 balance
+// resistors never form a hot cluster on the board. Adjacency is derived from
+// the BMS_LITE layout in balance::physically_adjacent (consecutive index within
+// an LTC half). Measured pad temperature is ~71 C at 8/module concentrated;
+// spreading keeps neighbours cold over the multi-hour C/101 balancing session.
+//
+// May reduce the active count below BalanceMaxActive when imbalanced cells
+// cluster -- that is the intended, safe outcome (less heat, skipped cells bleed
+// on later cycles). The index->board-position map is BENCH-VERIFIED (2026-07-22,
+// IR on the real pack -- see physically_adjacent).
+inline constexpr bool          BalanceSpreadNoAdjacent = true;
+
 // Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
 //
 // Deliberately separate from TempFaultsTrusted, which arms the FSM cell-temp
