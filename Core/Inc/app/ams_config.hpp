@@ -21,6 +21,26 @@ namespace ams::config {
 
 inline constexpr std::uint16_t CellUnderVoltageMv =  2800;  // under-voltage   -- COMMISSION
 inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
+
+// Implausible-cell bounds for the balancing tap-artifact guard (see
+// recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
+// physically cannot sit outside this window -- a reading beyond it is a
+// MEASUREMENT error, not a true voltage. When two PHYSICALLY-ADJACENT cells
+// straddle a shifted shared tap node (balancing current through a high-R tap),
+// one reads impossibly high and its neighbour compensates low while the
+// tap-immune PAIR SUM stays in the normal window; the guard then feeds the pair
+// AVERAGE to the safety aggregates instead of the impossible individual value.
+// These bounds are deliberately WIDER than CellOver/UnderVoltageMv: a genuine
+// over-/under-voltage (e.g. 4200 < v < 4400) has a NORMAL neighbour (sum runs
+// high, not conserved) and is never masked -- it still faults.
+inline constexpr std::uint16_t CellImplausibleMaxMv = 4400;  // > any charging cell (4.2 V CV limit)
+inline constexpr std::uint16_t CellImplausibleMinMv = 1500;  // < any cell in a connected live pack
+// Minimum intra-pair split (|hi - lo|) for the tap-artifact guard to engage.
+// Series-adjacent cells track closely even in a badly imbalanced pack; a split
+// this large only appears when a shared tap node has shifted. Requiring it (on
+// top of the implausible-cell + conserved-sum tests) means a single-cell glitch
+// beside a NORMAL neighbour is never averaged away -- it faults conservatively.
+inline constexpr std::uint16_t TapArtifactMinSplitMv = 800;
 inline constexpr std::int16_t  CellUnderTempC  =   -10;  // under-temp °C   -- COMMISSION
 inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- COMMISSION
 // Cell TEMPERATURE fault gate. NTC temps are read through the per-LTC ADG731
