@@ -791,7 +791,11 @@ inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
 // The debounce tolerates a single anomalous mux read: a genuine open is stable,
 // a one-off is not. 2 polls x BmsPollTempMs (500 ms) ~= 1 s to detect, tunable.
 // COMMISSION: confirm the detection time meets the applicable rule window.
-inline constexpr bool         TempSensorPresenceCheck = true;
+// BENCH: temporarily FALSE so an open NTC does NOT fault/open the SDC -- lets the
+// disconnect DETECTION be validated (the channel still reads NtcNoReading /
+// -128 on pit-diag when a switch is toggled off) before the fault is armed.
+// RESTORE true for flight (the FS rule requires the SDC to open).
+inline constexpr bool         TempSensorPresenceCheck = false;
 inline constexpr std::uint8_t TempDisconnectPolls     = 2;
 
 // REQUIRED temperature channels: cell-temp slots that MUST be present in every
