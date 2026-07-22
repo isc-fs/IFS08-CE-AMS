@@ -112,17 +112,6 @@ struct Mask {
     // BalanceController class that owns the latched lockout flag.
     if (s.max_tempC > config::BalanceTempMax) return out;
 
-    // BENCH VERIFY (DO-NOT-MERGE branch): force a known index pattern to map
-    // firmware index -> physical resistor. After every safety guard above.
-    if constexpr (config::BenchVerifyForceMask) {
-        for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
-            for (std::uint8_t idx : config::BenchVerifyIndices) {
-                if (idx < config::CellsPerModule) out.cell[m][idx] = true;
-            }
-        }
-        return out;
-    }
-
     // Bottom of the pack we're trying to match. Use the snapshot's
     // min_cell_mV; it's already the result of an iteration over the
     // full cell grid in BmsService::recompute_summaries_().
