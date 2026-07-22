@@ -15,7 +15,7 @@
 //      (op_cmd == On runs in ANY state -- operator override of Charge-only)
 //   2. temps not trusted                             -> mask all zero
 //   3. max_tempC > BalanceTempMax                    -> mask all zero
-//   4. cell voltage > min_cell_mV + delta            -> candidate
+//   4. cell voltage > floor + delta (floor = 2nd-lowest cell)  -> candidate
 //   5. per module, keep at most BalanceMaxActive candidates with
 //      the largest excess over the pack minimum (round-robin across
 //      windows is overkill at 1 Hz cadence -- top-k is good enough)
@@ -112,10 +112,32 @@ struct Mask {
     // BalanceController class that owns the latched lockout flag.
     if (s.max_tempC > config::BalanceTempMax) return out;
 
-    // Bottom of the pack we're trying to match. Use the snapshot's
-    // min_cell_mV; it's already the result of an iteration over the
-    // full cell grid in BmsService::recompute_summaries_().
-    const std::uint16_t floor_mV = s.min_cell_mV;
+    // Bottom of the pack we're trying to match -- the SECOND-lowest cell, not
+    // the absolute minimum.
+    //
+    // A disconnected cell tap reads spuriously low (the LTC measures each cell
+    // across shared tap nodes, so an open node collapses one reading). If the
+    // floor were the true minimum, that one bad cell would drop it far below the
+    // pack, every real cell would then sit >BalanceDeltaMv above it, and the
+    // WHOLE STACK would start balancing off a single faulty reading. Using the
+    // 2nd-lowest ignores exactly one outlier, so a single stuck-low cell cannot
+    // trigger pack-wide discharge.
+    //
+    // The true minimum still drives the safety UV predicate + telemetry
+    // (s.min_cell_mV, untouched) -- a genuinely low cell still faults there.
+    // Cost of 2nd-lowest: a single real weak cell is balanced toward the
+    // next-lowest rather than itself, i.e. one deadband short -- negligible, and
+    // the right trade against a false pack-wide bleed.
+    std::uint16_t lo1 = 0xFFFFu;   // lowest
+    std::uint16_t lo2 = 0xFFFFu;   // second-lowest
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+            const std::uint16_t v = s.cell_mV[m][c];
+            if (v < lo1)      { lo2 = lo1; lo1 = v; }
+            else if (v < lo2) { lo2 = v; }
+        }
+    }
+    const std::uint16_t floor_mV = lo2;
 
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         // Walk the module's 19 cells, keep the top-K by excess over

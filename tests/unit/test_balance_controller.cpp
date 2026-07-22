@@ -499,3 +499,61 @@ extern "C" void test_balance_spread_thins_a_cluster(void) {
             if (mask.cell[3][a] && mask.cell[3][b])
                 TEST_ASSERT_FALSE(balance::physically_adjacent(a, b));
 }
+
+// --- floor robustness: one stuck-low cell must not balance the whole stack ---
+//
+// A disconnected cell tap reads spuriously low. If that collapsed the balancing
+// floor, every real cell would look imbalanced and the whole pack would bleed
+// off one bad reading. The 2nd-lowest floor ignores exactly one outlier.
+
+extern "C" void test_balance_single_low_outlier_does_not_bleed_stack(void) {
+    // A well-matched pack (everything ~3800) plus ONE spuriously-low cell.
+    auto state = make_uniform_state(3800, 25);
+    state.cell_mV[2][5] = 3000;          // disconnected-cell signature: reads low
+    state.min_cell_mV   = 3000;          // true min (safety UV still sees this)
+    state.max_cell_mV   = 3800;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    // The floor is the 2nd-lowest (3800), so nothing is >3800+50 -> NO cell
+    // anywhere should be selected. Without the fix, every module would bleed.
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m)
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c)
+            TEST_ASSERT_FALSE_MESSAGE(mask.cell[m][c],
+                                      "a single low outlier must not trigger stack-wide balancing");
+}
+
+// The outlier itself (the lowest cell) is never selected -- you don't bleed the
+// bottom of the pack.
+extern "C" void test_balance_lowest_cell_not_selected(void) {
+    auto state = make_uniform_state(3800, 25);
+    state.cell_mV[0][0] = 3000;          // lowest
+    state.cell_mV[1][1] = 3950;          // genuinely high, above 2nd-lowest+delta
+    state.min_cell_mV   = 3000;
+    state.max_cell_mV   = 3950;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    TEST_ASSERT_FALSE(mask.cell[0][0]);          // the low outlier is never bled
+    TEST_ASSERT_TRUE (mask.cell[1][1]);          // the genuinely high cell still is
+}
+
+// A genuinely imbalanced pack still balances normally: two low cells set the
+// floor near the bottom, the high cells are selected. Confirms the 2nd-lowest
+// floor doesn't blunt real balancing.
+extern "C" void test_balance_real_imbalance_still_works_with_robust_floor(void) {
+    auto state = make_uniform_state(3900, 25);
+    state.cell_mV[3][0] = 3700;          // two low cells -> floor ~3700
+    state.cell_mV[3][2] = 3705;
+    state.min_cell_mV   = 3700;
+    state.max_cell_mV   = 3900;
+
+    const auto mask = balance::compute_mask(state, fsm::State::Charge,
+                                            /*temps_trusted=*/true, config::BalanceCmd::On);
+    // High cells (3900 >> 3705+50) are selected across modules.
+    std::uint8_t n = 0;
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m)
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c)
+            n += mask.cell[m][c] ? 1 : 0;
+    TEST_ASSERT_GREATER_THAN_UINT8(0, n);
+}
