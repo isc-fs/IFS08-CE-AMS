@@ -334,6 +334,8 @@ void test_pit_diag_cell_frame_out_of_range_returns_zeros(void);
 void test_pit_diag_temp_frame_first_byte_is_module0_temp0(void);
 void test_pit_diag_temp_frame_clips_int8_range(void);
 void test_pit_diag_temp_frame_last_covers_module4(void);
+void test_pit_diag_cell_frame_offline_module_is_sentinel(void);
+void test_pit_diag_temp_frame_offline_module_is_sentinel(void);
 void test_pit_diag_fsm_status_layout(void);
 void test_pit_diag_fsm_status_fault_reason(void);
 void test_pit_diag_fsm_status_pec_saturates(void);
@@ -755,6 +757,8 @@ int main(void) {
     RUN_TEST(test_pit_diag_temp_frame_first_byte_is_module0_temp0);
     RUN_TEST(test_pit_diag_temp_frame_clips_int8_range);
     RUN_TEST(test_pit_diag_temp_frame_last_covers_module4);
+    RUN_TEST(test_pit_diag_cell_frame_offline_module_is_sentinel);
+    RUN_TEST(test_pit_diag_temp_frame_offline_module_is_sentinel);
     RUN_TEST(test_pit_diag_fsm_status_layout);
     RUN_TEST(test_pit_diag_fsm_status_fault_reason);
     RUN_TEST(test_pit_diag_fsm_status_pec_saturates);

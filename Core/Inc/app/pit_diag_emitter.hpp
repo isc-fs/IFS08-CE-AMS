@@ -61,6 +61,12 @@ namespace detail {
         [&](unsigned flat) -> std::uint64_t {
             const std::uint8_t m = static_cast<std::uint8_t>(flat / config::CellsPerModule);
             const std::uint8_t c = static_cast<std::uint8_t>(flat % config::CellsPerModule);
+            // A module past its freshness window (isoSPI silent) keeps its last
+            // good voltages in cell_mV. Emit the no-cell sentinel instead so a
+            // disconnected chain reads as "no data", never a frozen value.
+            if ((bms.module_online_mask & (1u << m)) == 0u) {
+                return config::PitDiagCellSentinel;
+            }
             return bms.cell_mV[m][c];
         },
         b);
@@ -96,7 +102,13 @@ namespace detail {
         [&](unsigned flat) -> std::uint64_t {
             const std::uint8_t m = static_cast<std::uint8_t>(flat / config::TempsPerModule);
             const std::uint8_t t = static_cast<std::uint8_t>(flat % config::TempsPerModule);
-            return static_cast<std::uint8_t>(clip_int8_pit(bms.cell_tempC[m][t]));
+            // Offline module (isoSPI silent) -> emit the no-reading sentinel
+            // (clips to -128) rather than the frozen last-good temperature, so a
+            // disconnected chain never displays as a live temperature.
+            const std::int16_t raw = ((bms.module_online_mask & (1u << m)) == 0u)
+                                         ? config::NtcNoReading
+                                         : bms.cell_tempC[m][t];
+            return static_cast<std::uint8_t>(clip_int8_pit(raw));
         },
         b);
     return detail::to_frame(b);
