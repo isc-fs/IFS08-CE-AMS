@@ -79,8 +79,11 @@ namespace {
 std::int16_t ntc_mV_to_tempC(std::uint16_t v_aux_mV) noexcept {
     using namespace ams::config;
 
-    // Rail readings -> open or shorted. Drop.
-    if (v_aux_mV == 0u || v_aux_mV >= NtcVrefMv) {
+    // Open or shorted -> drop. NtcOpenMv (< NtcVrefMv) catches a partially-
+    // railed open that would otherwise decode to a plausible but bogus cold
+    // temperature; 0 mV is a short. Both return the sentinel so the caller's
+    // disconnect path -- not a spuriously cold reading -- is what fires.
+    if (v_aux_mV == 0u || v_aux_mV >= NtcOpenMv) {
         return std::numeric_limits<std::int16_t>::min();
     }
 

@@ -530,6 +530,48 @@ extern "C" void test_bms_temp_disconnect_debounce(void) {
                                     "a disconnected channel must read the sentinel");
 }
 
+// A PARTIALLY-railed open must be treated as a disconnect, not decoded as a
+// plausible cold temperature. 2850 mV sits above config::NtcOpenMv (2800) but
+// below the ~-40 degC plausibility rail (~2925 mV): before the NtcOpenMv
+// threshold it decoded to a valid ~-27 degC and a real open masqueraded as a
+// cold reading. It must now behave exactly like a full-rail (3000 mV) open.
+extern "C" void test_bms_temp_partial_rail_open_is_disconnect(void) {
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 1000);
+
+    constexpr std::uint8_t kCh = 7;                 // upper-LTC channel 7 -> slot 7
+    std::uint8_t valid[AuxReplyBytes], partial[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(valid   + ic * Seg, Aux25C_mV);   // ~25 C
+        encode_aux_segment(partial + ic * Seg, 2850u);        // partial-rail open
+    }
+    // Required slot 0 stays present so the presence check does not interfere.
+    (void)BmsService::instance().update_temperature(0, valid, sizeof valid);
+
+    // Seed valid: slot kCh is now "seen" and reads a real temperature, not the
+    // open sentinel. Asserted PER CHANNEL rather than on the global disconnect
+    // mask -- BmsService is a singleton shared across tests, so the mask can
+    // still carry other slots disconnected by an earlier test.
+    (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
+    TEST_ASSERT_INT16_WITHIN_MESSAGE(1, 25,
+        BmsService::instance().snapshot().cell_tempC[0][kCh],
+        "seed must read ~25 C, not the sentinel");
+
+    // Sustained partial-rail open: 2850 mV is above NtcOpenMv (2800) but below
+    // the old ~-40 C plausibility rail (~2925 mV), so before the NtcOpenMv
+    // threshold it decoded to a valid ~-27 C. It must now behave like a full-
+    // rail open: the channel goes to the sentinel and flags its own module.
+    for (std::uint8_t i = 0; i < config::TempDisconnectPolls; ++i) {
+        (void)BmsService::instance().update_temperature(kCh, partial, sizeof partial);
+    }
+    const auto s = BmsService::instance().snapshot();
+    TEST_ASSERT_EQUAL_INT16_MESSAGE(config::NtcNoReading, s.cell_tempC[0][kCh],
+                                    "partial-rail open must store the sentinel, not a cold temp");
+    TEST_ASSERT_BITS_HIGH_MESSAGE(1u << 0, s.temp_disconnect_mask,
+                                  "module 0's partial-rail open must set its disconnect bit");
+}
+
 // An UNPOPULATED channel (never read valid) that is always open must NEVER be
 // flagged as a disconnect -- it is not a lost sensor, it was never there.
 extern "C" void test_bms_unpopulated_channel_is_not_a_disconnect(void) {
