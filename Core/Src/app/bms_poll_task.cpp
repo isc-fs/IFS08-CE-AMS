@@ -468,6 +468,32 @@ void run_temperature_poll() {
     // mux is misbehaving.
     std::uint32_t this_sweep_fail = 0;
 
+    // Warm-up mux select (the mux-domain twin of the #214 RDCV warm-up). The
+    // FIRST WRCOMM/STCOMM after the voltage poll's cell-read burst can be
+    // dropped -- slaves re-sync on CS edges after the multi-ms idle -- so the
+    // sweep's first channel (Adg731ChannelMap[0] = S1) never latches and every
+    // mux stays on its previous channel. Result: temp1 / slot 0 reads rail
+    // (~VREF2) on ALL modules at once, a false open on every sweep. Confirmed on
+    // the bench via a 32-channel raw dump: 9/10 muxes' S1 came alive the instant
+    // this warm-up landed (the 10th was a genuine hardware open).
+    //
+    // The throwaway select deliberately targets an UNPOPULATED address (S32, the
+    // last channel -- NC on every mux per pcbs/BMS_LITE) and its reply is never
+    // read: whichever select the chain drops is spent on a pin that carries no
+    // NTC, so a dropped warm-up can never cost a real temperature, and if it DOES
+    // land the mux just sits on a dead pin until the real sweep's first select
+    // moves it. Either way the sweep's first populated channel latches.
+    constexpr std::uint8_t WarmUpAddr = 31u;   // S32, unpopulated on all muxes
+    {
+        const auto warm = ltc6811::pack_adg731_select(WarmUpAddr);
+        for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+            for (std::size_t k = 0; k < 6; ++k) per_ic_payload[ic][k] = warm[k];
+        }
+        (void)bus.write_chain_command(ltc6811::CmdWRCOMM, per_ic_payload);
+        (void)bus.stcomm();
+        osDelay(1);
+    }
+
     for (std::uint8_t ch_idx = 0; ch_idx < config::TempsPerLtc; ++ch_idx) {
         const std::uint8_t mux_ch = config::Adg731ChannelMap[ch_idx];
         const auto sel = ltc6811::pack_adg731_select(mux_ch);
