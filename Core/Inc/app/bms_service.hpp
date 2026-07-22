@@ -44,6 +44,16 @@ struct BmsState {
     // rail regardless of calibration. See config::TempSensorPresenceCheck.
     std::uint8_t  temp_disconnect_mask;
 
+    // Bit m set <=> online module m has a physically-adjacent cell pair whose
+    // shared tap node is displaced (one cell reads non-physical, the neighbour
+    // compensates, pair-sum conserved) -- a high-resistance/open cell tap
+    // exposed by balancing current. For those pairs recompute_summaries_ feeds
+    // the tap-immune pair AVERAGE to min/max_cell_mV + vmin/vmax_module so the
+    // artifact cannot false-trip Cell Over/UnderVoltage and open the SDC. The
+    // raw per-cell cell_mV is left untouched (pit-diag grid still shows the
+    // split for diagnosis). See config::CellImplausibleMaxMv / MinMv.
+    std::uint8_t  tap_fault_mask;
+
     // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
     // ECU TX matrix (fix/53). Recomputed in recompute_summaries_()
     // from cell_mV / cell_tempC; no extra cost beyond a single pass

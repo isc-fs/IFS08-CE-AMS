@@ -119,6 +119,7 @@ std::int16_t ntc_mV_to_tempC(std::uint16_t v_aux_mV) noexcept {
 
 void BmsService::recompute_summaries_() noexcept {
     state_.temp_disconnect_mask = 0;
+    state_.tap_fault_mask       = 0;
     std::uint32_t sum_v_mV = 0;
     std::uint16_t min_mV   = std::numeric_limits<std::uint16_t>::max();
     std::uint16_t max_mV   = 0;
@@ -137,8 +138,50 @@ void BmsService::recompute_summaries_() noexcept {
         std::int16_t  mod_max_t = std::numeric_limits<std::int16_t>::min();
 
         if ((state_.module_online_mask & (1u << m)) != 0u) {
+            // Tap-artifact guard. A high-resistance / open cell tap shifts the
+            // node SHARED by two physically-adjacent cells when balancing draws
+            // current through it: one cell reads non-physical (> ImplausibleMax
+            // or < ImplausibleMin) and its neighbour compensates the opposite
+            // way, so their PAIR SUM -- which is immune to a shared-tap error --
+            // stays in the normal window. For such a pair, aggregate on the
+            // tap-immune pair AVERAGE instead of the impossible individual
+            // reading, so a bad tap cannot false-trip Cell Over/UnderVoltage and
+            // open the SDC. cell_mV itself is untouched (the pit-diag grid still
+            // shows the raw split). A GENUINE over/under-voltage has a NORMAL
+            // neighbour -> sum runs out of the window -> NOT masked, still faults.
+            std::uint16_t agg_v[config::CellsPerModule];
             for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
-                const std::uint16_t v = state_.cell_mV[m][c];
+                agg_v[c] = state_.cell_mV[m][c];
+            }
+            for (std::uint8_t c = 0; c + 1u < config::CellsPerModule; ++c) {
+                // Physically adjacent == consecutive indices in the SAME LTC
+                // half (balance::physically_adjacent). The only in-range
+                // boundary that is NOT adjacent is the LTC split at
+                // CellsPerLtcUpper.
+                if (c + 1u == config::CellsPerLtcUpper) continue;
+                const std::uint16_t va = state_.cell_mV[m][c];
+                const std::uint16_t vb = state_.cell_mV[m][c + 1u];
+                const std::uint16_t hi = va > vb ? va : vb;
+                const std::uint16_t lo = va < vb ? va : vb;
+                const std::uint32_t sum =
+                    static_cast<std::uint32_t>(va) + static_cast<std::uint32_t>(vb);
+                const bool nonphysical = hi > config::CellImplausibleMaxMv ||
+                                         lo < config::CellImplausibleMinMv;
+                const bool wide_split =
+                    static_cast<std::uint16_t>(hi - lo) > config::TapArtifactMinSplitMv;
+                const bool sum_in_window =
+                    sum >= 2u * static_cast<std::uint32_t>(config::CellUnderVoltageMv) &&
+                    sum <= 2u * static_cast<std::uint32_t>(config::CellOverVoltageMv);
+                if (nonphysical && wide_split && sum_in_window) {
+                    const std::uint16_t avg = static_cast<std::uint16_t>(sum / 2u);
+                    agg_v[c]      = avg;
+                    agg_v[c + 1u] = avg;
+                    state_.tap_fault_mask =
+                        static_cast<std::uint8_t>(state_.tap_fault_mask | (1u << m));
+                }
+            }
+            for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+                const std::uint16_t v = agg_v[c];
                 sum_v_mV += v;
                 if (v < min_mV)    min_mV    = v;
                 if (v > max_mV)    max_mV    = v;

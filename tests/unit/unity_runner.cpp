@@ -8,6 +8,9 @@ extern "C" {
 
 // test_bms_service.cpp
 void test_bms_ltc_clean_response_decodes_all_cells(void);
+void test_bms_tap_artifact_does_not_trip_ov(void);
+void test_bms_real_overvoltage_not_masked(void);
+void test_bms_nonphysical_without_compensation_not_masked(void);
 void test_bms_ltc_pec_fail_on_one_ic_marks_module_stale(void);
 void test_bms_ltc_pec_fail_increments_error_counter(void);
 void test_bms_ltc_short_buffer_rejected(void);
@@ -448,6 +451,9 @@ int main(void) {
     UNITY_BEGIN();
 
     RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
+    RUN_TEST(test_bms_tap_artifact_does_not_trip_ov);
+    RUN_TEST(test_bms_real_overvoltage_not_masked);
+    RUN_TEST(test_bms_nonphysical_without_compensation_not_masked);
     RUN_TEST(test_bms_ltc_pec_fail_on_one_ic_marks_module_stale);
     RUN_TEST(test_bms_ltc_pec_fail_increments_error_counter);
     RUN_TEST(test_bms_ltc_short_buffer_rejected);

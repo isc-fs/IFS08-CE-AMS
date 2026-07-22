@@ -132,6 +132,64 @@ extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Balancing tap-artifact guard. Module 0, LTC_1 group C (RDCVC) carries module
+// cells 6,7,8. A shifted shared tap on the adjacent pair 7/8 makes cell 7 read
+// non-physically high and cell 8 compensate low, sum conserved.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_tap_artifact_does_not_trip_ov(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    // cells 6,7,8 = normal, 4548 (impossible high), 3014 (compensating low).
+    encode_segment(resp + 2u * GroupBytes + 0u * Seg, 3780u, 4548u, 3014u);
+
+    fake_set_tick(1000);
+    (void)BmsService::instance().update_from_ltc_response(resp, sizeof resp, 1000);
+    const auto s = BmsService::instance().snapshot();
+
+    // The impossible 4548 never reaches the safety aggregate; the pair is
+    // averaged (~3781), so max stays well under the OV threshold.
+    TEST_ASSERT_LESS_THAN_UINT16(config::CellOverVoltageMv, s.max_cell_mV);
+    TEST_ASSERT_UINT16_WITHIN(2, 3781, s.vmax_module[0]);
+    // Raw cell_mV is untouched -- the pit-diag grid still shows the split.
+    TEST_ASSERT_EQUAL_UINT16(4548, s.cell_mV[0][7]);
+    TEST_ASSERT_EQUAL_UINT16(3014, s.cell_mV[0][8]);
+    // Module 0 is flagged as a tap fault.
+    TEST_ASSERT_BITS_HIGH(1u << 0, s.tap_fault_mask);
+}
+
+// A GENUINE over-voltage (4200 < v < 4400, PHYSICAL) beside a NORMAL neighbour
+// is NOT a tap artifact and must still reach max_cell_mV -> faults.
+extern "C" void test_bms_real_overvoltage_not_masked(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    encode_segment(resp + 2u * GroupBytes + 0u * Seg, 3780u, 4250u, 3780u);
+
+    fake_set_tick(1000);
+    (void)BmsService::instance().update_from_ltc_response(resp, sizeof resp, 1000);
+    const auto s = BmsService::instance().snapshot();
+
+    TEST_ASSERT_EQUAL_UINT16(4250, s.max_cell_mV);
+    TEST_ASSERT_GREATER_THAN_UINT16(config::CellOverVoltageMv, s.max_cell_mV);
+    TEST_ASSERT_EQUAL_UINT8(0, s.tap_fault_mask);
+}
+
+// A non-physical reading whose neighbour did NOT compensate (split below
+// TapArtifactMinSplitMv) is not the opposite-displacement tap signature, so it
+// is conservatively NOT masked -- it still reaches the aggregate.
+extern "C" void test_bms_nonphysical_without_compensation_not_masked(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    encode_segment(resp + 2u * GroupBytes + 0u * Seg, 3780u, 4548u, 3780u);
+
+    fake_set_tick(1000);
+    (void)BmsService::instance().update_from_ltc_response(resp, sizeof resp, 1000);
+    const auto s = BmsService::instance().snapshot();
+
+    TEST_ASSERT_EQUAL_UINT16(4548, s.max_cell_mV);
+    TEST_ASSERT_EQUAL_UINT8(0, s.tap_fault_mask);
+}
+
+// ---------------------------------------------------------------------------
 // PEC failure on one LTC's group keeps that module's slots untouched
 // and clears the LTC bit in ltc_online_mask. The pair partner is fine
 // so we expect module_online_mask to *not* advance freshness for that
