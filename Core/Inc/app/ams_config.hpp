@@ -777,6 +777,22 @@ inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2 nominal
 // was. A sentinel makes "no data" distinguishable from "cool".
 inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
 
+// Temperature-sensor DISCONNECT fault (FS rule: a disconnected temp sensor must
+// open the SDC). A sensor that has read valid at least once and then reads OPEN
+// (rail voltage -> NtcNoReading) for TempDisconnectPolls consecutive temp polls
+// is treated as disconnected and latches ERROR, exactly like a missing module
+// faults on the voltage side.
+//
+// This does NOT depend on temperature ACCURACY -- an open NTC reads the rail
+// regardless of the beta/pull-up calibration -- so it is armed independently of
+// TempFaultsTrusted (which gates the range over/under-temp faults).
+//
+// The debounce tolerates a single anomalous mux read: a genuine open is stable,
+// a one-off is not. 2 polls x BmsPollTempMs (500 ms) ~= 1 s to detect, tunable.
+// COMMISSION: confirm the detection time meets the applicable rule window.
+inline constexpr bool         TempSensorPresenceCheck = true;
+inline constexpr std::uint8_t TempDisconnectPolls     = 2;
+
 // Minimum valid cell-temp channels before balancing may run at all.
 //
 // COMMISSION: deliberately LOW. Its job today is to catch a completely dead

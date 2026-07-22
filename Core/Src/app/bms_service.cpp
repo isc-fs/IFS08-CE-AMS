@@ -115,6 +115,7 @@ std::int16_t ntc_mV_to_tempC(std::uint16_t v_aux_mV) noexcept {
 }  // namespace
 
 void BmsService::recompute_summaries_() noexcept {
+    state_.temp_disconnect_mask = 0;
     std::uint32_t sum_v_mV = 0;
     std::uint16_t min_mV   = std::numeric_limits<std::uint16_t>::max();
     std::uint16_t max_mV   = 0;
@@ -143,10 +144,16 @@ void BmsService::recompute_summaries_() noexcept {
             }
             for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
                 const std::int16_t tc = state_.cell_tempC[m][t];
-                // A channel that has never converted is NOT data. Folding the
-                // sentinel into min/avg would drag them to nonsense, and
-                // folding a fabricated value into max would hide a hot pack.
-                if (tc == config::NtcNoReading) continue;
+                if (tc == config::NtcNoReading) {
+                    // Sentinel on a channel that HAS read valid = disconnected
+                    // (open past the debounce). An unpopulated channel is also
+                    // sentinel but was never seen, so it is not a disconnect.
+                    if (seen_valid_[m][t]) {
+                        state_.temp_disconnect_mask =
+                            static_cast<std::uint8_t>(state_.temp_disconnect_mask | (1u << m));
+                    }
+                    continue;   // NOT data -- excluded from min/max/avg
+                }
                 if (tc < min_t)     min_t     = tc;
                 if (tc > max_t)     max_t     = tc;
                 if (tc > mod_max_t) mod_max_t = tc;
@@ -308,15 +315,34 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
         // AUX1 (GPIO1) carries the buffered ADG731 output. AUX2/AUX3
         // are unused on BMS_LITE -- we read them anyway because they
         // come in the same group, but discard.
-        const std::int16_t t = ntc_mV_to_tempC(aux[0]);
-        if (t == std::numeric_limits<std::int16_t>::min()) {
-            continue;  // out of range -> keep last good value
-        }
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
         const std::uint8_t slot     = is_upper
             ? channel_idx
             : static_cast<std::uint8_t>(config::TempsPerLtc + channel_idx);
+
+        const std::int16_t t = ntc_mV_to_tempC(aux[0]);
+        if (t == std::numeric_limits<std::int16_t>::min()) {
+            // OPEN reading (rail voltage). A channel that was never valid is
+            // simply unpopulated -- leave it at the seed sentinel, no fault. A
+            // channel that HAS read valid and now reads open is a candidate
+            // DISCONNECT: keep its last good value while the run is short (a
+            // single anomalous mux read is tolerated), and only once the open
+            // run reaches TempDisconnectPolls mark it NtcNoReading so the
+            // summary flags the module. See config::TempSensorPresenceCheck.
+            if (seen_valid_[module][slot]) {
+                if (open_run_[module][slot] < 0xFFu) ++open_run_[module][slot];
+                if (open_run_[module][slot] >= config::TempDisconnectPolls) {
+                    state_.cell_tempC[module][slot] =
+                        static_cast<std::int16_t>(config::NtcNoReading);
+                }
+            }
+            continue;  // do not overwrite with a temperature
+        }
+
+        // Valid reading: clear the open run, latch that this channel exists.
+        open_run_[module][slot]   = 0;
+        seen_valid_[module][slot] = true;
         state_.cell_tempC[module][slot] = t;
         any_ok = true;
     }

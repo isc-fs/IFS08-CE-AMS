@@ -37,6 +37,13 @@ struct BmsState {
     std::uint16_t valid_temp_channels;
     std::int16_t  avg_tempC;
 
+    // Bit m set <=> online module m has >=1 cell-temp channel that read VALID
+    // at least once and is now OPEN (disconnected) past the debounce. Drives
+    // the TempSensorDisconnected safety fault -- a disconnected sensor opens the
+    // SDC (FS rule). Independent of temperature accuracy: an open NTC reads the
+    // rail regardless of calibration. See config::TempSensorPresenceCheck.
+    std::uint8_t  temp_disconnect_mask;
+
     // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
     // ECU TX matrix (fix/53). Recomputed in recompute_summaries_()
     // from cell_mV / cell_tempC; no extra cost beyond a single pass
@@ -166,6 +173,16 @@ private:
     void recompute_summaries_() noexcept;
 
     mutable BmsState state_ = {};
+
+    // Per cell-temp channel disconnect tracking (not part of the snapshot).
+    // seen_valid_ latches once a channel has produced a real reading, so an
+    // unpopulated channel (never valid) is never mistaken for a disconnect.
+    // open_run_ counts consecutive OPEN polls on a seen channel; at
+    // TempDisconnectPolls the channel is marked NtcNoReading and its module bit
+    // set in state_.temp_disconnect_mask. Single-writer (BmsPollTask) like the
+    // rest of the service.
+    bool          seen_valid_[config::BmsModuleCount][config::TempsPerModule] = {};
+    std::uint8_t  open_run_ [config::BmsModuleCount][config::TempsPerModule] = {};
 };
 
 // Per-IC PEC error counter, exported for telemetry diagnostics

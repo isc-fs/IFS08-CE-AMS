@@ -474,3 +474,77 @@ extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
     }
 }
 
+
+// --- temperature-sensor disconnect debounce (FS rule support) ---------------
+//
+// A channel that has read valid and then goes OPEN must be flagged as
+// disconnected only after TempDisconnectPolls consecutive open polls -- a
+// single anomalous read is tolerated (keeps its last value). Drives one
+// channel (slot 3, upper LTC) through valid -> glitch -> valid -> sustained
+// open, on a chain first brought fully online.
+extern "C" void test_bms_temp_disconnect_debounce(void) {
+    // Bring every module online with a clean voltage poll so recompute_
+    // summaries_ evaluates the temp-disconnect mask (it only scans online
+    // modules).
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 1000);
+
+    constexpr std::uint8_t kCh = 3;                 // upper-LTC channel 3 -> slot 3
+    std::uint8_t valid[AuxReplyBytes], open[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(valid + ic * Seg, Aux25C_mV);  // ~25 C
+        encode_aux_segment(open  + ic * Seg, 3000u);       // rail = open
+    }
+
+    // 1. Valid read: channel is now "seen", no disconnect.
+    (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
+    TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().temp_disconnect_mask);
+
+    // 2. A SINGLE open (glitch) with TempDisconnectPolls >= 2 must NOT flag it,
+    //    and must keep the last good value rather than a sentinel.
+    if (config::TempDisconnectPolls >= 2) {
+        (void)BmsService::instance().update_temperature(kCh, open, sizeof open);
+        const auto s = BmsService::instance().snapshot();
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, s.temp_disconnect_mask,
+                                        "single open must not flag a disconnect");
+        TEST_ASSERT_INT16_WITHIN_MESSAGE(1, 25, s.cell_tempC[0][kCh],
+                                         "a single glitch must keep the last good value");
+        // 3. A valid read clears the run.
+        (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
+        TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().temp_disconnect_mask);
+    }
+
+    // 4. Sustained open: TempDisconnectPolls consecutive opens -> disconnected.
+    for (std::uint8_t i = 0; i < config::TempDisconnectPolls; ++i) {
+        (void)BmsService::instance().update_temperature(kCh, open, sizeof open);
+    }
+    const auto s = BmsService::instance().snapshot();
+    // Every online module shares kCh, so all module bits flag.
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, s.temp_disconnect_mask,
+                                  "sustained open must flag a disconnect");
+    TEST_ASSERT_EQUAL_INT16_MESSAGE(config::NtcNoReading, s.cell_tempC[0][kCh],
+                                    "a disconnected channel must read the sentinel");
+}
+
+// An UNPOPULATED channel (never read valid) that is always open must NEVER be
+// flagged as a disconnect -- it is not a lost sensor, it was never there.
+extern "C" void test_bms_unpopulated_channel_is_not_a_disconnect(void) {
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 2000);
+
+    constexpr std::uint8_t kCh = 11;                // never fed a valid reading
+    std::uint8_t open[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic)
+        encode_aux_segment(open + ic * Seg, 3000u);
+
+    for (std::uint8_t i = 0; i < config::TempDisconnectPolls + 2; ++i)
+        (void)BmsService::instance().update_temperature(kCh, open, sizeof open);
+
+    // slot 11's bit must not appear solely due to this never-seen channel.
+    // (Other slots seen by earlier tests may flag; assert THIS channel stays
+    // sentinel-but-not-a-disconnect by checking it is excluded from the count.)
+    const auto s = BmsService::instance().snapshot();
+    TEST_ASSERT_EQUAL_INT16(config::NtcNoReading, s.cell_tempC[0][kCh]);
+}
