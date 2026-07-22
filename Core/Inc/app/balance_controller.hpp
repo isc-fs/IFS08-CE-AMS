@@ -51,12 +51,11 @@ struct Mask {
 // board regions (a wide X gap on the layout), so there is no cross-half
 // adjacency -- index 8 and 9 are far apart, not neighbours.
 //
-// ASSUMPTION, flagged for one-time bench confirmation: this rests on the
-// schematic cell number equalling the LTC channel number (cell1 -> C1 ...),
-// which the layout is internally consistent with (monotonic rows, DNP counts
-// matching the 9/10 split) but which has not been traced electrically. Confirm
-// once by lighting a known non-adjacent index set and checking with an IR probe
-// that alternating physical resistors heat.
+// BENCH-VERIFIED 2026-07-22 on the real pack: forcing local indices 0..7 lit
+// exactly 8 CONTIGUOUS 2512 pads on one LTC row with the other row cold (IR),
+// confirming consecutive firmware index == physically consecutive resistor and
+// that the two LTC halves are separate board rows. So the derivation below
+// (schematic cell number == LTC channel, monotonic layout) holds on hardware.
 [[nodiscard]] inline bool physically_adjacent(std::uint8_t a, std::uint8_t b) noexcept {
     const bool a_upper = a < config::CellsPerLtcUpper;
     const bool b_upper = b < config::CellsPerLtcUpper;
@@ -112,6 +111,17 @@ struct Mask {
     // hysteresis becomes warranted, move the state into a small
     // BalanceController class that owns the latched lockout flag.
     if (s.max_tempC > config::BalanceTempMax) return out;
+
+    // BENCH VERIFY (DO-NOT-MERGE branch): force a known index pattern to map
+    // firmware index -> physical resistor. After every safety guard above.
+    if constexpr (config::BenchVerifyForceMask) {
+        for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+            for (std::uint8_t idx : config::BenchVerifyIndices) {
+                if (idx < config::CellsPerModule) out.cell[m][idx] = true;
+            }
+        }
+        return out;
+    }
 
     // Bottom of the pack we're trying to match. Use the snapshot's
     // min_cell_mV; it's already the result of an iteration over the

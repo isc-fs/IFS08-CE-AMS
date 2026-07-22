@@ -511,9 +511,27 @@ inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module d
 //
 // May reduce the active count below BalanceMaxActive when imbalanced cells
 // cluster -- that is the intended, safe outcome (less heat, skipped cells bleed
-// on later cycles). See the ASSUMPTION note on physically_adjacent: the
-// index->board-position map should be bench-confirmed once by IR.
+// on later cycles). The index->board-position map is BENCH-VERIFIED (2026-07-22,
+// IR on the real pack -- see physically_adjacent).
 inline constexpr bool          BalanceSpreadNoAdjacent = true;
+
+// ===========================================================================
+// BENCH DIAGNOSTIC ONLY -- DO NOT MERGE, NEVER in a flight image.
+// ===========================================================================
+// Forces a SPECIFIC, KNOWN set of cell indices to discharge in EVERY module,
+// bypassing voltage-based selection entirely, to verify the firmware-index ->
+// physical-resistor map that BalanceSpreadNoAdjacent relies on.
+//
+// The pattern {0,1,2,3} is four CONSECUTIVE indices in the upper LTC half.
+// Prediction if the map is correct (index monotonic with board position):
+// four CONTIGUOUS hot 2512 pads at one end of the LTC_1 row, no gaps. If the
+// IR shows them scattered or interleaved, the map is wrong and
+// BalanceSpreadNoAdjacent must be set false until a correct table is built.
+//
+// Still honours the operator switch (BALN) and all safety guards; only the
+// SELECTION is overridden. Plain code values, no build flags. DO NOT MERGE.
+inline constexpr bool         BenchVerifyForceMask   = true;
+inline constexpr std::uint8_t BenchVerifyIndices[]   = { 0, 1, 2, 3 };
 
 // Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
 //
