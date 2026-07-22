@@ -21,6 +21,7 @@ void test_bms_temp_rail_reading_skips_slot(void);
 void test_bms_temp_pec_fail_skips_slot(void);
 void test_bms_temp_bad_channel_idx_rejected(void);
 void test_bms_temp_disconnect_debounce(void);
+void test_bms_temp_partial_rail_open_is_disconnect(void);
 void test_bms_unpopulated_channel_is_not_a_disconnect(void);
 void test_bms_required_channel_open_at_boot_faults(void);
 void test_bms_temp_short_buffer_rejected(void);
@@ -458,6 +459,7 @@ int main(void) {
     RUN_TEST(test_bms_temp_pec_fail_skips_slot);
     RUN_TEST(test_bms_temp_bad_channel_idx_rejected);
     RUN_TEST(test_bms_temp_disconnect_debounce);
+    RUN_TEST(test_bms_temp_partial_rail_open_is_disconnect);
     RUN_TEST(test_bms_unpopulated_channel_is_not_a_disconnect);
     RUN_TEST(test_bms_required_channel_open_at_boot_faults);
     RUN_TEST(test_bms_temp_short_buffer_rejected);

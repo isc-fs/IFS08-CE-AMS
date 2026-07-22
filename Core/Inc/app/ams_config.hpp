@@ -763,6 +763,25 @@ inline constexpr std::uint8_t Adg731ChannelMap[TempsPerLtc] = {
 inline constexpr std::uint32_t NtcPullupOhm = 6800;   // R145 / R170 pull-up to VREF2
 inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2 nominal
 
+// Open-circuit detection threshold, in AUX millivolts.
+//
+// A disconnected NTC leaves the divider node pulled up through NtcPullupOhm
+// toward VREF2. Ideally it rails to ~3.0 V, but a partially-railed open -- mux
+// leakage, a long or damp sense harness, or a high-impedance fault -- can settle
+// a few hundred millivolts below the rail (~2.7-2.95 V observed). Read literally
+// that decodes to a very cold BUT in-range temperature (2.9 V ~= -35 degC), so a
+// bare `>= NtcVrefMv` open test lets a real disconnect masquerade as a plausible
+// cold reading and slip past the presence check.
+//
+// So treat anything at or above NtcOpenMv as OPEN rather than cold. 2800 mV maps
+// to ~-20 degC on the 6.8 k / VREF2 divider -- colder than any operating cell
+// (and well below the ~-10 degC a cold-soaked pack could see), leaving >=140 mV
+// margin so a genuinely cold NTC never trips it while a floating node reliably
+// does. Must stay below NtcVrefMv (keeps the divider denominator positive in
+// ntc_mV_to_tempC). See ntc_mV_to_tempC.
+inline constexpr std::uint16_t NtcOpenMv    = 2800;   // >= this AUX mV => open, not cold
+static_assert(NtcOpenMv < NtcVrefMv, "open threshold must sit below VREF2");
+
 // Plausibility window for accepted NTC readings. Anything outside
 // this range is dropped (slot left at its previous value) so an
 // unpopulated mux channel can't drive max_tempC into orbit and trip
