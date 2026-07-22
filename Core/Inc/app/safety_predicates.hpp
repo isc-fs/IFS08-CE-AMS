@@ -50,6 +50,7 @@ enum class FaultReason : std::uint8_t {
     VcuStale           = 11,
     // 12 (FsmError) is reserved for the SafetyTask FSM-driven Error
     // path (precharge timeout / input drop), set there, not here.
+    TempSensorDisconnected = 13,
 };
 
 struct FaultResult {
@@ -145,6 +146,17 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
         if (tick_age(in.now_tick, in.bms.last_rx_tick[m]) > config::BmsStaleMs) {
             return { FaultReason::BmsStale, m };
         }
+    }
+
+    // Temperature-sensor DISCONNECT (FS rule: a disconnected temp sensor opens
+    // the SDC). temp_disconnect_mask holds, per online module, whether a channel
+    // that had read valid is now open past the debounce (BmsService). This is a
+    // PRESENCE check, not a range check -- an open NTC reads the rail regardless
+    // of calibration -- so it is armed independently of TempFaultsTrusted, and
+    // self-gated by the "seen valid once" latch so a boot-time or unpopulated
+    // sentinel never trips it. Detail byte = the offending-module mask.
+    if (config::TempSensorPresenceCheck && in.bms.temp_disconnect_mask != 0u) {
+        return { FaultReason::TempSensorDisconnected, in.bms.temp_disconnect_mask };
     }
 
     // Cell V / T ranges. Gated on first_full_poll_done (#279): until

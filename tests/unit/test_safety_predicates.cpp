@@ -472,3 +472,56 @@ extern "C" void test_predicates_vcu_stale_exempt_when_not_car(void) {
         static_cast<std::uint8_t>(ams::safety::FaultReason::VcuStale),
         static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
 }
+
+// --- temperature-sensor disconnect (FS rule: open SDC on a lost temp sensor) --
+
+// A disconnected temp sensor (module bit set in temp_disconnect_mask) faults
+// with the dedicated reason, carrying the offending-module mask as detail.
+extern "C" void test_predicates_temp_sensor_disconnected(void) {
+    ams::BmsState     bms;
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.temp_disconnect_mask = 0x08;   // module 3's required sensor is open
+
+    const auto r = ams::safety::evaluate_fault_detail(in);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::safety::FaultReason::TempSensorDisconnected),
+                            static_cast<std::uint8_t>(r.reason));
+    TEST_ASSERT_EQUAL_UINT8(0x08, r.detail);
+    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+}
+
+// It is a PRESENCE fault, not a range fault: an open NTC reads the rail
+// regardless of calibration, so it must fire even though TempFaultsTrusted is
+// false (which gates the over/under-temp RANGE faults).
+extern "C" void test_predicates_temp_disconnect_independent_of_temp_trust(void) {
+    // config::TempFaultsTrusted is false on dev; the range faults are suppressed
+    // but the disconnect fault must still trip.
+    ams::BmsState     bms;
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.max_tempC = 200;              // absurd range value -- range fault suppressed
+    bms.temp_disconnect_mask = 0x01;
+    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::safety::FaultReason::TempSensorDisconnected),
+                            static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+}
+
+// No disconnect -> no temp fault (a healthy mask of 0 must not trip).
+extern "C" void test_predicates_no_disconnect_no_fault(void) {
+    ams::BmsState     bms;
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.temp_disconnect_mask = 0x00;
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+}
+
+// The disconnect fault outranks a cell over-voltage in the same snapshot: a
+// lost sensor is at least as urgent, and it latches immediately (already
+// debounced at the poll level), not through the cell-range debounce.
+extern "C" void test_predicates_disconnect_is_immediate_not_range_debounced(void) {
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(
+        ams::safety::FaultReason::TempSensorDisconnected));
+}
