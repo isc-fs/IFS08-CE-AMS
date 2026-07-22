@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstdint>
 
 namespace ams::config {
@@ -800,15 +801,18 @@ inline constexpr std::uint8_t TempDisconnectPolls     = 2;
 // what makes the disconnect deterministic for scrutineering, where an
 // open-at-boot channel is otherwise indistinguishable from an unpopulated one.
 //
-// Slot numbering: the ADG731 sweep stores LTC_1 (upper) temps in slots 0..19 and
-// LTC_2 (lower) in 20..39. "Temperature 1 of LTC_1" = slot 0. The scrutineering
-// demo switches exactly that channel on each module, so slot 0 is required.
+// EMPTY BY DEFAULT: enforce nothing until a VALIDATED map of connected channels
+// exists. Requiring a slot that is unpopulated -- or merely un-resoldered on the
+// current harness -- false-faults it at boot and traps the pack in Error. The
+// scrutineering toggle demo does NOT need this: boot with the switch closed
+// (channel reads valid -> "seen"), then open it and the seen-valid path (#469)
+// faults on the drop-out.
 //
-// COMMISSION: extend this to every slot that is actually populated on the flight
-// harness, so ANY disconnected sensor -- not just the demo one -- opens the SDC.
-// Leaving a genuinely-unpopulated slot OUT of this list is what keeps it from
-// false-faulting; the (still-active) seen-valid path covers the rest.
-inline constexpr std::uint8_t RequiredTempSlots[]   = { 0 };
+// COMMISSION: once the flight harness is final and every intended NTC is
+// soldered, populate this (e.g. std::array<std::uint8_t,1>{0} for temp 1 of
+// LTC_1) so an open-AT-BOOT sensor is caught too, not only one that drops out
+// after reading valid. Slot numbering: LTC_1 temps = slots 0..19, LTC_2 = 20..39.
+inline constexpr std::array<std::uint8_t, 0> RequiredTempSlots{};
 
 // Minimum valid cell-temp channels before balancing may run at all.
 //

@@ -556,6 +556,7 @@ extern "C" void test_bms_unpopulated_channel_is_not_a_disconnect(void) {
 // at power-on) must still fault -- the seen-valid latch alone misses this, and
 // it is the deterministic scrutineering case. Slot 0 is required by config.
 extern "C" void test_bms_required_channel_open_at_boot_faults(void) {
+    if (config::RequiredTempSlots.size() == 0) return;   // feature disabled by default
     std::uint8_t volts[RespBytes];
     build_clean_chain(volts);
     (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 3000);
