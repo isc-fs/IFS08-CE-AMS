@@ -142,6 +142,7 @@ void BmsService::recompute_summaries_() noexcept {
                 if (v < mod_min_v) mod_min_v = v;
                 if (v > mod_max_v) mod_max_v = v;
             }
+            std::uint8_t mod_valid_temps = 0;
             for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
                 const std::int16_t tc = state_.cell_tempC[m][t];
                 if (tc == config::NtcNoReading) {
@@ -159,6 +160,21 @@ void BmsService::recompute_summaries_() noexcept {
                 if (tc > mod_max_t) mod_max_t = tc;
                 sum_t += tc;
                 ++n_t;
+                ++mod_valid_temps;
+            }
+
+            // REQUIRED-channel presence (config::RequiredTempSlots): a declared
+            // slot reading open faults regardless of seen-valid history, so an
+            // open-at-boot channel is caught (scrutineering determinism). Gated
+            // on the module having produced >=1 valid temp this poll, so the
+            // boot window (all slots still at the seed sentinel, not yet polled)
+            // does not false-fault a connected channel before it has been read.
+            if (mod_valid_temps > 0) for (std::uint8_t rs : config::RequiredTempSlots) {
+                if (rs < config::TempsPerModule &&
+                    state_.cell_tempC[m][rs] == static_cast<std::int16_t>(config::NtcNoReading)) {
+                    state_.temp_disconnect_mask =
+                        static_cast<std::uint8_t>(state_.temp_disconnect_mask | (1u << m));
+                }
             }
         }
 
