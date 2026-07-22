@@ -496,6 +496,9 @@ extern "C" void test_bms_temp_disconnect_debounce(void) {
         encode_aux_segment(valid + ic * Seg, Aux25C_mV);  // ~25 C
         encode_aux_segment(open  + ic * Seg, 3000u);       // rail = open
     }
+    // Keep the REQUIRED slot 0 present (a valid reading) so its presence check
+    // does not flag -- this test is about the slot-3 debounce, not slot 0.
+    (void)BmsService::instance().update_temperature(0, valid, sizeof valid);
 
     // 1. Valid read: channel is now "seen", no disconnect.
     (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
@@ -548,3 +551,29 @@ extern "C" void test_bms_unpopulated_channel_is_not_a_disconnect(void) {
     const auto s = BmsService::instance().snapshot();
     TEST_ASSERT_EQUAL_INT16(config::NtcNoReading, s.cell_tempC[0][kCh]);
 }
+
+// A REQUIRED temp slot that is open WITHOUT ever having read valid (switch open
+// at power-on) must still fault -- the seen-valid latch alone misses this, and
+// it is the deterministic scrutineering case. Slot 0 is required by config.
+extern "C" void test_bms_required_channel_open_at_boot_faults(void) {
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 3000);
+
+    // Poll a NON-required channel valid so the module has temp data (proving it
+    // was polled), but leave the required slot 0 open (never fed a valid read).
+    std::uint8_t valid[AuxReplyBytes], open[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(valid + ic * Seg, Aux25C_mV);
+        encode_aux_segment(open  + ic * Seg, 3000u);
+    }
+    (void)BmsService::instance().update_temperature(5, valid, sizeof valid);  // non-required
+    (void)BmsService::instance().update_temperature(0, open,  sizeof open);   // required, open
+
+    const auto s = BmsService::instance().snapshot();
+    // Every module's required slot 0 is open -> all module bits flag, even
+    // though slot 0 was never seen valid.
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, s.temp_disconnect_mask,
+        "an open required channel must fault even if never seen valid (open-at-boot)");
+}
+

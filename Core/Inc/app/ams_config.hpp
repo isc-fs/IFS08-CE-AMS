@@ -793,6 +793,23 @@ inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
 inline constexpr bool         TempSensorPresenceCheck = true;
 inline constexpr std::uint8_t TempDisconnectPolls     = 2;
 
+// REQUIRED temperature channels: cell-temp slots that MUST be present in every
+// online module. A required slot reading OPEN faults immediately -- WITHOUT the
+// "seen valid once" latch -- so a sensor whose switch is already open at power-on
+// (or after a reset that cleared the seen-valid state) is still caught. This is
+// what makes the disconnect deterministic for scrutineering, where an
+// open-at-boot channel is otherwise indistinguishable from an unpopulated one.
+//
+// Slot numbering: the ADG731 sweep stores LTC_1 (upper) temps in slots 0..19 and
+// LTC_2 (lower) in 20..39. "Temperature 1 of LTC_1" = slot 0. The scrutineering
+// demo switches exactly that channel on each module, so slot 0 is required.
+//
+// COMMISSION: extend this to every slot that is actually populated on the flight
+// harness, so ANY disconnected sensor -- not just the demo one -- opens the SDC.
+// Leaving a genuinely-unpopulated slot OUT of this list is what keeps it from
+// false-faulting; the (still-active) seen-valid path covers the rest.
+inline constexpr std::uint8_t RequiredTempSlots[]   = { 0 };
+
 // Minimum valid cell-temp channels before balancing may run at all.
 //
 // COMMISSION: deliberately LOW. Its job today is to catch a completely dead
