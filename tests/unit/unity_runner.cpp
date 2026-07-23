@@ -78,6 +78,9 @@ void test_balance_override_baln_on(void);
 void test_balance_override_balx_auto(void);
 void test_balance_override_wrong_magic_ignored(void);
 void test_balance_effective_cmd_freshness(void);
+void test_balance_modules_decode(void);
+void test_balance_modules_wrong_magic_ignored(void);
+void test_balance_modules_effective_freshness(void);
 
 // test_isotp.cpp
 void test_isotp_round_trip_single_frame(void);
@@ -373,6 +376,7 @@ void test_fw_health_encode_clamps_heap(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
+void test_balance_per_module_enable_gates_modules(void);
 void test_balance_single_hot_cell_in_charge(void);
 void test_balance_caps_at_max_active_per_module(void);
 void test_balance_disabled_outside_charge(void);
@@ -519,6 +523,9 @@ int main(void) {
     RUN_TEST(test_balance_override_balx_auto);
     RUN_TEST(test_balance_override_wrong_magic_ignored);
     RUN_TEST(test_balance_effective_cmd_freshness);
+    RUN_TEST(test_balance_modules_decode);
+    RUN_TEST(test_balance_modules_wrong_magic_ignored);
+    RUN_TEST(test_balance_modules_effective_freshness);
     RUN_TEST(test_acu_unknown_id_rejected);
 
     RUN_TEST(test_isotp_round_trip_single_frame);
@@ -799,6 +806,7 @@ int main(void) {
     RUN_TEST(test_fw_health_encode_clamps_heap);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
+    RUN_TEST(test_balance_per_module_enable_gates_modules);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
     RUN_TEST(test_balance_caps_at_max_active_per_module);
     RUN_TEST(test_balance_disabled_outside_charge);

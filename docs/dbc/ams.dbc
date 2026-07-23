@@ -185,6 +185,10 @@ BO_ 257 Operator_charge_request: 4 Pit_Tool
 BO_ 259 Operator_balance_override: 4 Pit_Tool
  SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
 
+BO_ 260 Operator_balance_modules: 5 Pit_Tool
+ SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
+ SG_ module_enable : 32|5@1+ (1,0) [0|0] "bitmask" Vector__XXX
+
 BO_ 2032 PitDiag_cmd: 4 Pit_Tool
  SG_ cmd_magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
 

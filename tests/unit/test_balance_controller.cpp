@@ -71,6 +71,36 @@ extern "C" void test_balance_uniform_pack_no_discharge(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Per-module enable (0x104): a disabled module never discharges, even with a
+// cell that would otherwise balance; enabled modules are unaffected. The
+// default arg (all enabled) preserves pre-0x104 behaviour.
+// ---------------------------------------------------------------------------
+extern "C" void test_balance_per_module_enable_gates_modules(void) {
+    auto state = make_uniform_state(/* mV */ 3700, /* C */ 25);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        state.cell_mV[m][0] = 3800;  // a hot cell in every module
+    }
+    state.max_cell_mV = 3800;        // min stays 3700 -> pack floor
+
+    // Enable only modules 0, 2, 4 (mask 0b10101).
+    const auto sel = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto,
+        /*module_enable=*/0x15);
+    TEST_ASSERT_GREATER_THAN_UINT8(0, count_set_in_module(sel, 0));
+    TEST_ASSERT_EQUAL_UINT8(0, count_set_in_module(sel, 1));   // disabled -> empty
+    TEST_ASSERT_GREATER_THAN_UINT8(0, count_set_in_module(sel, 2));
+    TEST_ASSERT_EQUAL_UINT8(0, count_set_in_module(sel, 3));   // disabled -> empty
+    TEST_ASSERT_GREATER_THAN_UINT8(0, count_set_in_module(sel, 4));
+
+    // Default arg (all enabled) -> every module balances.
+    const auto all = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        TEST_ASSERT_GREATER_THAN_UINT8(0, count_set_in_module(all, m));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 2. One cell 80 mV above min in Charge -> that cell discharges.
 //    Other cells stay quiet (delta below BalanceDeltaMv = 50 mV).
 // ---------------------------------------------------------------------------

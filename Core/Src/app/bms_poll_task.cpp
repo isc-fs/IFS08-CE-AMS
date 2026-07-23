@@ -354,6 +354,10 @@ void maybe_run_balance_update() {
     const auto       veh    = VehicleService::instance().snapshot();
     const auto       op_cmd = VehicleService::effective_balance_cmd(
         osKernelGetTickCount(), veh.last_balance_override_tick, veh.balance_cmd);
+    // Per-module enable (0x104), freshness-resolved (stale/never -> all modules
+    // enabled). Layered UNDER op_cmd inside compute_mask.
+    const std::uint8_t mod_enable = VehicleService::effective_balance_modules_mask(
+        osKernelGetTickCount(), veh.last_balance_modules_tick, veh.balance_modules_mask);
     // Balancing gates on config::BalanceTempsTrusted, NOT TempFaultsTrusted:
     // "trust these temps enough to balance on" is a different question from
     // "trust them enough to open the contactors on". Coupling the two meant the
@@ -361,7 +365,8 @@ void maybe_run_balance_update() {
     // forever. See the residual-risk note on BalanceTempsTrusted -- the
     // BalanceTempMax lockout inside compute_mask still applies.
     const auto       mask   = balance::compute_mask(
-        state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd);
+        state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
+        mod_enable);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
