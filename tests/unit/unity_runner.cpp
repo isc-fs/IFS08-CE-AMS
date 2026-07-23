@@ -403,7 +403,7 @@ void test_balance_runs_with_partial_thermal_coverage(void);
 void test_sil_nominal_startup_to_run(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
-void test_sil_charger_stale_request_times_out(void);
+void test_sil_charger_disconnect_in_charge_faults(void);
 void test_sil_tsms_drop_in_run_rearms(void);
 void test_sil_bus_collapse_in_run_rearms(void);
 
@@ -828,7 +828,7 @@ int main(void) {
     RUN_TEST(test_sil_nominal_startup_to_run);
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
-    RUN_TEST(test_sil_charger_stale_request_times_out);
+    RUN_TEST(test_sil_charger_disconnect_in_charge_faults);
     RUN_TEST(test_sil_tsms_drop_in_run_rearms);
     RUN_TEST(test_sil_bus_collapse_in_run_rearms);
 
