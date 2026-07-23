@@ -69,7 +69,8 @@ struct Harness {
         // directly via CellFaultDebounce.
         const ams::safety::Inputs pred = {
             bms, cur, veh, /*force_error_set=*/false,
-            /*vcu_required=*/(mode_locked == ams::fsm::Mode::Car), now,
+            /*vcu_required=*/(mode_locked == ams::fsm::Mode::Car),
+            /*charger_required=*/(mode_locked == ams::fsm::Mode::Charger), now,
         };
         const bool predicate_fault = ams::safety::evaluate_fault(pred);
 
