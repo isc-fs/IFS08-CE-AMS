@@ -261,6 +261,20 @@ inline constexpr std::uint32_t BalanceOverrideFreshMs = 5000;   // fall back to 
 // -> Off); balance::compute_mask consumes it.
 enum class BalanceCmd : std::uint8_t { Off = 0, Auto = 1, On = 2 };
 
+// 0x104 Operator_balance_modules -- PER-MODULE balancing enable, layered UNDER
+// the 0x103 master switch. magic "BALM" (bytes 0..3) + byte 4 = 5-bit enable
+// mask (bit m == 1 -> module m may balance). Re-send ~2 Hz. Dead-man: when the
+// frame is stale (> BalanceModulesFreshMs) OR was never seen, EVERY module is
+// enabled (BalanceModulesDefaultMask) -- so the pack behaves as before (global
+// OFF/ON/AUTO only), and the 0x103 dead-man remains the safety net that stops
+// balancing on a dead link. Only ever narrows which modules balance; never an
+// AIR / safety path.
+inline constexpr std::uint32_t BalanceModulesReqId   = 0x104u;  // standard; operator -> AMS
+inline constexpr std::uint8_t  BalanceModulesReqDlc  = 5u;
+inline constexpr std::uint8_t  BalanceModulesMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x4Du };  // "BALM"
+inline constexpr std::uint32_t BalanceModulesFreshMs = 5000;    // stale -> all modules enabled
+inline constexpr std::uint8_t  BalanceModulesDefaultMask = AllModulesMask;  // 0x1F, all enabled
+
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time
 // telemetry. All standard 11-bit IDs, big-endian payloads.

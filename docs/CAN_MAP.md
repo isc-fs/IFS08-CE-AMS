@@ -547,6 +547,28 @@ pit-diag `0x6C0[2]` bit 2 so the display can confirm receipt. Magic-gated
 against bus noise; handled in `vehicle_service.cpp`, consumed by
 `BmsPollTask` via `VehicleService::balance_suppressed`.
 
+### `0x104` — operator per-module balance enable
+
+| Field | Value |
+|---|---|
+| Direction | RX (operator tool → AMS) |
+| Bus | FDCAN1 (standard 11-bit) |
+| DLC | ≥ 5 |
+| Payload | bytes `[0..3]` = `42 41 4C 4D` ("BALM") magic; byte `[4]` = 5-bit enable mask, **bit `m` (0..4) = 1 → module `m` may balance**. Other magic ignored (bus-noise safe). |
+| Source | the ChargerDisplayWario pit tool (per-module balance toggles) |
+| Cadence | re-sent ≥ 2 Hz while held |
+| Freshness | stale > `BalanceModulesFreshMs` (5000 ms) or never seen → **all modules enabled** (`BalanceModulesDefaultMask` = `0x1F`) |
+
+Layers **under** the `0x103` master switch: `0x103` decides OFF/ON/AUTO for the
+whole pack, and `0x104` then narrows *which modules* participate. A disabled
+module never discharges (`balance_controller.hpp` skips it), but its cells still
+count toward the pack-wide balance floor. The dead-man deliberately re-enables
+every module on a stale link — the `0x103` dead-man (→ OFF) is what actually
+stops balancing when the WarioCharger link dies, so a lost `0x104` must not
+silently freeze balancing off. **Only affects balancing — never an AIR / safety
+path.** Handled in `vehicle_service.cpp`, resolved by
+`VehicleService::effective_balance_modules_mask`, consumed by `BmsPollTask`.
+
 ### `0x600` — start button **[RETIRED — fix/48]**
 
 Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The

@@ -174,3 +174,35 @@ extern "C" void test_balance_effective_cmd_freshness(void) {
     TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(BalanceCmd::Off),
         static_cast<std::uint8_t>(eff(10000, 0u, BalanceCmd::On)));           // never -> Off
 }
+
+// ---------------------------------------------------------------------------
+// Per-module balancing enable (0x104): magic "BALM" + byte 4 = 5-bit mask.
+// ---------------------------------------------------------------------------
+extern "C" void test_balance_modules_decode(void) {
+    const std::uint8_t m[8] = { 0x42, 0x41, 0x4C, 0x4D, 0x15, 0, 0, 0 };  // "BALM" + 0b10101 (mods 0,2,4)
+    auto f = make_acu_frame(ams::config::BalanceModulesReqId,
+                            ams::config::BalanceModulesReqDlc, m);
+    f.timestamp_ms = 9000;
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    const auto s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_EQUAL_UINT8(0x15, s.balance_modules_mask);
+    TEST_ASSERT_EQUAL_UINT32(9000, s.last_balance_modules_tick);
+}
+
+extern "C" void test_balance_modules_wrong_magic_ignored(void) {
+    const std::uint8_t bad[8] = { 0x42, 0x41, 0x4C, 0x5A, 0x1F, 0, 0, 0 };  // "BALZ"
+    auto f = make_acu_frame(ams::config::BalanceModulesReqId,
+                            ams::config::BalanceModulesReqDlc, bad);
+    TEST_ASSERT_FALSE(ams::VehicleService::instance().update_from_frame(f));
+}
+
+// effective_balance_modules_mask: fresh -> the mask; stale / never -> all enabled.
+extern "C" void test_balance_modules_effective_freshness(void) {
+    const auto eff = ams::VehicleService::effective_balance_modules_mask;
+    TEST_ASSERT_EQUAL_UINT8(0x15,  // exactly fresh -> passes through
+        eff(10000, 10000 - ams::config::BalanceModulesFreshMs, 0x15));
+    TEST_ASSERT_EQUAL_UINT8(ams::config::BalanceModulesDefaultMask,  // just stale -> all enabled
+        eff(10000, 10000 - ams::config::BalanceModulesFreshMs - 1, 0x15));
+    TEST_ASSERT_EQUAL_UINT8(ams::config::BalanceModulesDefaultMask,  // never seen -> all enabled
+        eff(10000, 0u, 0x00));
+}

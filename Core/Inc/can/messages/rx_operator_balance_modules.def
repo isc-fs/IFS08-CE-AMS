@@ -1,0 +1,10 @@
+/* SPDX-License-Identifier: proprietary */
+/* 0x104 Operator_balance_modules -- per-module balancing enable, layered UNDER
+ * the 0x103 master switch. RX (Pit_Tool). magic "BALM" in bytes 0..3 + byte 4 =
+ * 5-bit enable mask (bit m == 1 -> module m may balance). Re-send ~2 Hz; when
+ * stale/absent every module is enabled (the 0x103 dead-man still governs whether
+ * balancing runs at all). See ams_config.hpp BalanceModules*. */
+CAN_MSG(Operator_balance_modules, 0x104, 5, "Pit_Tool", 0)
+    FIELD_BE      (magic,         uint32_t, 0, 32, 1, 0, "magic")
+    FIELD_LE_BITS (module_enable, uint8_t, 32,  5, 1, 0, "bitmask")
+CAN_MSG_END(Operator_balance_modules)

@@ -67,7 +67,9 @@ struct Mask {
 [[nodiscard]] inline Mask compute_mask(const BmsState&    s,
                                        fsm::State         fsm_state,
                                        bool               temps_trusted,
-                                       config::BalanceCmd op_cmd) noexcept {
+                                       config::BalanceCmd op_cmd,
+                                       std::uint8_t       module_enable
+                                           = config::AllModulesMask) noexcept {
     Mask out = {};
 
     // Operator master switch (#336). op_cmd is already freshness-resolved by
@@ -140,6 +142,13 @@ struct Mask {
     const std::uint16_t floor_mV = lo2;
 
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        // Per-module operator enable (0x104), layered UNDER the global
+        // OFF/ON/AUTO above: a disabled module never discharges. Already
+        // freshness-resolved by VehicleService::effective_balance_modules_mask
+        // (stale/absent -> all bits set), so the default all-enabled arg keeps
+        // pre-0x104 behaviour. The pack-wide floor (lo2) still includes a
+        // disabled module's cells -- they simply never get selected here.
+        if ((module_enable & (1u << m)) == 0u) continue;
         // Walk the module's 19 cells, keep the top-K by excess over
         // the floor. K = BalanceMaxActive. Insertion sort into a
         // small array -- 19 cells * 4 slots = ~76 compares worst
