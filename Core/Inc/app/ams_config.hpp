@@ -57,6 +57,12 @@ inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor st
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
 inline constexpr std::uint32_t BmsStaleMs     = 1000;  // any BMS module silent (1000 ms fault-response window)
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
+// Charger heartbeat (0x101) stale window while in Charger mode. The WarioCharger
+// re-sends 0x101 at >= 2 Hz (<= 500 ms period), so 1000 ms tolerates one missed
+// heartbeat before faulting Charge -> Error. Charging is not a 10 ms-critical
+// response, so this avoids false trips on a single dropped frame. Matches
+// ChargeReqFreshMs. See safety_predicates FaultReason::ChargerStale.
+inline constexpr std::uint32_t ChargerStaleMs =  1000; // charger 0x101 stale (Charger mode only)
 // At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
 // FSM checks "have we heard a VCU 0x100 frame in the last VcuFreshMs?"
 // to decide whether the pack is in the car (Run target) or at the

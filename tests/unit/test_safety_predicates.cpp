@@ -48,6 +48,7 @@ ams::safety::Inputs make_nominal(ams::BmsState& bms,
     return { bms, cur, veh,
              /*force_error_set=*/false,
              /*vcu_required=*/true,   // Car-mode nominal (VCU required)
+             /*charger_required=*/false,  // not Charger mode
              now };
 }
 
@@ -158,6 +159,7 @@ extern "C" void test_predicates_boot_grace_suppresses_data_predicates(void) {
         bms, cur, veh,
         /*force_error_set=*/false,
         /*vcu_required=*/true,
+        /*charger_required=*/false,
         /*now_tick=*/500u,  // half a second in -- well inside grace
     };
     TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
@@ -172,6 +174,7 @@ extern "C" void test_predicates_boot_grace_does_not_suppress_force_error(void) {
         bms, cur, veh,
         /*force_error_set=*/true,
         /*vcu_required=*/true,
+        /*charger_required=*/false,
         /*now_tick=*/100u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -188,6 +191,7 @@ extern "C" void test_predicates_after_grace_zero_ticks_faults(void) {
         bms, cur, veh,
         /*force_error_set=*/false,
         /*vcu_required=*/true,
+        /*charger_required=*/false,
         /*now_tick=*/ams::config::SafetyBootGraceMs + 1u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -471,6 +475,34 @@ extern "C" void test_predicates_vcu_stale_exempt_when_not_car(void) {
     TEST_ASSERT_EQUAL_UINT8(
         static_cast<std::uint8_t>(ams::safety::FaultReason::VcuStale),
         static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+}
+
+// ---------------------------------------------------------------------------
+// Charger heartbeat (0x101) staleness: mirror of #302 for the charge side.
+// ChargerStale must fire ONLY when committed to Charger mode, so a car / pre-
+// lock window never faults on the (legitimately absent) charger link.
+// ---------------------------------------------------------------------------
+extern "C" void test_predicates_charger_stale_faults_in_charger_mode(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    in.vcu_required     = false;   // Charger mode: VCU absent by definition
+    in.charger_required = true;    // committed to Charger
+    veh.last_charge_req_tick = 10000 - ams::config::ChargerStaleMs - 10;  // stale
+    // WarioCharger unplugged mid-charge -> ChargerStale -> Error.
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ams::safety::FaultReason::ChargerStale),
+        static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+    // A fresh 0x101 in Charger mode -> no fault.
+    veh.last_charge_req_tick = 10000 - 100;
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+}
+
+extern "C" void test_predicates_charger_stale_exempt_when_not_charger(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    veh.last_charge_req_tick = 10000 - ams::config::ChargerStaleMs - 10;  // stale
+    in.charger_required = false;   // Car / pre-lock Undecided -> charger absent OK
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
 }
 
 // --- temperature-sensor disconnect (FS rule: open SDC on a lost temp sensor) --

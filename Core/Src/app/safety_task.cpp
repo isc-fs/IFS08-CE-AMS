@@ -199,10 +199,16 @@ void SafetyTask::run() noexcept {
         // it, so VcuStale arms one tick after the Car lock, which is
         // fine (the VCU is fresh at the moment of a Car lock anyway).
         const bool vcu_required = (mode_locked == fsm::Mode::Car);
+        // Mirror for the charge side: the charger heartbeat (0x101) is required
+        // only once committed to Charger mode. Same one-tick arm lag as
+        // vcu_required (the FSM lock below updates mode_locked afterward), which
+        // is fine -- 0x101 is fresh at the moment of a Charger lock.
+        const bool charger_required = (mode_locked == fsm::Mode::Charger);
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
             force_error_set,
             vcu_required,
+            charger_required,
             now,
         };
         const auto fault_res = safety::evaluate_fault_detail(pred_in);
