@@ -29,6 +29,11 @@ struct Inputs {
     // Undecided window -- the VCU is expected to be absent (the car
     // isn't running), so its staleness must NOT be a fault (#302).
     bool                vcu_required;
+    // Mirror of vcu_required for the charge side: the charger heartbeat
+    // (0x101) is required only once committed to Charger mode. In Car mode
+    // and the pre-lock window the charger is absent by definition, so its
+    // staleness must NOT fault.
+    bool                charger_required;
     std::uint32_t       now_tick;
 };
 
@@ -51,6 +56,10 @@ enum class FaultReason : std::uint8_t {
     // 12 (FsmError) is reserved for the SafetyTask FSM-driven Error
     // path (precharge timeout / input drop), set there, not here.
     TempSensorDisconnected = 13,
+    // Charger heartbeat (0x101) went stale while committed to Charger mode
+    // (mirror of VcuStale for the charge side): the WarioCharger unplugged
+    // mid-charge -> Error + open the AIRs. Only fires in Charger mode.
+    ChargerStale       = 14,
 };
 
 struct FaultResult {
@@ -208,6 +217,16 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     if (in.vcu_required &&
         tick_age(in.now_tick, in.vehicle.last_dc_bus_tick) > config::VcuStaleMs) {
         return { FaultReason::VcuStale, 0 };
+    }
+
+    // Charger heartbeat (0x101) stale while committed to Charger mode: the
+    // WarioCharger was disconnected mid-charge. Mirror of VcuStale on the charge
+    // side -- fault and open the AIRs so charging stops. Gated on
+    // charger_required so it never fires in Car mode or the pre-lock window
+    // (where the charger is legitimately absent).
+    if (in.charger_required &&
+        tick_age(in.now_tick, in.vehicle.last_charge_req_tick) > config::ChargerStaleMs) {
+        return { FaultReason::ChargerStale, 0 };
     }
 
     return {};

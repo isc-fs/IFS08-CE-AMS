@@ -233,6 +233,8 @@ void test_predicates_reason_bms_stale_reports_module(void);
 void test_predicates_reason_current_stale(void);
 void test_predicates_reason_vcu_stale(void);
 void test_predicates_vcu_stale_exempt_when_not_car(void);
+void test_predicates_charger_stale_faults_in_charger_mode(void);
+void test_predicates_charger_stale_exempt_when_not_charger(void);
 void test_predicates_undervoltage_suppressed_before_first_poll(void);
 void test_predicates_undervoltage_armed_reports_module(void);
 void test_predicates_offline_module_trips_regardless_of_gate(void);
@@ -664,6 +666,8 @@ int main(void) {
     RUN_TEST(test_predicates_reason_current_stale);
     RUN_TEST(test_predicates_reason_vcu_stale);
     RUN_TEST(test_predicates_vcu_stale_exempt_when_not_car);
+    RUN_TEST(test_predicates_charger_stale_faults_in_charger_mode);
+    RUN_TEST(test_predicates_charger_stale_exempt_when_not_charger);
     RUN_TEST(test_predicates_undervoltage_suppressed_before_first_poll);
     RUN_TEST(test_predicates_undervoltage_armed_reports_module);
     RUN_TEST(test_predicates_offline_module_trips_regardless_of_gate);
