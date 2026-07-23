@@ -73,6 +73,13 @@ public:
     // DcdcCurrentMvPerAmpe1). Informational only.
     static std::int32_t adc_to_mA_dcdc(std::uint16_t raw) noexcept;
 
+    // apply_report_deadband: clamp a near-zero pack current to exactly 0 mA.
+    // |mA| strictly below config::CurrentReportDeadbandMa (0.5 A) -> 0; every
+    // other value passes through unchanged. Applied to filtered_mA so a
+    // resting pack reports a clean 0 A instead of dithering +/-1 ADC LSB
+    // (~322 mA) around the zero offset. Pure, static -> unit-testable.
+    static std::int32_t apply_report_deadband(std::int32_t mA) noexcept;
+
     // leg_voltage_plausible: true iff a SINGLE-ENDED reading of the
     // OUT_P leg (PF7 / ADC3_INP3) sits inside [CurrentLegPlausMinMv,
     // CurrentLegPlausMaxMv]. A connected SSA-2 holds OUT_P near the

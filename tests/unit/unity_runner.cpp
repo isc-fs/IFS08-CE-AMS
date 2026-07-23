@@ -64,6 +64,8 @@ void test_current_dcdc_zero_and_discharge(void);
 void test_current_leg_voltage_window(void);
 void test_current_update_sets_sensor_fault(void);
 void test_current_is_dcdc_fresh_lifecycle(void);
+void test_current_report_deadband_pure(void);
+void test_current_filtered_zeroed_below_deadband(void);
 
 // test_vehicle_service.cpp
 void test_decode_dc_bus_little_endian(void);
@@ -515,6 +517,8 @@ int main(void) {
     RUN_TEST(test_current_leg_voltage_window);
     RUN_TEST(test_current_update_sets_sensor_fault);
     RUN_TEST(test_current_is_dcdc_fresh_lifecycle);
+    RUN_TEST(test_current_report_deadband_pure);
+    RUN_TEST(test_current_filtered_zeroed_below_deadband);
 
     RUN_TEST(test_decode_dc_bus_little_endian);
     RUN_TEST(test_update_dc_bus_frame);
