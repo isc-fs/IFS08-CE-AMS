@@ -52,6 +52,12 @@ inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- C
 // bench-validated end-to-end.
 inline constexpr bool          TempFaultsTrusted = false;
 inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COMMISSION
+// Reporting dead-band: a filtered pack current whose magnitude is BELOW this
+// reads as exactly 0 mA on telemetry (0x4A1 / 0x135). The differential ADC LSB
+// is ~322 mA, so a residual zero-offset dithers +/-1 count around no-load; this
+// suppresses that so a resting pack reports a clean 0 A. Purely a reporting
+// clamp -- CurrentMaxMa over-current detection is unaffected. 0.5 A.
+inline constexpr std::int32_t  CurrentReportDeadbandMa = 500;
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
