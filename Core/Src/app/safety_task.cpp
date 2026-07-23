@@ -347,10 +347,13 @@ void SafetyTask::run() noexcept {
                         error_latched_ = true;
                         // Distinguish FSM-driven Error (precharge
                         // timeout / fault) from a predicate fault on
-                        // pit-diag 0x6C0[6] (#276). 12 == FsmError
-                        // (reserved past FaultReason).
+                        // pit-diag 0x6C0[6] (#276). 12 == FsmError, or the
+                        // dedicated ChargerTsmsOpen (15) when a TSMS drop
+                        // latched us in Charger mode (scrutineering: the
+                        // charge output must not be re-activatable).
                         if (g_fault_reason_telemetry == 0u) {
-                            g_fault_reason_telemetry = 12u;
+                            g_fault_reason_telemetry = safety::fsm_error_reason(
+                                mode_locked == fsm::Mode::Charger, tsms);
                         }
                     }
 

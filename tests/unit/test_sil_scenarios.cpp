@@ -241,6 +241,63 @@ extern "C" void test_sil_charger_disconnect_in_charge_faults(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Scenario 4c: TSMS drops mid-CHARGE -> LATCH Error (scrutineering: the charge
+// output must not be re-activatable once the SDC opens). Contrast with the
+// car-side Scenario 5, where a TSMS drop is a non-latching return to Start
+// (#327). Re-asserting TSMS must NOT recover -- Error is sticky.
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_tsms_drop_in_charge_latches_error(void) {
+    Harness h;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;
+    h.veh.last_charge_req_tick = h.now;
+
+    // Bring the charger up to Charge.
+    h.dash_chg_edge = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+    h.advance(20); h.veh.last_charge_req_tick = h.now;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, h.step().next);
+    h.advance(20); h.veh.last_charge_req_tick = h.now;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
+
+    // TSMS opens: latch Error + open all contactors (NOT a fall back to Start).
+    h.tsms = false;
+    h.advance(20);
+    const auto out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+
+    // Re-asserting TSMS does NOT recover -- Error is sticky (needs a reset).
+    h.tsms = true;
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, h.step().next);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4d: the latch covers ALL energised charger states -- a TSMS drop
+// during charger PRECHARGE (before AIR+ closes) latches Error too, not just
+// once in Charge.
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_tsms_drop_in_charger_precharge_latches_error(void) {
+    Harness h;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;
+    h.veh.last_charge_req_tick = h.now;
+
+    h.dash_chg_edge = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+
+    // Drop TSMS while still in charger Precharge -> Error (not Start).
+    h.tsms = false;
+    h.advance(20);
+    const auto out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+}
+
+// ---------------------------------------------------------------------------
 // Scenario 5: TSMS drops mid-Run -> non-latching de-energise to Start, then
 // the operator RE-ARMS without a reset (#327). A TSMS drop is not a fault;
 // the TS must be restartable from the cockpit unaided, so it must NOT latch.

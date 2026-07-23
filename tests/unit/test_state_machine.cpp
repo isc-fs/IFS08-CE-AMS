@@ -206,16 +206,34 @@ extern "C" void test_fsm_run_stays_on_dash_chg_release(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
 }
 
-extern "C" void test_fsm_charge_to_start_on_tsms_drop(void) {
-    // Charge de-energises to Start on a TSMS drop, non-latching (#327).
+extern "C" void test_fsm_charge_to_error_on_tsms_drop(void) {
+    // Charger mode is the exception to the non-latching TSMS rule: the
+    // scrutineering sheet forbids re-activating the charge output once the SDC
+    // opens, so a TSMS drop in Charge LATCHES Error (+ ForceError, open all)
+    // rather than falling back to Start. ChargerTsmsOpen.
     ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
     auto in = make_inputs(ams::fsm::State::Charge, bms, cur, veh);
     in.tsms = false;
     in.mode_locked = ams::fsm::Mode::Charger;
     auto out = ams::fsm::step(in);
-    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
-    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenPrecharge);
+}
+
+extern "C" void test_fsm_charger_precharge_to_error_on_tsms_drop(void) {
+    // The charger latch covers ALL energised charger states: a TSMS drop
+    // during charger Precharge latches Error too (contrast the Car-mode
+    // Precharge case above, which is a non-latching return to Start).
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = false;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
 }
 
 extern "C" void test_fsm_precharge_to_start_on_tsms_drop(void) {
