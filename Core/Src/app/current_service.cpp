@@ -70,13 +70,6 @@ bool CurrentService::leg_voltage_plausible(std::uint16_t raw) noexcept {
            v_mV <= config::CurrentLegPlausMaxMv;
 }
 
-std::int32_t CurrentService::apply_report_deadband(std::int32_t mA) noexcept {
-    return (mA > -config::CurrentReportDeadbandMa &&
-            mA <  config::CurrentReportDeadbandMa)
-               ? 0
-               : mA;
-}
-
 void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
                                      bool sensor_fault) noexcept {
     const std::int32_t mA = adc_to_mA(raw);
@@ -94,11 +87,6 @@ void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
         state_.filtered_mA -= (state_.filtered_mA >> config::CurrentFilterShift);
         state_.filtered_mA += (mA >> config::CurrentFilterShift);
     }
-
-    // Reporting dead-band: a resting pack should read a clean 0 A rather than
-    // dithering +/-1 ADC LSB (~322 mA) around the calibrated zero offset.
-    // Applied to the filtered value the telemetry frames publish (0x4A1/0x135).
-    state_.filtered_mA = apply_report_deadband(state_.filtered_mA);
 }
 
 void CurrentService::update_dcdc_from_adc(std::uint16_t raw,

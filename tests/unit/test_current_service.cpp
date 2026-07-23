@@ -187,39 +187,3 @@ extern "C" void test_current_is_dcdc_fresh_lifecycle(void) {
     TEST_ASSERT_TRUE(cs.is_dcdc_fresh(1000 + ams::config::DcdcIStaleMs));
     TEST_ASSERT_FALSE(cs.is_dcdc_fresh(1000 + ams::config::DcdcIStaleMs + 1));
 }
-
-// ---------------------------------------------------------------------------
-// apply_report_deadband: |I| strictly BELOW CurrentReportDeadbandMa (0.5 A)
-// reads as exactly 0; at/above the edge it passes through, for both signs.
-// ---------------------------------------------------------------------------
-extern "C" void test_current_report_deadband_pure(void) {
-    using ams::CurrentService;
-    const std::int32_t db = ams::config::CurrentReportDeadbandMa;
-    TEST_ASSERT_EQUAL_INT32(0, CurrentService::apply_report_deadband(0));
-    TEST_ASSERT_EQUAL_INT32(0, CurrentService::apply_report_deadband(db - 1));
-    TEST_ASSERT_EQUAL_INT32(0, CurrentService::apply_report_deadband(-(db - 1)));
-    // Exactly at the edge and beyond -> unchanged, both signs.
-    TEST_ASSERT_EQUAL_INT32(db,     CurrentService::apply_report_deadband(db));
-    TEST_ASSERT_EQUAL_INT32(-db,    CurrentService::apply_report_deadband(-db));
-    TEST_ASSERT_EQUAL_INT32(50000,  CurrentService::apply_report_deadband(50000));
-    TEST_ASSERT_EQUAL_INT32(-50000, CurrentService::apply_report_deadband(-50000));
-}
-
-// ---------------------------------------------------------------------------
-// End-to-end: a sub-deadband current (~1 ADC LSB, ~322 mA) settles to a
-// reported 0 A through update_from_adc, while a genuine current well above
-// the band is preserved.
-// ---------------------------------------------------------------------------
-extern "C" void test_current_filtered_zeroed_below_deadband(void) {
-    auto& cs = ams::CurrentService::instance();
-    // ~1 LSB above the zero code -> ~322 mA, inside the 500 mA band.
-    const std::uint16_t small_raw =
-        static_cast<std::uint16_t>(ams::config::CurrentZeroCount + 1);
-    for (int i = 0; i < 400; ++i) cs.update_from_adc(small_raw, 1000u + i);
-    TEST_ASSERT_EQUAL_INT32(0, cs.snapshot().filtered_mA);
-
-    // A genuine +5 A must survive the band untouched.
-    const std::uint16_t big_raw = pack_raw_for_mA(5000);
-    for (int i = 0; i < 400; ++i) cs.update_from_adc(big_raw, 2000u + i);
-    TEST_ASSERT_INT32_WITHIN(kPackLsbMa, 5000, cs.snapshot().filtered_mA);
-}
