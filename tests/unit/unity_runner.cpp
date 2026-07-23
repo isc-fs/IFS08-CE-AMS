@@ -238,6 +238,7 @@ void test_predicates_reason_vcu_stale(void);
 void test_predicates_vcu_stale_exempt_when_not_car(void);
 void test_predicates_charger_stale_faults_in_charger_mode(void);
 void test_predicates_charger_stale_exempt_when_not_charger(void);
+void test_fsm_error_reason_charger_tsms_open(void);
 void test_predicates_undervoltage_suppressed_before_first_poll(void);
 void test_predicates_undervoltage_armed_reports_module(void);
 void test_predicates_offline_module_trips_regardless_of_gate(void);
@@ -408,6 +409,8 @@ void test_sil_nominal_startup_to_run(void);
 void test_sil_bms_dropout_in_run(void);
 void test_sil_charger_path(void);
 void test_sil_charger_disconnect_in_charge_faults(void);
+void test_sil_tsms_drop_in_charge_latches_error(void);
+void test_sil_tsms_drop_in_charger_precharge_latches_error(void);
 void test_sil_tsms_drop_in_run_rearms(void);
 void test_sil_bus_collapse_in_run_rearms(void);
 
@@ -675,6 +678,7 @@ int main(void) {
     RUN_TEST(test_predicates_vcu_stale_exempt_when_not_car);
     RUN_TEST(test_predicates_charger_stale_faults_in_charger_mode);
     RUN_TEST(test_predicates_charger_stale_exempt_when_not_charger);
+    RUN_TEST(test_fsm_error_reason_charger_tsms_open);
     RUN_TEST(test_predicates_undervoltage_suppressed_before_first_poll);
     RUN_TEST(test_predicates_undervoltage_armed_reports_module);
     RUN_TEST(test_predicates_offline_module_trips_regardless_of_gate);
@@ -837,6 +841,8 @@ int main(void) {
     RUN_TEST(test_sil_bms_dropout_in_run);
     RUN_TEST(test_sil_charger_path);
     RUN_TEST(test_sil_charger_disconnect_in_charge_faults);
+    RUN_TEST(test_sil_tsms_drop_in_charge_latches_error);
+    RUN_TEST(test_sil_tsms_drop_in_charger_precharge_latches_error);
     RUN_TEST(test_sil_tsms_drop_in_run_rearms);
     RUN_TEST(test_sil_bus_collapse_in_run_rearms);
 

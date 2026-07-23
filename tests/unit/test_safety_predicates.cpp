@@ -505,6 +505,23 @@ extern "C" void test_predicates_charger_stale_exempt_when_not_charger(void) {
     TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
 }
 
+// --- FSM-driven Error reason attribution (fsm_error_reason) ---------------
+// A TSMS drop while committed to Charger mode is the dedicated ChargerTsmsOpen
+// (15); every other FSM-driven Error (car-mode, or TSMS still held e.g. a
+// precharge timeout) is the generic FsmError (12).
+extern "C" void test_fsm_error_reason_charger_tsms_open(void) {
+    using ams::safety::fsm_error_reason;
+    using ams::safety::FaultReason;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(FaultReason::ChargerTsmsOpen),
+        fsm_error_reason(/*charger_mode=*/true, /*tsms=*/false));
+    // Charger mode but TSMS still held (e.g. precharge timeout) -> FsmError.
+    TEST_ASSERT_EQUAL_UINT8(12u, fsm_error_reason(true,  true));
+    // Car mode -> always FsmError, regardless of TSMS.
+    TEST_ASSERT_EQUAL_UINT8(12u, fsm_error_reason(false, false));
+    TEST_ASSERT_EQUAL_UINT8(12u, fsm_error_reason(false, true));
+}
+
 // --- temperature-sensor disconnect (FS rule: open SDC on a lost temp sensor) --
 
 // A disconnected temp sensor (module bit set in temp_disconnect_mask) faults

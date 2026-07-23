@@ -60,7 +60,27 @@ enum class FaultReason : std::uint8_t {
     // (mirror of VcuStale for the charge side): the WarioCharger unplugged
     // mid-charge -> Error + open the AIRs. Only fires in Charger mode.
     ChargerStale       = 14,
+    // TSMS (PF9) dropped while committed to Charger mode. In Car mode a TSMS
+    // drop is a non-latching de-energise to Start (#327); in Charger mode the
+    // scrutineering rule forbids re-activating the charge output after the SDC
+    // opens, so it LATCHES Error instead (re-energising needs a full reset).
+    // FSM-driven (state_machine.hpp), attributed by fsm_error_reason() below.
+    ChargerTsmsOpen    = 15,
 };
+
+// Reason byte for an FSM-driven Error latch -- one the FSM reached with no
+// predicate fault (precharge timeout, input drop). The FSM evaluates its TSMS
+// guard BEFORE any per-state branch, so losing TSMS while committed to Charger
+// mode is unambiguously the charger-TSMS-open latch; every other FSM-driven
+// Error is the generic FsmError. FsmError has no enum slot (12 is reserved past
+// the predicate reasons -- see the enum note), so it is a bare constant here.
+inline constexpr std::uint8_t FsmErrorReason = 12u;
+[[nodiscard]] inline std::uint8_t
+fsm_error_reason(bool charger_mode, bool tsms) noexcept {
+    return (charger_mode && !tsms)
+               ? static_cast<std::uint8_t>(FaultReason::ChargerTsmsOpen)
+               : FsmErrorReason;
+}
 
 struct FaultResult {
     FaultReason  reason = FaultReason::None;
