@@ -166,3 +166,26 @@ extern "C" void test_logrot_time_cap_is_shorter_than_size_cap(void) {
     const std::uint32_t secs_to_time_cap = config::LogFileMaxMs / 1000u;
     TEST_ASSERT_LESS_THAN_UINT32(secs_to_size_cap, secs_to_time_cap);
 }
+
+// --- #495: file_age_ms underflow guard --------------------------------------
+
+// A normal, forward-in-time pair gives the plain difference; an equal pair 0.
+extern "C" void test_logrot_file_age_normal(void) {
+    TEST_ASSERT_EQUAL_UINT32(0u,    log_rotation::file_age_ms(5000u, 5000u));
+    TEST_ASSERT_EQUAL_UINT32(1234u, log_rotation::file_age_ms(6234u, 5000u));
+    // open == 0 (never opened) -> age == now, as the time rule expects.
+    TEST_ASSERT_EQUAL_UINT32(6234u, log_rotation::file_age_ms(6234u, 0u));
+}
+
+// The bug itself: `open` sampled AFTER the slow SD open lands ahead of the
+// loop's `now`. The naive `now - open` wraps to ~4.29e9; file_age_ms clamps
+// the inverted pair to 0 so the file is NOT sealed on its first rows.
+extern "C" void test_logrot_file_age_inverted_pair_is_zero(void) {
+    const std::uint32_t now = 1000u, open = 1300u;   // open 300 ms ahead
+    TEST_ASSERT_EQUAL_UINT32(0u, log_rotation::file_age_ms(now, open));
+    // Sanity: the raw subtraction really would have tripped the time rule.
+    TEST_ASSERT_TRUE(log_rotation::should_rotate(1024u, 5u, now - open));
+    // With the guard, a fresh file with a skewed open does NOT rotate.
+    TEST_ASSERT_FALSE(log_rotation::should_rotate(
+        1024u, 5u, log_rotation::file_age_ms(now, open)));
+}
