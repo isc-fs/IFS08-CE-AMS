@@ -456,6 +456,8 @@ void test_logrot_rotates_on_time(void);
 void test_logrot_time_rotation_needs_rows(void);
 void test_logrot_fresh_file_does_not_rotate(void);
 void test_logrot_time_cap_is_shorter_than_size_cap(void);
+void test_logrot_file_age_normal(void);
+void test_logrot_file_age_inverted_pair_is_zero(void);
 
 int main(void) {
     UNITY_BEGIN();
@@ -886,6 +888,8 @@ int main(void) {
     RUN_TEST(test_logrot_time_rotation_needs_rows);
     RUN_TEST(test_logrot_fresh_file_does_not_rotate);
     RUN_TEST(test_logrot_time_cap_is_shorter_than_size_cap);
+    RUN_TEST(test_logrot_file_age_normal);
+    RUN_TEST(test_logrot_file_age_inverted_pair_is_zero);
 
     return UNITY_END();
 }

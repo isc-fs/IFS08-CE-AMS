@@ -239,7 +239,12 @@ std::uint32_t next_free_index() noexcept {
 }
 
 // Open LOGnnnn.TMP for the current index and write the CSV header.
-bool open_new_file() noexcept {
+// `now` is the loop's tick, sampled BEFORE this call. The file-open timestamp
+// MUST use it, not a fresh osKernelGetTickCount() taken here: f_open + the
+// header f_write are hundreds of ms of SD latency, so a tick sampled after them
+// lands ahead of the loop's `now`, and `now - g_file_open_ms` then underflows
+// and seals the file on its first rows every iteration (#495).
+bool open_new_file(std::uint32_t now) noexcept {
     std::snprintf(g_name, sizeof g_name, ams::config::LogActiveNameFmt,
                   static_cast<unsigned long>(g_file_idx));
     if (f_open(&g_fil, g_name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
@@ -251,7 +256,7 @@ bool open_new_file() noexcept {
     }
     g_file_bytes     = static_cast<std::uint32_t>(hn);
     g_file_crc       = ams::crc::update(ams::crc::Crc32Init, g_rowbuf, hn);
-    g_file_open_ms   = osKernelGetTickCount();
+    g_file_open_ms   = now;
     g_rows_this_file = 0;
     g_file_open      = true;
     return true;
@@ -591,7 +596,7 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
         }
 
         // (2) Ensure an active file is open.
-        if (!g_file_open && !open_new_file()) { teardown(3); continue; }
+        if (!g_file_open && !open_new_file(now)) { teardown(3); continue; }
 
         // (3) Drain the ring -> CSV rows.
         ams::LogRecord r;
@@ -618,8 +623,9 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
         // a .TMP that no tool treats as a finished log. Checked outside the
         // drain loop so it still fires during a lull in the ring.
         if (g_file_open &&
-            ams::log_rotation::should_rotate(g_file_bytes, g_rows_this_file,
-                                             now - g_file_open_ms)) {
+            ams::log_rotation::should_rotate(
+                g_file_bytes, g_rows_this_file,
+                ams::log_rotation::file_age_ms(now, g_file_open_ms))) {
             seal_file();                       // next file opens next tick
         }
 

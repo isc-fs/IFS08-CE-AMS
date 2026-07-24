@@ -41,6 +41,19 @@ inline constexpr std::uint32_t MaxIndex = 10000u;
     return rows > 0u && age_ms >= config::LogFileMaxMs;
 }
 
+// Underflow-safe age of the active file. `open` is the tick the file was
+// opened, `now` the current tick. If `open` is briefly AHEAD of `now` -- the
+// #495 bug, where `open` was sampled AFTER the hundreds-of-ms SD open while
+// `now` was sampled at the top of the loop -- the naive `now - open` unsigned
+// subtraction wraps to ~4.29e9 ms, sails past LogFileMaxMs, and seals the file
+// on its first rows every iteration (hundreds of 1-2 row files per run). Clamp
+// that inverted pair to 0 so a skewed sample can never force an early rotation.
+// A never-opened file has open == 0, so age == now behaves as intended.
+[[nodiscard]] inline std::uint32_t file_age_ms(std::uint32_t now,
+                                               std::uint32_t open) noexcept {
+    return (now >= open) ? (now - open) : 0u;
+}
+
 // Pick the index for a new file.
 //
 //   exists(idx, sealed) -> true if LOGidx.CSV (sealed=true) / .TMP (false) is
