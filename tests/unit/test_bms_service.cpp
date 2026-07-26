@@ -125,17 +125,34 @@ extern "C" void test_bms_open_wire_flags_module(void) {
     build_clean_chain(pu);
     build_clean_chain(pd);
 
-    // PU == PD -> no open on any IC.
-    BmsService::instance().update_open_wire(pu, pd, RespBytes);
+    // PU == PD -> no open on any IC. All ICs PEC-clean -> "all evaluated" == true.
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
     TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().cell_open_mask);
 
     // Inject an open on module 0's upper LTC (ic 0), interior cell 3: group B
     // (index 1) carries cells 3,4,5 -- pull cell 3's PU far below its PD (3003)
     // so PU-PD < -CellOpenWireDeltaMv; leave 4,5 matching so only conductor 3 trips.
     encode_segment(pu + 1u * GroupBytes + 0u * Seg, /*c3*/ 1500u, /*c4*/ 3004u, /*c5*/ 3005u);
-    BmsService::instance().update_open_wire(pu, pd, RespBytes);
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
     // Only module 0 flagged.
     TEST_ASSERT_EQUAL_UINT8(1u << 0, BmsService::instance().snapshot().cell_open_mask);
+}
+
+// A PEC glitch on one IC's ADOW pass means that IC can't be judged -> update_
+// open_wire returns false so BmsPollTask retries the two-pass scan in-poll
+// (the fix for the ADOW no-retry gap that slipped detection past 500 ms).
+extern "C" void test_bms_open_wire_pec_glitch_signals_retry(void) {
+    if (!config::CellOpenWireCheck) { TEST_IGNORE_MESSAGE("CellOpenWireCheck off"); return; }
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+    // Corrupt ic0/group-A PEC on the PU pass (byte 6 of that segment) so its
+    // decode fails -> that IC is skipped -> "not all evaluated".
+    pu[0u * GroupBytes + 0u * Seg + 6u] ^= 0xFFu;
+    TEST_ASSERT_FALSE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
+    // A fully clean pair is judged completely -> true (retry would stop).
+    build_clean_chain(pu);
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
 }
 
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
