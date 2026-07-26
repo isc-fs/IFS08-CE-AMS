@@ -27,6 +27,7 @@ void test_bms_temp_disconnect_debounce(void);
 void test_bms_temp_partial_rail_open_is_disconnect(void);
 void test_bms_unpopulated_channel_is_not_a_disconnect(void);
 void test_bms_required_channel_open_at_boot_faults(void);
+void test_temp_disconnect_budget_under_500ms(void);
 void test_bms_temp_short_buffer_rejected(void);
 void test_bms_per_module_v_aggregates_after_clean_response(void);
 void test_bms_per_module_tmax_after_temp_sweep(void);
@@ -489,6 +490,7 @@ int main(void) {
     RUN_TEST(test_bms_temp_partial_rail_open_is_disconnect);
     RUN_TEST(test_bms_unpopulated_channel_is_not_a_disconnect);
     RUN_TEST(test_bms_required_channel_open_at_boot_faults);
+    RUN_TEST(test_temp_disconnect_budget_under_500ms);
     RUN_TEST(test_bms_temp_short_buffer_rejected);
     RUN_TEST(test_bms_per_module_v_aggregates_after_clean_response);
     RUN_TEST(test_bms_per_module_tmax_after_temp_sweep);

@@ -61,6 +61,12 @@
 //     on RDCVA for every IC.
 //   * Quiesce balancing (DCP=0 + BalanceQuiesceMs) before ADOW, like the voltage
 //     poll -- bleed current corrupts the open-wire delta.
+//
+// TIMING (same < 500 ms rule as the temp path): a cell open-wire must fault in
+// under 500 ms. Run the ADOW pass at a <= 250 ms cadence (e.g. fold it into the
+// BmsPollVoltMs 250 ms voltage poll) and latch on the FIRST confirmed open, so
+// worst-case detect = cadence + conversion + a 10 ms safety tick stays < 500 ms.
+// Do NOT hide it behind a multi-poll debounce that pushes the window past 500 ms.
 // ---------------------------------------------------------------------------
 
 namespace ams::open_wire {

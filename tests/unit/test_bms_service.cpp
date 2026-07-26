@@ -681,3 +681,16 @@ extern "C" void test_bms_required_channel_open_at_boot_faults(void) {
         "an open required channel must fault even if never seen valid (open-at-boot)");
 }
 
+// FS rule: a disconnected temp sensor must open the SDC in < 500 ms. Guard the
+// config budget so a future cadence/debounce bump can't silently blow it: the
+// debounce window is TempDisconnectPolls sweeps plus the safety-tick latch; the
+// remaining margin to 500 ms absorbs the ~100 ms sweep + up to one cadence gap
+// before the first open sweep. (e.g. 1 x 250 + 20 = 270 ms; a regression to
+// 2 x 250 or a 500 ms cadence trips this.)
+extern "C" void test_temp_disconnect_budget_under_500ms(void) {
+    const std::uint32_t debounce_window_ms =
+        static_cast<std::uint32_t>(config::TempDisconnectPolls) * config::BmsPollTempMs
+        + config::StatePeriodMs;
+    TEST_ASSERT_LESS_THAN_UINT32(500u, debounce_window_ms);
+}
+
