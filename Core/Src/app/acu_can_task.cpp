@@ -375,11 +375,11 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW PU + PD per-cell dump,
     // same 24-frame layout as the 0x680 cell grid, on AdowDiagPuBaseId /
     // AdowDiagPdBaseId. Dead-code-eliminated on flight builds (flag false).
-    if (config::AdowRawDiag) {
-        for (std::uint8_t i = 0; i < config::PitDiagCellFrames; ++i) {
-            send_or_fail_blocking(config::AdowDiagPuBaseId + i,
+    if (ams::config::AdowRawDiag) {
+        for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
+            send_or_fail_blocking(ams::config::AdowDiagPuBaseId + i,
                                   ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pu, i));
-            send_or_fail_blocking(config::AdowDiagPdBaseId + i,
+            send_or_fail_blocking(ams::config::AdowDiagPdBaseId + i,
                                   ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pd, i));
         }
     }
