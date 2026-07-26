@@ -116,6 +116,28 @@ extern "C" void test_cell_open_range_budget_under_500ms(void) {
     TEST_ASSERT_LESS_THAN_UINT32(500u, worst_ms);
 }
 
+// Cell open-wire (ADOW) end-to-end through BmsService::update_open_wire: two
+// identical PU/PD passes = no open; a PU reading pulled far below PD on one
+// interior cell of module 0's upper LTC flags exactly module 0's bit.
+extern "C" void test_bms_open_wire_flags_module(void) {
+    if (!config::CellOpenWireCheck) { TEST_IGNORE_MESSAGE("CellOpenWireCheck off"); return; }
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+
+    // PU == PD -> no open on any IC.
+    BmsService::instance().update_open_wire(pu, pd, RespBytes);
+    TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().cell_open_mask);
+
+    // Inject an open on module 0's upper LTC (ic 0), interior cell 3: group B
+    // (index 1) carries cells 3,4,5 -- pull cell 3's PU far below its PD (3003)
+    // so PU-PD < -CellOpenWireDeltaMv; leave 4,5 matching so only conductor 3 trips.
+    encode_segment(pu + 1u * GroupBytes + 0u * Seg, /*c3*/ 1500u, /*c4*/ 3004u, /*c5*/ 3005u);
+    BmsService::instance().update_open_wire(pu, pd, RespBytes);
+    // Only module 0 flagged.
+    TEST_ASSERT_EQUAL_UINT8(1u << 0, BmsService::instance().snapshot().cell_open_mask);
+}
+
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     std::uint8_t resp[RespBytes];
     build_clean_chain(resp);

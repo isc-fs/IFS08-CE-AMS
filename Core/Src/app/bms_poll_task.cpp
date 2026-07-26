@@ -290,6 +290,63 @@ void restore_balancing() noexcept {
     }
 }
 
+// One ADOW conversion pass (open-wire). Mirrors attempt_voltage_poll's ADCV ->
+// RDCV shape but issues ADOW with the given PUP, TWICE, so the pull-up/down
+// current settles before the read (datasheet "Open Wire Check"; the cell-domain
+// twin of the #482 mux first-select warm-up). Fills `reply` (4*GroupBytes) with
+// RDCVA..D. Returns false on any bus error. UNVALIDATED ON HARDWARE (bench down)
+// -- the ADOW encoding + timing need a real-chain check (see open_wire.hpp).
+bool adow_pass(ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexcept {
+    using namespace ams;
+    constexpr std::size_t SegBytes   = 8;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * SegBytes;
+
+    // Two ADOW conversions: the first settles the PUP current, the second is the
+    // one whose result the RDCV* reads pick up.
+    for (std::uint8_t n = 0; n < 2; ++n) {
+        const auto adow = ltc6811::pack_command(
+            ltc6811::adow_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
+                              pull_up, /*discharge_permit=*/false,
+                              ltc6811::CellSel::All));
+        if (!bus.send_command(adow.data())) { ++g_ltc_spi_err_count; return false; }
+        osDelay(config::AdcvSettleMs);
+    }
+
+    // RDCV warm-up (#214): no-op RDCFGA burns the stale-MOSI sample so the
+    // back-to-back RDCV* reads keep bit-sync.
+    const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
+    std::uint8_t warmup[8 * config::LtcChainLength];
+    if (!bus.read_register_group(rdcfga.data(), warmup, sizeof warmup)) {
+        ++g_ltc_spi_err_count; return false;
+    }
+
+    static constexpr std::uint16_t RdcvCmds[4] = {
+        ltc6811::CmdRDCVA, ltc6811::CmdRDCVB, ltc6811::CmdRDCVC, ltc6811::CmdRDCVD,
+    };
+    for (std::uint8_t g = 0; g < 4; ++g) {
+        const auto cmd = ltc6811::pack_command(RdcvCmds[g]);
+        if (!bus.read_register_group(cmd.data(), reply + g * GroupBytes, GroupBytes)) {
+            ++g_ltc_spi_err_count; return false;
+        }
+    }
+    return true;
+}
+
+// Open-wire scan: ADOW PUP=1 then PUP=0, hand both RDCV responses to
+// BmsService::update_open_wire (which owns the per-IC 9/10 decode + the
+// open_wire detector). Caller must have quiesced balancing already -- bleed
+// current corrupts the pull-up/down delta. Gated by config::CellOpenWireCheck.
+void attempt_open_wire_poll() noexcept {
+    using namespace ams;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * 8u;
+    auto& bus = ltc6820::Bus::default_instance();
+    std::uint8_t pu[4 * GroupBytes];
+    std::uint8_t pd[4 * GroupBytes];
+    if (!adow_pass(bus, /*pull_up=*/true,  pu)) return;
+    if (!adow_pass(bus, /*pull_up=*/false, pd)) return;
+    BmsService::instance().update_open_wire(pu, pd, sizeof pu);
+}
+
 void run_voltage_poll() {
     using namespace ams;
 
@@ -320,6 +377,13 @@ void run_voltage_poll() {
         any_fresh = any_fresh || r.any_module_fresh;
         if (r.clean_ltcs >= config::LtcChainLength) break;  // whole chain clean
     }
+
+    // 1b. Open-wire scan (config::CellOpenWireCheck) while balancing is STILL
+    //     quiesced -- ADOW's pull-up/down delta is corrupted by bleed current,
+    //     same as the voltage measurement. Runs on the 200 ms poll cadence so an
+    //     open faults in < 500 ms. Adds two ADOW passes to the poll -- validate
+    //     the task keeps up on the HIL bench.
+    if (config::CellOpenWireCheck) attempt_open_wire_poll();
 
     // 2. Resume bleeding. Done here rather than waiting for the 1 Hz balance
     //    update, which would otherwise leave discharge off for three polls out

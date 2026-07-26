@@ -6,6 +6,7 @@
 
 #include "ams_config.hpp"
 #include "ltc6811.hpp"
+#include "open_wire.hpp"
 
 #include <array>
 #include <cstdint>
@@ -411,6 +412,58 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
 
     recompute_summaries_();
     return any_ok;
+}
+
+void BmsService::update_open_wire(const std::uint8_t* pu_reply,
+                                 const std::uint8_t* pd_reply,
+                                 std::size_t         len) noexcept {
+    // Gated off -> always report "no open" so a stale mask can't linger.
+    if (!config::CellOpenWireCheck) { state_.cell_open_mask = 0u; return; }
+
+    constexpr std::size_t Seg        = 8;                                // 6 data + 2 PEC
+    constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;     // 80
+    constexpr std::size_t Expected   = 4u * GroupBytes;                  // 320
+    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return;
+
+    std::uint8_t new_mask = 0u;
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
+        const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
+        // Per-LTC cell count: 9 on the upper (RDCVD discarded), 10 on the lower
+        // (RDCVD C10 = the 10th cell). NEVER a uniform count -- see #423.
+        const std::uint8_t n_cells  =
+            is_upper ? config::CellsPerLtcUpper : config::CellsPerLtcLower;
+
+        std::uint16_t pu_cells[config::CellsPerLtcLower] = {};   // max 10
+        std::uint16_t pd_cells[config::CellsPerLtcLower] = {};
+        bool ic_ok = true;
+        for (std::uint8_t g = 0; g < 4 && ic_ok; ++g) {
+            std::array<std::uint16_t, 3> gpu{};
+            std::array<std::uint16_t, 3> gpd{};
+            const std::uint8_t* spu = pu_reply + g * GroupBytes + ic * Seg;
+            const std::uint8_t* spd = pd_reply + g * GroupBytes + ic * Seg;
+            // Both passes must PEC-clean or we can't trust the delta; skip the IC
+            // (its loss is already caught by the module-online / stale path).
+            if (!ltc6811::decode_cell_voltage_group(spu, gpu) ||
+                !ltc6811::decode_cell_voltage_group(spd, gpd)) {
+                ic_ok = false;
+                break;
+            }
+            for (std::uint8_t k = 0; k < 3; ++k) {
+                const std::uint8_t idx = static_cast<std::uint8_t>(g * 3 + k);
+                if (idx < n_cells) {   // upper: keep A/B/C (0..8); lower: +RDCVD[0]=idx 9
+                    pu_cells[idx] = gpu[k];
+                    pd_cells[idx] = gpd[k];
+                }
+            }
+        }
+        if (!ic_ok) continue;
+        if (open_wire::detect_open_conductors(pu_cells, pd_cells, n_cells,
+                                              config::CellOpenWireDeltaMv) != 0u) {
+            new_mask = static_cast<std::uint8_t>(new_mask | (1u << module));
+        }
+    }
+    state_.cell_open_mask = new_mask;
 }
 
 BmsState BmsService::snapshot() const noexcept {

@@ -34,7 +34,7 @@ inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    --
 // healthy pack and trap it in Error. Flip to true ONLY after HIL validation of
 // the ADOW path end-to-end. The pure detector (open_wire.hpp) is host-tested
 // independently of this flag.
-inline constexpr bool          CellOpenWireCheck   = false;
+inline constexpr bool          CellOpenWireCheck   = true;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
 
 // Implausible-cell bounds for the balancing tap-artifact guard (see
