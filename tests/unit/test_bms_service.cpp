@@ -446,7 +446,14 @@ extern "C" void test_bms_temp_rail_reading_skips_slot(void) {
     BmsService::instance().update_temperature(5, reply, sizeof(reply));
 
     const auto after = BmsService::instance().snapshot();
-    TEST_ASSERT_EQUAL_INT16(before, after.cell_tempC[2][5]);
+    // Either way an open reading must never become a valid-looking temperature.
+    // With a debounce it holds the last good value; with TempDisconnectPolls == 1
+    // it marks the slot open (NtcNoReading) on the first rail read.
+    if (config::TempDisconnectPolls >= 2) {
+        TEST_ASSERT_EQUAL_INT16(before, after.cell_tempC[2][5]);
+    } else {
+        TEST_ASSERT_EQUAL_INT16(config::NtcNoReading, after.cell_tempC[2][5]);
+    }
 }
 
 extern "C" void test_bms_temp_pec_fail_skips_slot(void) {
