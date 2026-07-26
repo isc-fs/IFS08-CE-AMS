@@ -167,7 +167,12 @@ inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
 // Minor knock-on: balance updates run ~1.25 Hz (BalanceUpdatePolls x 200 ms) and
 // LogSamplePeriodMs (250) no longer exactly matches a poll -- both non-safety.
 inline constexpr std::uint32_t BmsPollVoltMs     = 200;
-inline constexpr std::uint32_t BmsPollTempMs     = 500;
+// 500 -> 250 ms: a disconnected temp sensor must fault in < 500 ms (FS rule).
+// With TempDisconnectPolls = 1 the worst-case detect is one sweep cadence +
+// the ~100 ms sweep + a 10 ms safety tick ~= 360 ms. Runs the mux sweep every
+// 250 ms alongside the 200 ms BmsPollVoltMs voltage poll on BmsPollTask --
+// confirm the task keeps up (sweep ~100 ms) on the HIL bench.
+inline constexpr std::uint32_t BmsPollTempMs     = 250;
 inline constexpr std::uint32_t TelemetryPeriodMs = 500;
 inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)
 
@@ -872,11 +877,18 @@ inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
 // regardless of the beta/pull-up calibration -- so it is armed independently of
 // TempFaultsTrusted (which gates the range over/under-temp faults).
 //
-// The debounce tolerates a single anomalous mux read: a genuine open is stable,
-// a one-off is not. 2 polls x BmsPollTempMs (500 ms) ~= 1 s to detect, tunable.
-// COMMISSION: confirm the detection time meets the applicable rule window.
+// Detect on the FIRST open poll (was 2): the FS rule requires a disconnected
+// temp sensor to open the SDC in < 500 ms, and 2 x BmsPollTempMs was ~1 s.
+// 1 x 250 ms + the ~100 ms sweep + a 10 ms safety tick ~= 360 ms, comfortably
+// inside 500 ms. TRADE-OFF: this drops the single-anomalous-read debounce, so a
+// one-off mux glitch that reads >= NtcOpenMv could nuisance-latch ERROR. That
+// is mitigated -- but not eliminated -- by the #482 mux first-select warm-up and
+// the NtcOpenMv (2800 mV) / plausibility gate that reject the known transients.
+// COMMISSION: watch for spurious TempSensorDisconnected trips on the HIL bench;
+// if a genuine glitch source appears, raise BmsPollTempMs headroom + reinstate a
+// 2-poll debounce that still fits < 500 ms rather than widening the window.
 inline constexpr bool         TempSensorPresenceCheck = true;
-inline constexpr std::uint8_t TempDisconnectPolls     = 2;
+inline constexpr std::uint8_t TempDisconnectPolls     = 1;
 
 // REQUIRED temperature channels: cell-temp slots that MUST be present in every
 // online module. A required slot reading OPEN faults immediately -- WITHOUT the
