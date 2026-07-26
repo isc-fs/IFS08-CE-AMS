@@ -28,15 +28,21 @@ inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    --
 // still reads in-range. Runs the two-pass ADOW conversion in BmsPollTask and
 // faults FaultReason::CellOpenWire in ANY state.
 //
-// DISABLED (2026-07-26): enabling this on the bench did NOT fault on a real
-// open -- the ADOW register encoding / conversion timing were never validated on
-// a real LTC chain and don't work as-is. Gated back off so the (working) range
-// check CellUnderVoltage/CellOverVoltage remains the voltage open-circuit path
-// while the ADOW path is fixed + HIL-validated end-to-end. The pure detector
-// (open_wire.hpp), adow_cmd(), update_open_wire and the retry stay in the tree
-// (host-tested, inert) so re-enabling after a real-chain fix is one line. Flip
-// to true ONLY once ADOW is confirmed to detect + not nuisance-trip on hardware.
-inline constexpr bool          CellOpenWireCheck   = false;
+// Disabled by #510 because enabling it on the bench did NOT fault on a real
+// open. ROOT CAUSE FOUND (2026-07-26, bench): adow_cmd() had PUP on bit5 with
+// base 0x0248, i.e. PUP and a fixed opcode bit swapped. The PUP=1 pass was
+// correct by coincidence (0x0368) but PUP=0 emitted 0x0348, which the LTC does
+// not accept -- no second conversion ran and RDCV re-returned the pull-up
+// result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, so the
+// PU-PD delta was identically 0 and the open was undetectable. See ltc6811.hpp.
+//
+// RE-ENABLED on this bench branch now that the encoding is fixed and validated
+// against a live chain: a disconnected c2/c3 tap reads -4210 mV against the
+// 400 mV threshold (10x margin), while a healthy pack stays inside -130..+50 mV.
+// NOTE: this is a BENCH branch value. Re-enabling on dev/flight is a separate
+// decision that #510 gated on end-to-end HIL validation -- do not carry this
+// line into a flight image without that sign-off.
+inline constexpr bool          CellOpenWireCheck   = true;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
 // ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
 // passes must be PEC-clean on an IC to judge its open-wire state; a single PEC
