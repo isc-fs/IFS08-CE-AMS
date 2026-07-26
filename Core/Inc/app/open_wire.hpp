@@ -29,6 +29,40 @@
 
 #include <cstdint>
 
+// ---------------------------------------------------------------------------
+// POLL-INTEGRATION CONTRACT (for the HIL follow-up that wires ADOW live).
+// Keep in lockstep with bms_service.cpp's RDCV decode + the BMS_LITE schematic;
+// an off-by-one here silently mis-detects open wires.
+//
+// CELL COUNT IS PER-LTC, NOT UNIFORM (#423):
+//   * Upper IC (chain index EVEN, LTC_1): 9 cells  -> module cells 0..8
+//       RDCVA->0,1,2   RDCVB->3,4,5   RDCVC->6,7,8    (RDCVD UNUSED -- ignore)
+//   * Lower IC (chain index ODD,  LTC_2): 10 cells -> module cells 9..18
+//       RDCVA->9,10,11 RDCVB->12,13,14 RDCVC->15,16,17 RDCVD[0]->18
+//   Call detect_open_conductors(pu, pd, n_cells, ...) with n_cells = 9 for
+//   upper ICs and 10 for lower ICs. Decode ONLY those valid cells -- feeding
+//   the upper IC's unused RDCVD registers would false-flag conductors C(9..12).
+//   OR an upper-IC open into module cells 0..8, a lower-IC open into 9..18.
+//
+// TEMP-side note (same board): the ADG731 mux carries NTC_1..20 (LTC_1) /
+// NTC_21..40 (LTC_2) on S1..S10 + S17..S26 -> Adg731ChannelMap {0..9,16..25};
+// firmware slots 0..19 (upper) / 20..39 (lower). All 40 are populated and
+// required (config::RequiredTempSlots), so slot 0 MUST NOT false-open -- which
+// is exactly what the #482 mux warm-up guarantees (see WARM-UP below).
+//
+// WARM-UP (mirror the existing LTC settling precedents -- do not skip):
+//   * ADOW: run the conversion TWICE per PUP setting before RDCV so the pull-
+//     up/down current settles (datasheet "Open Wire Check"). This is the cell-
+//     domain twin of the ADG731 first-select warm-up (#482 -- a throwaway
+//     select to UNPOPULATED S32 absorbs the mux first-select drop so temp slot 0
+//     latches instead of reading open).
+//   * RDCV warm-up (#214): issue a no-op RDCFGA before the first RDCV after the
+//     ADOW+settle idle, as attempt_voltage_poll() does, or stale MOSI fails PEC
+//     on RDCVA for every IC.
+//   * Quiesce balancing (DCP=0 + BalanceQuiesceMs) before ADOW, like the voltage
+//     poll -- bleed current corrupts the open-wire delta.
+// ---------------------------------------------------------------------------
+
 namespace ams::open_wire {
 
 // Max cells per LTC6811 IC (datasheet). Sizes the returned conductor mask

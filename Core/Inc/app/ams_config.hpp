@@ -889,6 +889,11 @@ inline constexpr std::uint8_t TempDisconnectPolls     = 2;
 // known M3 upper-LTC open) will now correctly LATCH ERROR at boot until it is
 // repaired -- that is the intended behaviour, but it means the harness must be
 // healthy for the pack to arm. Validate on the bench before flight.
+//
+// Slot 0 is safe to require: the ADG731 first-select drop that used to make
+// temp 1 read open on the first sweep is absorbed by the #482 mux warm-up (the
+// throwaway select to unpopulated S32 in BmsPollTask) -- without that warm-up,
+// requiring slot 0 would false-fault every module at boot.
 inline constexpr std::uint8_t RequiredTempSlots[]   = {
      0,  1,  2,  3,  4,  5,  6,  7,  8,  9,   // LTC_1 NTC_1..NTC_10
     10, 11, 12, 13, 14, 15, 16, 17, 18, 19,   // LTC_1 NTC_11..NTC_20
