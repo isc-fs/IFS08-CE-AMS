@@ -36,6 +36,14 @@ inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    --
 // independently of this flag.
 inline constexpr bool          CellOpenWireCheck   = true;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
+// ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
+// passes must be PEC-clean on an IC to judge its open-wire state; a single PEC
+// glitch would otherwise skip that IC and slip the CellOpenWire fault to the NEXT
+// poll (+BmsPollVoltMs), pushing detection past 500 ms. Re-running the two-pass
+// scan when any IC was skipped absorbs a transient glitch IN THE SAME poll, so
+// detection stays < 500 ms. 1 retry (2 attempts) keeps the added time bounded
+// (~2 x two ADOW passes) while covering the single-glitch case.
+inline constexpr std::uint8_t  OpenWireRetries     = 1;
 
 // Implausible-cell bounds for the balancing tap-artifact guard (see
 // recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack

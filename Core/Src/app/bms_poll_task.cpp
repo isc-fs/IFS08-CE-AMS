@@ -336,15 +336,30 @@ bool adow_pass(ams::ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexce
 // BmsService::update_open_wire (which owns the per-IC 9/10 decode + the
 // open_wire detector). Caller must have quiesced balancing already -- bleed
 // current corrupts the pull-up/down delta. Gated by config::CellOpenWireCheck.
+//
+// RETRIED (up to config::OpenWireRetries) within THIS poll: update_open_wire
+// needs both passes PEC-clean per IC to judge it, so a single transient PEC
+// glitch on the affected IC would otherwise skip it and slip the CellOpenWire
+// fault to the next poll (+BmsPollVoltMs, blowing the < 500 ms budget). If any
+// IC was skipped we re-run the two-pass scan so the glitch is absorbed in-poll;
+// a persistently-silent IC is caught by BmsModuleOffline instead.
 void attempt_open_wire_poll() noexcept {
     using namespace ams;
     constexpr std::size_t GroupBytes = config::LtcChainLength * 8u;
     auto& bus = ltc6820::Bus::default_instance();
     std::uint8_t pu[4 * GroupBytes];
     std::uint8_t pd[4 * GroupBytes];
-    if (!adow_pass(bus, /*pull_up=*/true,  pu)) return;
-    if (!adow_pass(bus, /*pull_up=*/false, pd)) return;
-    BmsService::instance().update_open_wire(pu, pd, sizeof pu);
+    for (std::uint8_t attempt = 0; attempt <= config::OpenWireRetries; ++attempt) {
+        if (!adow_pass(bus, /*pull_up=*/true,  pu)) continue;   // bus error -> retry
+        if (!adow_pass(bus, /*pull_up=*/false, pd)) continue;
+        // attempt 0 overwrites (clears the prior poll); retries OR-accumulate so a
+        // glitch on a later attempt can't erase an open a prior attempt confirmed.
+        if (BmsService::instance().update_open_wire(pu, pd, sizeof pu,
+                                                    /*accumulate=*/attempt != 0u)) {
+            return;   // every IC judged this attempt -> done
+        }
+        // else: an IC PEC-glitched -> retry gives it another clean read
+    }
 }
 
 void run_voltage_poll() {

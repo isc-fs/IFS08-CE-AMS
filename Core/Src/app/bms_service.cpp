@@ -414,18 +414,20 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
     return any_ok;
 }
 
-void BmsService::update_open_wire(const std::uint8_t* pu_reply,
+bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
                                  const std::uint8_t* pd_reply,
-                                 std::size_t         len) noexcept {
-    // Gated off -> always report "no open" so a stale mask can't linger.
-    if (!config::CellOpenWireCheck) { state_.cell_open_mask = 0u; return; }
+                                 std::size_t         len, bool accumulate) noexcept {
+    // Gated off -> always report "no open" so a stale mask can't linger. Fully
+    // "evaluated" (nothing to retry).
+    if (!config::CellOpenWireCheck) { state_.cell_open_mask = 0u; return true; }
 
     constexpr std::size_t Seg        = 8;                                // 6 data + 2 PEC
     constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;     // 80
     constexpr std::size_t Expected   = 4u * GroupBytes;                  // 320
-    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return;
+    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return true;
 
     std::uint8_t new_mask = 0u;
+    bool         all_ok   = true;   // false if any IC was PEC-skipped this call
     for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
@@ -457,13 +459,18 @@ void BmsService::update_open_wire(const std::uint8_t* pu_reply,
                 }
             }
         }
-        if (!ic_ok) continue;
+        if (!ic_ok) { all_ok = false; continue; }   // PEC glitch -> caller retries
         if (open_wire::detect_open_conductors(pu_cells, pd_cells, n_cells,
                                               config::CellOpenWireDeltaMv) != 0u) {
             new_mask = static_cast<std::uint8_t>(new_mask | (1u << module));
         }
     }
-    state_.cell_open_mask = new_mask;
+    // First attempt overwrites (clears last poll's stale bits); a retry ORs so it
+    // can't erase an open a prior attempt of THIS poll already confirmed.
+    state_.cell_open_mask = accumulate
+        ? static_cast<std::uint8_t>(state_.cell_open_mask | new_mask)
+        : new_mask;
+    return all_ok;
 }
 
 BmsState BmsService::snapshot() const noexcept {
