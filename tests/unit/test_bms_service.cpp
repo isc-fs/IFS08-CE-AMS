@@ -554,9 +554,13 @@ extern "C" void test_bms_temp_disconnect_debounce(void) {
         encode_aux_segment(valid + ic * Seg, Aux25C_mV);  // ~25 C
         encode_aux_segment(open  + ic * Seg, 3000u);       // rail = open
     }
-    // Keep the REQUIRED slot 0 present (a valid reading) so its presence check
-    // does not flag -- this test is about the slot-3 debounce, not slot 0.
-    (void)BmsService::instance().update_temperature(0, valid, sizeof valid);
+    // Seed EVERY temp channel with a valid reading so the (now full 0..39)
+    // required-slot presence check is satisfied -- this test targets the
+    // slot-kCh debounce, not the presence of the other required channels. Each
+    // call fills the upper slot (ch) and lower slot (ch+20) on every module.
+    for (std::uint8_t ch = 0; ch < config::TempsPerLtc; ++ch) {
+        (void)BmsService::instance().update_temperature(ch, valid, sizeof valid);
+    }
 
     // 1. Valid read: channel is now "seen", no disconnect.
     (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);

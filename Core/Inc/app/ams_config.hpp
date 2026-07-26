@@ -22,6 +22,21 @@ namespace ams::config {
 inline constexpr std::uint16_t CellUnderVoltageMv =  2800;  // under-voltage   -- COMMISSION
 inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
 
+// Cell OPEN-WIRE detection (LTC6811 ADOW). Historically the AMS relied on
+// software cell-mV plausibility for a broken sense wire (docs/BMS_LTC6811.md);
+// this arms the datasheet open-wire check instead, which catches an open that
+// still reads in-range. Runs the two-pass ADOW conversion in BmsPollTask and
+// faults FaultReason::CellOpenWire in ANY state.
+//
+// DEFAULT OFF, exactly like TempFaultsTrusted: the ADOW register encoding and
+// conversion timing are not yet validated against a real LTC chain (the bench
+// was down when this landed), and a wrong threshold/timing would false-fault a
+// healthy pack and trap it in Error. Flip to true ONLY after HIL validation of
+// the ADOW path end-to-end. The pure detector (open_wire.hpp) is host-tested
+// independently of this flag.
+inline constexpr bool          CellOpenWireCheck   = false;
+inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
+
 // Implausible-cell bounds for the balancing tap-artifact guard (see
 // recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
 // physically cannot sit outside this window -- a reading beyond it is a
@@ -863,11 +878,28 @@ inline constexpr std::uint8_t TempDisconnectPolls     = 2;
 // LTC_2 (lower) in 20..39. "Temperature 1 of LTC_1" = slot 0. The scrutineering
 // demo switches exactly that channel on each module, so slot 0 is required.
 //
-// COMMISSION: extend this to every slot that is actually populated on the flight
-// harness, so ANY disconnected sensor -- not just the demo one -- opens the SDC.
-// Leaving a genuinely-unpopulated slot OUT of this list is what keeps it from
-// false-faulting; the (still-active) seen-valid path covers the rest.
-inline constexpr std::uint8_t RequiredTempSlots[]   = { 0 };
+// FULL populated map (all 40 slots) -- verified from the BMS_LITE schematic:
+// LTC_1 mux U4 carries NTC_1..NTC_20 (S1..S10 + S17..S26) -> slots 0..19, and
+// LTC_2 mux U5 carries NTC_21..NTC_40 (same channels) -> slots 20..39. Every
+// slot on both LTCs is populated on all 5 modules, so ANY open cell-temp sensor
+// -- at boot or after -- now opens the SDC, per the FS rule.
+//
+// CONSEQUENCE (COMMISSION / HIL): this enforces all 40 slots on every online
+// module immediately. A genuinely open channel on the flight harness (e.g. the
+// known M3 upper-LTC open) will now correctly LATCH ERROR at boot until it is
+// repaired -- that is the intended behaviour, but it means the harness must be
+// healthy for the pack to arm. Validate on the bench before flight.
+//
+// Slot 0 is safe to require: the ADG731 first-select drop that used to make
+// temp 1 read open on the first sweep is absorbed by the #482 mux warm-up (the
+// throwaway select to unpopulated S32 in BmsPollTask) -- without that warm-up,
+// requiring slot 0 would false-fault every module at boot.
+inline constexpr std::uint8_t RequiredTempSlots[]   = {
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9,   // LTC_1 NTC_1..NTC_10
+    10, 11, 12, 13, 14, 15, 16, 17, 18, 19,   // LTC_1 NTC_11..NTC_20
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29,   // LTC_2 NTC_21..NTC_30
+    30, 31, 32, 33, 34, 35, 36, 37, 38, 39,   // LTC_2 NTC_31..NTC_40
+};
 
 // Minimum valid cell-temp channels before balancing may run at all.
 //

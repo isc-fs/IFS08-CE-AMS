@@ -56,6 +56,7 @@ add_executable(ams_unit_tests
     test_isotp.cpp
     test_logfs_server.cpp
     test_ltc6811_decode.cpp
+    test_open_wire.cpp
     test_safety_predicates.cpp
     test_sil_scenarios.cpp
     test_state_machine.cpp

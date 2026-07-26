@@ -54,6 +54,14 @@ struct BmsState {
     // split for diagnosis). See config::CellImplausibleMaxMv / MinMv.
     std::uint8_t  tap_fault_mask;
 
+    // Bit m set <=> online module m has at least one OPEN cell-sense wire, as
+    // found by the LTC6811 ADOW two-pass open-wire check (open_wire.hpp) in
+    // BmsPollTask. Distinct from tap_fault_mask (which MASKS a high-R tap so it
+    // cannot false-trip OV/UV): an ADOW-confirmed open is a real fault and
+    // latches FaultReason::CellOpenWire in any state. Only written when
+    // config::CellOpenWireCheck is enabled; 0 otherwise.
+    std::uint8_t  cell_open_mask;
+
     // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
     // ECU TX matrix (fix/53). Recomputed in recompute_summaries_()
     // from cell_mV / cell_tempC; no extra cost beyond a single pass

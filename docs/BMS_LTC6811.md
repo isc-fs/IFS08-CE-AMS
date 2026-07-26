@@ -471,7 +471,7 @@ bench calibration in
 | Bus-level SPI failure (`HAL_SPI_*` non-OK) | `Bus::transfer` / `Bus::read_register_group` returns false | abort the cycle, ++`g_ltc_spi_err_count`, `last_rx_tick` doesn't advance. |
 | Mux SPI lost (open ADG731) | NTC reading rails (`V_aux = 0` or `≥ V_ref`), `ntc_mV_to_tempC` returns sentinel | skip slot, keep previous value. Operator-visible via `cell_tempC` snapshot. |
 | Chain dropped to T_SLEEP | next ADCV broadcast lands while ICs are deaf → PEC fails | freshness window catches it within `BmsStaleMs`. The ~250/500 ms poll traffic normally keeps the chain out of the ~2 s T_SLEEP window; there is no post-boot re-wakeup, so a long-paused poll loop can still let it drop. |
-| Open-wire detection (LTC ADOL) | **not used** — relying on software cell-mV plausibility instead | low-cell-V predicate trips on an open wire reading 0 mV. |
+| Open-wire detection (LTC6811 ADOW) | implemented but **gated off** (`config::CellOpenWireCheck`, default false) pending HIL validation — software cell-mV plausibility remains the active path meanwhile | two-pass ADOW (PUP=1/PUP=0) + `ams::open_wire::detect_open_conductors` → `FaultReason::CellOpenWire` in any state; catches an open that still reads in-range, which the low-cell-V predicate alone can miss. Poll wiring + flag flip land after real-chain validation. |
 
 The unifying principle: a single anomalous frame is bookkeeping, a
 sustained anomaly is a freshness expiry → safety supervisor takes
