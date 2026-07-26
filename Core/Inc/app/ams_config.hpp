@@ -136,7 +136,12 @@ inline constexpr std::uint32_t SafetyBootGraceMs = 2000;
 // the ~300 ms confirmation is well within their response budget. Only
 // the cell V/T branches are debounced -- force-error, BMS offline/stale,
 // current-over-limit, and VCU-stale still latch on the first tick.
-inline constexpr std::uint16_t CellFaultConfirmTicks = 30;  // ~300 ms
+// 30 -> 25 (~300 -> ~250 ms): with BmsPollVoltMs = 200, an out-of-range cell
+// open faults in <= 200 ms (next poll) + 250 ms (confirm) + 10 ms tick ~= 460 ms
+// -- inside the < 500 ms open-detection budget -- while the confirm still spans
+// MORE than one 200 ms poll cycle, so a single anomalous poll can't latch. (An
+// open that reads plausibly IN-range is caught only by ADOW, config::CellOpenWireCheck.)
+inline constexpr std::uint16_t CellFaultConfirmTicks = 25;  // ~250 ms
 
 // BmsStale confirmation debounce. BmsStale (a BMS module silent past
 // BmsStaleMs) is a timeout, but it currently latches ERROR on the FIRST
@@ -155,12 +160,18 @@ inline constexpr std::uint16_t BmsStaleConfirmTicks = 25;  // ~250 ms  COMMISSIO
 inline constexpr std::uint32_t StatePeriodMs     =  20;
 inline constexpr std::uint32_t CurrentPeriodMs   =  50;
 inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
-inline constexpr std::uint32_t BmsPollVoltMs     = 250;
+// 250 -> 200 ms: an out-of-range cell open must fault in < 500 ms (FS rule).
+// The range check needs one poll to observe the open + a confirm debounce that
+// spans > one poll for glitch immunity; at 250 ms that floored detection at
+// ~500 ms. 200 ms poll + CellFaultConfirmTicks (~250 ms) = ~460 ms worst case.
+// Minor knock-on: balance updates run ~1.25 Hz (BalanceUpdatePolls x 200 ms) and
+// LogSamplePeriodMs (250) no longer exactly matches a poll -- both non-safety.
+inline constexpr std::uint32_t BmsPollVoltMs     = 200;
 // 500 -> 250 ms: a disconnected temp sensor must fault in < 500 ms (FS rule).
 // With TempDisconnectPolls = 1 the worst-case detect is one sweep cadence +
 // the ~100 ms sweep + a 10 ms safety tick ~= 360 ms. Runs the mux sweep every
-// 250 ms alongside the BmsPollVoltMs voltage poll on BmsPollTask -- confirm the
-// task keeps up (sweep ~100 ms fits the 250 ms window) on the HIL bench.
+// 250 ms alongside the 200 ms BmsPollVoltMs voltage poll on BmsPollTask --
+// confirm the task keeps up (sweep ~100 ms) on the HIL bench.
 inline constexpr std::uint32_t BmsPollTempMs     = 250;
 inline constexpr std::uint32_t TelemetryPeriodMs = 500;
 inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)

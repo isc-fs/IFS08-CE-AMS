@@ -7,6 +7,7 @@
 extern "C" {
 
 // test_bms_service.cpp
+void test_cell_open_range_budget_under_500ms(void);
 void test_bms_ltc_clean_response_decodes_all_cells(void);
 void test_bms_tap_artifact_does_not_trip_ov(void);
 void test_bms_real_overvoltage_not_masked(void);
@@ -470,7 +471,8 @@ void test_logrot_file_age_inverted_pair_is_zero(void);
 int main(void) {
     UNITY_BEGIN();
 
-    RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
+        RUN_TEST(test_cell_open_range_budget_under_500ms);
+RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_bms_tap_artifact_does_not_trip_ov);
     RUN_TEST(test_bms_real_overvoltage_not_masked);
     RUN_TEST(test_bms_nonphysical_without_compensation_not_masked);

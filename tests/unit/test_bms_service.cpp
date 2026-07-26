@@ -104,6 +104,18 @@ extern "C" void tearDown(void) {}
 // module at the right offset, online masks reach 0x3FF (10 LTCs) /
 // 0x1F (5 modules), is_healthy goes true.
 // ---------------------------------------------------------------------------
+// FS rule: an out-of-range cell open must open the SDC in < 500 ms. Guard the
+// range-path budget: one voltage poll to observe the open + the confirm debounce
+// + a safety tick. (e.g. 200 + 25x10 + 20 = 470 ms.) A regression to a 250 ms
+// poll or a longer debounce trips this. In-range opens are ADOW's job.
+extern "C" void test_cell_open_range_budget_under_500ms(void) {
+    const std::uint32_t worst_ms =
+        config::BmsPollVoltMs
+        + static_cast<std::uint32_t>(config::CellFaultConfirmTicks) * config::SafetyPeriodMs
+        + config::StatePeriodMs;
+    TEST_ASSERT_LESS_THAN_UINT32(500u, worst_ms);
+}
+
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
