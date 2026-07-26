@@ -165,6 +165,21 @@ public:
                             const std::uint8_t* chain_response,
                             std::size_t         len) noexcept;
 
+    // ------------------------------------------------------------------
+    // Cell open-wire (LTC6811 ADOW). BmsPollTask runs the two conversion
+    // passes and hands the two RDCV chain responses here: `pu_reply` from the
+    // PUP=1 pass, `pd_reply` from PUP=0 (each 4 groups x LtcChainLength x 8 B).
+    // Per IC, decodes the valid cells (9 upper / 10 lower), runs
+    // open_wire::detect_open_conductors, and sets state_.cell_open_mask bit m
+    // if module m's upper OR lower LTC shows an open. Only ICs PEC-clean on
+    // BOTH passes are evaluated (a PEC-fail is the offline/stale path's job).
+    // Recomputed from scratch each call. Single-writer (BmsPollTask). No-op
+    // (clears the mask) when config::CellOpenWireCheck is off. Pure decode +
+    // open_wire.hpp logic -> host-testable without a chain.
+    void update_open_wire(const std::uint8_t* pu_reply,
+                          const std::uint8_t* pd_reply,
+                          std::size_t         len) noexcept;
+
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.
     [[nodiscard]] BmsState snapshot() const noexcept;
