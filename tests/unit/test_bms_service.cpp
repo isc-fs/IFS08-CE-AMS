@@ -116,6 +116,22 @@ extern "C" void test_cell_open_range_budget_under_500ms(void) {
     TEST_ASSERT_LESS_THAN_UINT32(500u, worst_ms);
 }
 
+// A whole module going silent (stop measuring ALL of it) must open the SDC in
+// < 500 ms. It drops off module_online_mask at the first voltage poll whose
+// freshness age exceeds BmsStaleMs -> BmsModuleOffline (immediate). Guard both:
+// (a) BmsStaleMs > one poll so a single missed poll is tolerated (glitch immune),
+// (b) the detect budget: polls-until-age-exceeds-staleness x cadence + tick < 500.
+extern "C" void test_module_loss_budget_under_500ms(void) {
+    // One missed voltage poll must not trip it.
+    TEST_ASSERT_GREATER_THAN_UINT32(config::BmsPollVoltMs, config::BmsStaleMs);
+    // First poll STRICTLY after BmsStaleMs detects the drop.
+    const std::uint32_t polls_to_detect =
+        (config::BmsStaleMs / config::BmsPollVoltMs) + 1u;
+    const std::uint32_t worst_ms =
+        polls_to_detect * config::BmsPollVoltMs + config::StatePeriodMs;
+    TEST_ASSERT_LESS_THAN_UINT32(500u, worst_ms);
+}
+
 // Cell open-wire (ADOW) end-to-end through BmsService::update_open_wire: two
 // identical PU/PD passes = no open; a PU reading pulled far below PD on one
 // interior cell of module 0's upper LTC flags exactly module 0's bit.

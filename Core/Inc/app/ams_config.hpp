@@ -70,7 +70,17 @@ inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COM
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
-inline constexpr std::uint32_t BmsStaleMs     = 1000;  // any BMS module silent (1000 ms fault-response window)
+// 1000 -> 350 ms: "stop measuring ANY voltage/temperature" includes a whole
+// module going silent, which must open the SDC in < 500 ms (FS rule). A silent
+// module drops off module_online_mask when its freshness exceeds this, firing
+// BmsModuleOffline (immediate, not debounced). Worst case = 350 ms staleness
+// crossed at the 2nd voltage poll after loss (~400 ms) + a 10 ms safety tick
+// ~= 410 ms. 350 > BmsPollVoltMs (200 ms) so ONE missed poll is tolerated (age
+// 200 <= 350); two consecutive misses (400 ms) trip it. SAFE ONLY with bounded
+// poll jitter -- the temp sweep no longer head-of-line-blocks the voltage poll
+// (see run_temperature_poll's yield-to-PollVDue). COMMISSION: confirm no
+// nuisance trips + the exact margin on the HIL bench before flight.
+inline constexpr std::uint32_t BmsStaleMs     = 350;   // any BMS module silent (< 500 ms fault-response)
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
 // Charger heartbeat (0x101) stale window while in Charger mode. The WarioCharger
 // re-sends 0x101 at >= 2 Hz (<= 500 ms period), so 1000 ms tolerates one missed
@@ -149,12 +159,15 @@ inline constexpr std::uint16_t CellFaultConfirmTicks = 25;  // ~250 ms
 // evaluations (x SafetyPeriodMs = 10 ms) first, so a far module that flickers
 // just past the window under a brief EMI burst and then reports on its next
 // voltage poll (<= 250 ms later) does not spuriously open the contactors.
-// SAFETY TRADEOFF -- COMMISSION: this ADDS up to BmsStaleConfirmTicks x 10 ms
-// to the detection of a GENUINELY lost module (25 -> 1500 ms window + 250 ms
-// confirm = 1750 ms worst case). Sized to span one 250 ms voltage-poll cycle so
-// a recovering module gets exactly one more chance. Sustained loss (a dead
-// chain through a whole torque event) still latches -- the confirm only delays
-// it, it does not prevent it. Set to 0 to restore first-tick latching.
+// NOTE: this debounce is now a SECONDARY path. A genuinely lost module is caught
+// FASTER by BmsModuleOffline: it drops off module_online_mask the moment its
+// freshness exceeds BmsStaleMs (350 ms) at a voltage poll, and that predicate is
+// immediate (not debounced) -- ~410 ms worst case, < 500 ms. This per-module
+// BmsStale confirm only gates the freshness-loop predicate, which BmsModuleOffline
+// pre-empts, so it does not add to the module-loss detection budget. 25 x 10 ms
+// = 250 ms still spans more than one 200 ms voltage poll, so a module that
+// flickers just past the window and reports on its next poll is not spuriously
+// latched. Set to 0 to restore first-tick latching.
 inline constexpr std::uint16_t BmsStaleConfirmTicks = 25;  // ~250 ms  COMMISSION
 
 inline constexpr std::uint32_t StatePeriodMs     =  20;

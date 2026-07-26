@@ -521,6 +521,17 @@ void maybe_run_balance_update() {
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask   = 0;
 extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
 
+// Sweep resume state (#contention fix). A sweep can PAUSE after any channel to
+// let a due voltage poll run, bounding the voltage poll's jitter to ~one channel
+// (~3 ms) instead of a whole ~60 ms sweep -- which is what makes the tightened
+// BmsStaleMs (350 ms) safe against nuisance trips. s_temp_ch is the next channel
+// to sweep (0 = start a fresh sweep); s_temp_sweep_fail accumulates the failure
+// mask across the pauses so it isn't lost mid-sweep. Single-writer (BmsPollTask),
+// so no sync needed. isoSPI stays single-owner -- the sweep just interleaves with
+// the voltage poll on the SAME task rather than blocking it.
+std::uint8_t  s_temp_ch         = 0;
+std::uint32_t s_temp_sweep_fail = 0;
+
 void run_temperature_poll() {
     using namespace ams;
 
@@ -530,30 +541,20 @@ void run_temperature_poll() {
     // ADG731 ignores the bits it can't address (only ch < 32 used).
     std::uint8_t per_ic_payload[config::LtcChainLength][6];
 
-    // Per-sweep failure tracking. Each bit corresponds to one
-    // temperature-table channel (ch_idx 0..19) that failed at any of
-    // the WRCOMM / STCOMM / ADAX / RDAUXA steps. Captured at end of
-    // sweep into the globals so the bench can localise which NTC /
-    // mux is misbehaving.
-    std::uint32_t this_sweep_fail = 0;
-
-    // Warm-up mux select (the mux-domain twin of the #214 RDCV warm-up). The
-    // FIRST WRCOMM/STCOMM after the voltage poll's cell-read burst can be
-    // dropped -- slaves re-sync on CS edges after the multi-ms idle -- so the
+    // Warm-up mux select (the mux-domain twin of the #214 RDCV warm-up). Runs
+    // ONLY at the start of a sweep (s_temp_ch == 0), never on a resume after a
+    // yield. The FIRST WRCOMM/STCOMM after the voltage poll's cell-read burst can
+    // be dropped -- slaves re-sync on CS edges after the multi-ms idle -- so the
     // sweep's first channel (Adg731ChannelMap[0] = S1) never latches and every
     // mux stays on its previous channel. Result: temp1 / slot 0 reads rail
     // (~VREF2) on ALL modules at once, a false open on every sweep. Confirmed on
     // the bench via a 32-channel raw dump: 9/10 muxes' S1 came alive the instant
-    // this warm-up landed (the 10th was a genuine hardware open).
-    //
-    // The throwaway select deliberately targets an UNPOPULATED address (S32, the
-    // last channel -- NC on every mux per pcbs/BMS_LITE) and its reply is never
-    // read: whichever select the chain drops is spent on a pin that carries no
-    // NTC, so a dropped warm-up can never cost a real temperature, and if it DOES
-    // land the mux just sits on a dead pin until the real sweep's first select
-    // moves it. Either way the sweep's first populated channel latches.
-    constexpr std::uint8_t WarmUpAddr = 31u;   // S32, unpopulated on all muxes
-    {
+    // this warm-up landed (the 10th was a genuine hardware open). The throwaway
+    // select targets an UNPOPULATED address (S32, NC on every mux) and its reply
+    // is discarded, so a dropped warm-up can never cost a real temperature.
+    if (s_temp_ch == 0) {
+        s_temp_sweep_fail = 0;
+        constexpr std::uint8_t WarmUpAddr = 31u;   // S32, unpopulated on all muxes
         const auto warm = ltc6811::pack_adg731_select(WarmUpAddr);
         for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
             for (std::size_t k = 0; k < 6; ++k) per_ic_payload[ic][k] = warm[k];
@@ -563,31 +564,27 @@ void run_temperature_poll() {
         osDelay(1);
     }
 
-    for (std::uint8_t ch_idx = 0; ch_idx < config::TempsPerLtc; ++ch_idx) {
+    // Resumable sweep: continues from s_temp_ch so a yield mid-sweep doesn't
+    // restart it. Each channel: WRCOMM/STCOMM select -> settle -> ADAX -> RDAUXA.
+    for (; s_temp_ch < config::TempsPerLtc; ++s_temp_ch) {
+        const std::uint8_t ch_idx = s_temp_ch;
         const std::uint8_t mux_ch = config::Adg731ChannelMap[ch_idx];
         const auto sel = ltc6811::pack_adg731_select(mux_ch);
 
         for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
-            for (std::size_t k = 0; k < 6; ++k) {
-                per_ic_payload[ic][k] = sel[k];
-            }
+            for (std::size_t k = 0; k < 6; ++k) per_ic_payload[ic][k] = sel[k];
         }
 
         // 1. WRCOMM: load the select word into every IC's COMM reg.
         if (!bus.write_chain_command(ltc6811::CmdWRCOMM, per_ic_payload)) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
         // 2. STCOMM: shift COMM register out -> mux receives.
         if (!bus.stcomm()) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
-        // 3. Settling for the mux + NTC voltage-divider. The
-        //    osDelay tick (1 Hz) is plenty; ADG731 t_TRANSITION is
-        //    ~80 ns and the 10 k / 10 k divider settles in << 1 ms.
+        // 3. Settling for the mux + NTC voltage-divider (~80 ns transition,
+        //    divider << 1 ms; the 1 ms tick is plenty).
         osDelay(1);
 
         // 4. ADAX(Gpio1) broadcast -> AUX-ADC conversion on every IC.
@@ -595,9 +592,7 @@ void run_temperature_poll() {
             ltc6811::adax_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                               ltc6811::AuxSel::Gpio1));
         if (!bus.send_command(adax_cmd.data())) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
         osDelay(config::AdaxSettleMs);
 
@@ -606,16 +601,27 @@ void run_temperature_poll() {
         std::uint8_t reply[Reply] = {};
         const auto rdauxa = ltc6811::pack_command(ltc6811::CmdRDAUXA);
         if (!bus.read_register_group(rdauxa.data(), reply, sizeof(reply))) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
 
         (void)BmsService::instance().update_temperature(ch_idx, reply, sizeof(reply));
+
+        // YIELD to a due voltage poll and resume this sweep immediately after, so
+        // no channel's cadence slips. This bounds the voltage poll's jitter to
+        // ~one channel (~3 ms) instead of a whole ~60 ms sweep -- the precondition
+        // that makes the tightened BmsStaleMs (350 ms) safe from nuisance trips.
+        // Re-arm PollTDue so the task finishes this sweep right after the V-poll.
+        if (s_temp_ch + 1u < config::TempsPerLtc &&
+            (osEventFlagsGet(bms_eventsHandle) & ams::events::bms::PollVDue) != 0u) {
+            ++s_temp_ch;
+            osEventFlagsSet(bms_eventsHandle, ams::events::bms::PollTDue);
+            return;
+        }
     }
 
-    g_temp_sweep_last_mask    = this_sweep_fail;
-    g_temp_sweep_sticky_mask |= this_sweep_fail;
+    g_temp_sweep_last_mask    = s_temp_sweep_fail;
+    g_temp_sweep_sticky_mask |= s_temp_sweep_fail;
+    s_temp_ch = 0;   // sweep complete -> fresh warm-up next time
 }
 
 }  // namespace
