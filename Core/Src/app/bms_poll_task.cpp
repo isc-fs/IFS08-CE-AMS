@@ -560,8 +560,18 @@ void maybe_run_balance_update() {
 // across all sweeps since boot; useful for catching intermittent NTC /
 // mux failures that don't show up every cycle. Reset on next boot by
 // writing 0 to sticky_mask.
+//
+// extern "C" so the pit-diag stream (#247) can surface last_mask via
+// AcuCanTask. These MUST live outside the anonymous namespace: an
+// extern "C" object declared inside an unnamed namespace still gets
+// internal linkage, so the symbol would not be exported and
+// acu_can_task.cpp's reference would fail to link.
+}  // close anonymous namespace for the extern "C" decls
+
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask   = 0;
 extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
+
+namespace {
 
 // Sweep resume state (#contention fix). A sweep can PAUSE after any channel to
 // let a due voltage poll run, bounding the voltage poll's jitter to ~one channel
