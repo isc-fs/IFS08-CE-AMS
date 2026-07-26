@@ -28,13 +28,15 @@ inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    --
 // still reads in-range. Runs the two-pass ADOW conversion in BmsPollTask and
 // faults FaultReason::CellOpenWire in ANY state.
 //
-// DEFAULT OFF, exactly like TempFaultsTrusted: the ADOW register encoding and
-// conversion timing are not yet validated against a real LTC chain (the bench
-// was down when this landed), and a wrong threshold/timing would false-fault a
-// healthy pack and trap it in Error. Flip to true ONLY after HIL validation of
-// the ADOW path end-to-end. The pure detector (open_wire.hpp) is host-tested
-// independently of this flag.
-inline constexpr bool          CellOpenWireCheck   = true;
+// DISABLED (2026-07-26): enabling this on the bench did NOT fault on a real
+// open -- the ADOW register encoding / conversion timing were never validated on
+// a real LTC chain and don't work as-is. Gated back off so the (working) range
+// check CellUnderVoltage/CellOverVoltage remains the voltage open-circuit path
+// while the ADOW path is fixed + HIL-validated end-to-end. The pure detector
+// (open_wire.hpp), adow_cmd(), update_open_wire and the retry stay in the tree
+// (host-tested, inert) so re-enabling after a real-chain fix is one line. Flip
+// to true ONLY once ADOW is confirmed to detect + not nuisance-trip on hardware.
+inline constexpr bool          CellOpenWireCheck   = false;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
 // ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
 // passes must be PEC-clean on an IC to judge its open-wire state; a single PEC
