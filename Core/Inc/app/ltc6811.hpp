@@ -108,6 +108,29 @@ enum class AuxSel   : std::uint8_t { All = 0, Gpio1 = 1, Gpio2 = 2, Gpio3 = 3,
     return static_cast<std::uint16_t>(0x0460u | (md_v << 7) | chg_v);
 }
 
+// ADOW -- Start Open-Wire ADC Conversion (datasheet table 38 / "Open Wire
+// Check"). Same 11-bit family as ADCV, but the fixed bit5 becomes the PUP
+// (pull-up/down current select) bit and bit3 is set:
+//   ADCV = 0 1 MD1 MD0 1  1  DCP 0 CH2 CH1 CH0   -> base 0x0260
+//   ADOW = 0 1 MD1 MD0 1 PUP DCP 1 CH2 CH1 CH0   -> base 0x0248
+// so ADOW = 0x0248 | (MD << 7) | (PUP << 5) | (DCP << 4) | CH.
+// Worked check: MD=10 (7 kHz), PUP=1, DCP=0, CH=000 -> 0x0248|0x100|0x020 = 0x0368;
+// PUP=0 -> 0x0348. Two conversions (PUP=1 then PUP=0), each read back with the
+// normal RDCV* groups, feed ams::open_wire::detect_open_conductors().
+// NB: derived from the datasheet command structure + the validated adcv_cmd
+// encoding above; cross-check against LTC6811-1 datasheet table 38 and validate
+// on the HIL chain before enabling config::CellOpenWireCheck.
+[[nodiscard]] inline std::uint16_t adow_cmd(AdcMode mode, bool pull_up,
+                                            bool discharge_permit,
+                                            CellSel cell = CellSel::All) noexcept {
+    const std::uint16_t md_v  = static_cast<std::uint16_t>(mode);
+    const std::uint16_t pup_v = pull_up ? 1u : 0u;
+    const std::uint16_t dcp_v = discharge_permit ? 1u : 0u;
+    const std::uint16_t ch_v  = static_cast<std::uint16_t>(cell);
+    return static_cast<std::uint16_t>(
+        0x0248u | (md_v << 7) | (pup_v << 5) | (dcp_v << 4) | ch_v);
+}
+
 // ---------------------------------------------------------------------------
 // Frame builders
 // ---------------------------------------------------------------------------

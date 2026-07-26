@@ -224,6 +224,13 @@ void test_predicates_vcu_stale(void);
 void test_predicates_temp_sensor_disconnected(void);
 void test_predicates_temp_disconnect_independent_of_temp_trust(void);
 void test_predicates_no_disconnect_no_fault(void);
+void test_predicates_cell_open_wire_follows_flag(void);
+// test_open_wire.cpp
+void test_adow_cmd_encoding(void);
+void test_open_wire_none_when_healthy(void);
+void test_open_wire_interior_conductor(void);
+void test_open_wire_endpoints(void);
+void test_open_wire_input_guards(void);
 void test_predicates_disconnect_is_immediate_not_range_debounced(void);
 void test_predicates_boot_grace_suppresses_data_predicates(void);
 void test_predicates_boot_grace_does_not_suppress_force_error(void);
@@ -667,6 +674,12 @@ int main(void) {
     RUN_TEST(test_predicates_temp_sensor_disconnected);
     RUN_TEST(test_predicates_temp_disconnect_independent_of_temp_trust);
     RUN_TEST(test_predicates_no_disconnect_no_fault);
+    RUN_TEST(test_predicates_cell_open_wire_follows_flag);
+    RUN_TEST(test_adow_cmd_encoding);
+    RUN_TEST(test_open_wire_none_when_healthy);
+    RUN_TEST(test_open_wire_interior_conductor);
+    RUN_TEST(test_open_wire_endpoints);
+    RUN_TEST(test_open_wire_input_guards);
     RUN_TEST(test_predicates_disconnect_is_immediate_not_range_debounced);
     RUN_TEST(test_predicates_boot_grace_suppresses_data_predicates);
     RUN_TEST(test_predicates_boot_grace_does_not_suppress_force_error);

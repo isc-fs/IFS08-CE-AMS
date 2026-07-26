@@ -567,6 +567,27 @@ extern "C" void test_predicates_no_disconnect_no_fault(void) {
     TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
 }
 
+// Cell open-wire: the predicate is armed only by config::CellOpenWireCheck,
+// which is OFF on dev until the ADOW path is HIL-validated -- so a set
+// cell_open_mask must be ignored today. Written to track the flag so it asserts
+// the fault fires the moment the flag flips on. The detection algorithm itself
+// is covered in test_open_wire.cpp.
+extern "C" void test_predicates_cell_open_wire_follows_flag(void) {
+    ams::BmsState     bms{};
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.cell_open_mask = 0x04;   // module 2 reports an open cell-sense wire
+    if (ams::config::CellOpenWireCheck) {
+        TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<std::uint8_t>(ams::safety::FaultReason::CellOpenWire),
+            static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+    } else {
+        TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+    }
+}
+
 // The disconnect fault outranks a cell over-voltage in the same snapshot: a
 // lost sensor is at least as urgent, and it latches immediately (already
 // debounced at the poll level), not through the cell-range debounce.

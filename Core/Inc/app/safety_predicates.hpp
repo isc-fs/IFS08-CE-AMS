@@ -66,6 +66,12 @@ enum class FaultReason : std::uint8_t {
     // opens, so it LATCHES Error instead (re-energising needs a full reset).
     // FSM-driven (state_machine.hpp), attributed by fsm_error_reason() below.
     ChargerTsmsOpen    = 15,
+    // A cell-sense wire is OPEN, confirmed by the LTC6811 ADOW two-pass
+    // open-wire check (open_wire.hpp). Catches a broken tap that still reads
+    // in-range, which the software cell-mV plausibility check alone can miss.
+    // Detail byte = offending-module mask. Only armed when
+    // config::CellOpenWireCheck is enabled (see there). Faults in ANY state.
+    CellOpenWire       = 16,
 };
 
 // Reason byte for an FSM-driven Error latch -- one the FSM reached with no
@@ -186,6 +192,15 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     // sentinel never trips it. Detail byte = the offending-module mask.
     if (config::TempSensorPresenceCheck && in.bms.temp_disconnect_mask != 0u) {
         return { FaultReason::TempSensorDisconnected, in.bms.temp_disconnect_mask };
+    }
+
+    // Cell OPEN-WIRE (LTC6811 ADOW). A confirmed broken cell-sense wire faults in
+    // ANY state -- including the case the software cell-mV plausibility check can
+    // miss, where the open still reads in-range. Armed only when the ADOW poll is
+    // enabled (config::CellOpenWireCheck); BmsPollTask leaves cell_open_mask 0
+    // otherwise. Detail byte = the offending-module mask.
+    if (config::CellOpenWireCheck && in.bms.cell_open_mask != 0u) {
+        return { FaultReason::CellOpenWire, in.bms.cell_open_mask };
     }
 
     // Cell V / T ranges. Gated on first_full_poll_done (#279): until
