@@ -36,12 +36,22 @@ inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    --
 // result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, so the
 // PU-PD delta was identically 0 and the open was undetectable. See ltc6811.hpp.
 //
-// RE-ENABLED on this bench branch now that the encoding is fixed and validated
-// against a live chain: a disconnected c2/c3 tap reads -4210 mV against the
-// 400 mV threshold (10x margin), while a healthy pack stays inside -130..+50 mV.
-// NOTE: this is a BENCH branch value. Re-enabling on dev/flight is a separate
-// decision that #510 gated on end-to-end HIL validation -- do not carry this
-// line into a flight image without that sign-off.
+// RE-ENABLED now that the encoding is fixed and validated end-to-end on a live
+// chain (the sign-off #510 asked for), twice:
+//   * induced open on M2 c2/c3  -> -4210 mV on the cell above the open
+//   * real M5 reseat fault c7/c8 -> -3979 mV, found by the firmware unprompted
+// Both ~10x the 400 mV threshold, with a healthy pack staying inside
+// -130..+50 mV across all 5 modules and PEC clean -- no false positives.
+//
+// This predicate is the ONLY one that can see an open tap: the shared node
+// floats, so the tap-artifact guard in recompute_summaries_ averages the pair
+// back into range and CellUnderVoltage/CellOverVoltage can never fire on it
+// (measured: a cell reading 2364 mV was presented to the FSM as 3823 mV).
+//
+// KNOWN GAP: only INTERIOR conductors are hardware-validated. The endpoint
+// rules -- C(0) via CELL_PU(1)==0 and C(N) via CELL_PD(N)==0 -- use exact-zero
+// comparisons and are still bench-untested; an endpoint open that reads a few
+// mV instead of a hard 0 would be missed. Tracked as a follow-up.
 inline constexpr bool          CellOpenWireCheck   = true;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
 // ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
@@ -60,7 +70,7 @@ inline constexpr std::uint8_t  OpenWireRetries     = 1;
 // on dev/flight -- the code stays compiled (dead-code-eliminated when false, so
 // CI still type-checks it) but emits nothing. Blocks: PU @ AdowDiagPuBaseId, PD
 // @ AdowDiagPdBaseId, same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid.
-inline constexpr bool          AdowRawDiag         = true;
+inline constexpr bool          AdowRawDiag         = false;
 
 // Implausible-cell bounds for the balancing tap-artifact guard (see
 // recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
