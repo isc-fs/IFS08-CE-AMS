@@ -352,7 +352,10 @@ void attempt_open_wire_poll() noexcept {
     for (std::uint8_t attempt = 0; attempt <= config::OpenWireRetries; ++attempt) {
         if (!adow_pass(bus, /*pull_up=*/true,  pu)) continue;   // bus error -> retry
         if (!adow_pass(bus, /*pull_up=*/false, pd)) continue;
-        if (BmsService::instance().update_open_wire(pu, pd, sizeof pu)) {
+        // attempt 0 overwrites (clears the prior poll); retries OR-accumulate so a
+        // glitch on a later attempt can't erase an open a prior attempt confirmed.
+        if (BmsService::instance().update_open_wire(pu, pd, sizeof pu,
+                                                    /*accumulate=*/attempt != 0u)) {
             return;   // every IC judged this attempt -> done
         }
         // else: an IC PEC-glitched -> retry gives it another clean read

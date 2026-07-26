@@ -416,7 +416,7 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
 
 bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
                                  const std::uint8_t* pd_reply,
-                                 std::size_t         len) noexcept {
+                                 std::size_t         len, bool accumulate) noexcept {
     // Gated off -> always report "no open" so a stale mask can't linger. Fully
     // "evaluated" (nothing to retry).
     if (!config::CellOpenWireCheck) { state_.cell_open_mask = 0u; return true; }
@@ -465,7 +465,11 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
             new_mask = static_cast<std::uint8_t>(new_mask | (1u << module));
         }
     }
-    state_.cell_open_mask = new_mask;
+    // First attempt overwrites (clears last poll's stale bits); a retry ORs so it
+    // can't erase an open a prior attempt of THIS poll already confirmed.
+    state_.cell_open_mask = accumulate
+        ? static_cast<std::uint8_t>(state_.cell_open_mask | new_mask)
+        : new_mask;
     return all_ok;
 }
 

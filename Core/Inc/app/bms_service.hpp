@@ -182,9 +182,15 @@ public:
     // stale/absent verdict -- the caller (BmsPollTask) retries the two-pass scan
     // up to config::OpenWireRetries times so a transient glitch doesn't slip the
     // fault to the next poll.
+    // `accumulate`: false (first attempt) overwrites cell_open_mask -- clearing
+    // any stale bit from the previous poll; true (a retry) ORs the new result in
+    // so a later attempt whose glitch SKIPS an IC can never erase an open a prior
+    // attempt already confirmed this poll. OR is fail-safe (an open bit only ever
+    // persists one extra poll, re-judged fresh next cycle).
     [[nodiscard]] bool update_open_wire(const std::uint8_t* pu_reply,
                                         const std::uint8_t* pd_reply,
-                                        std::size_t         len) noexcept;
+                                        std::size_t         len,
+                                        bool                accumulate = false) noexcept;
 
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.
