@@ -67,6 +67,16 @@ namespace detail {
             if ((bms.module_online_mask & (1u << m)) == 0u) {
                 return config::PitDiagCellSentinel;
             }
+            // Cells straddling an ADOW-confirmed open tap: the shared node is
+            // floating, so BOTH readings are displaced (one high, one low) and
+            // neither is recoverable -- only their sum survives. Emit "no data"
+            // rather than a number that looks like a measurement and is not.
+            // cell_mV keeps the raw split; recompute_summaries_ still uses it for
+            // the pair average, and the raw values remain visible on the ADOW
+            // diagnostic grid (0x6D0/0x6E8) when config::AdowRawDiag is on.
+            if ((bms.cell_open_cells[m] & (1u << c)) != 0u) {
+                return config::PitDiagCellSentinel;
+            }
             return bms.cell_mV[m][c];
         },
         b);
