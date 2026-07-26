@@ -296,7 +296,7 @@ void restore_balancing() noexcept {
 // twin of the #482 mux first-select warm-up). Fills `reply` (4*GroupBytes) with
 // RDCVA..D. Returns false on any bus error. UNVALIDATED ON HARDWARE (bench down)
 // -- the ADOW encoding + timing need a real-chain check (see open_wire.hpp).
-bool adow_pass(ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexcept {
+bool adow_pass(ams::ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexcept {
     using namespace ams;
     constexpr std::size_t SegBytes   = 8;
     constexpr std::size_t GroupBytes = config::LtcChainLength * SegBytes;
