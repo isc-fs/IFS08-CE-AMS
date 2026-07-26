@@ -46,6 +46,15 @@ inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open th
 // detection stays < 500 ms. 1 retry (2 attempts) keeps the added time bounded
 // (~2 x two ADOW passes) while covering the single-glitch case.
 inline constexpr std::uint8_t  OpenWireRetries     = 1;
+// BENCH DIAGNOSTIC: dump the raw ADOW pull-up / pull-down per-cell readings over
+// pit-diag so the ADOW encoding + conversion timing can be debugged on a real
+// chain (compare PU vs PD on a known open). Runs its own two-pass ADOW scan in
+// BmsPollTask INDEPENDENT of CellOpenWireCheck, so you can debug it while live
+// detection stays off. `true` on the feat/adow-raw-diagnostic branch; keep FALSE
+// on dev/flight -- the code stays compiled (dead-code-eliminated when false, so
+// CI still type-checks it) but emits nothing. Blocks: PU @ AdowDiagPuBaseId, PD
+// @ AdowDiagPdBaseId, same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid.
+inline constexpr bool          AdowRawDiag         = true;
 
 // Implausible-cell bounds for the balancing tap-artifact guard (see
 // recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
@@ -408,6 +417,11 @@ inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
 inline constexpr std::uint32_t PitDiagCmdRxId            = 0x7F0u;
 inline constexpr std::uint32_t PitDiagAckTxId            = 0x7F1u;
 inline constexpr std::uint32_t PitDiagCellBaseId         = 0x680u;
+// Raw-ADOW diagnostic blocks (config::AdowRawDiag only). 0x6D0..0x6FF is free
+// (after the 0x6C0..0x6CA status block). PU = 0x6D0..0x6E7, PD = 0x6E8..0x6FF;
+// each 24 frames of 4 cells (BE u16 mV), 0xFFFF = PEC-skipped this scan.
+inline constexpr std::uint32_t AdowDiagPuBaseId          = 0x6D0u;
+inline constexpr std::uint32_t AdowDiagPdBaseId          = 0x6E8u;   // = 0x6D0 + 24
 inline constexpr std::uint32_t PitDiagTempBaseId         = 0x6A0u;
 inline constexpr std::uint32_t PitDiagFsmStatusId        = 0x6C0u;
 inline constexpr std::uint32_t PitDiagTimingId           = 0x6C1u;

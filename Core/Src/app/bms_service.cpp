@@ -473,6 +473,48 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
     return all_ok;
 }
 
+void BmsService::capture_adow_raw(const std::uint8_t* pu_reply,
+                                  const std::uint8_t* pd_reply,
+                                  std::size_t         len,
+                                  std::uint16_t*      pu_out,
+                                  std::uint16_t*      pd_out) noexcept {
+    constexpr std::size_t Seg        = 8;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;
+    constexpr std::size_t Expected   = 4u * GroupBytes;
+    constexpr std::size_t N = static_cast<std::size_t>(config::BmsModuleCount) *
+                              config::CellsPerModule;   // 95
+    if (pu_out == nullptr || pd_out == nullptr) return;
+    for (std::size_t i = 0; i < N; ++i) { pu_out[i] = 0xFFFFu; pd_out[i] = 0xFFFFu; }
+    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return;
+
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
+        const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
+        // Module-cell offset + count: upper LTC = cells 0..8 (9), lower = 9..18 (10).
+        const std::uint8_t base    = is_upper ? 0u : config::CellsPerLtcUpper;
+        const std::uint8_t n_cells = is_upper ? config::CellsPerLtcUpper
+                                              : config::CellsPerLtcLower;
+        for (std::uint8_t g = 0; g < 4; ++g) {
+            std::array<std::uint16_t, 3> gpu{};
+            std::array<std::uint16_t, 3> gpd{};
+            const std::uint8_t* spu = pu_reply + g * GroupBytes + ic * Seg;
+            const std::uint8_t* spd = pd_reply + g * GroupBytes + ic * Seg;
+            const bool ok = ltc6811::decode_cell_voltage_group(spu, gpu) &&
+                            ltc6811::decode_cell_voltage_group(spd, gpd);
+            if (!ok) continue;                       // leave 0xFFFF sentinel
+            for (std::uint8_t k = 0; k < 3; ++k) {
+                const std::uint8_t idx = static_cast<std::uint8_t>(g * 3 + k);  // LTC-local
+                if (idx < n_cells) {
+                    const std::size_t flat =
+                        static_cast<std::size_t>(module) * config::CellsPerModule + base + idx;
+                    pu_out[flat] = gpu[k];
+                    pd_out[flat] = gpd[k];
+                }
+            }
+        }
+    }
+}
+
 BmsState BmsService::snapshot() const noexcept {
     return state_;
 }

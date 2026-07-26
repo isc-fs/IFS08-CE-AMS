@@ -74,6 +74,25 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
+// BENCH DIAGNOSTIC (config::AdowRawDiag): dump a flat 95-cell uint16 mV grid
+// (the raw ADOW PU or PD readings) with the SAME window layout as the 0x680 cell
+// grid, so the decoder + tooling are identical -- just on AdowDiagPuBaseId /
+// AdowDiagPdBaseId. 0xFFFF = no cell / PEC-skipped this scan.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_adow_grid_frame(const std::uint16_t* grid95,
+                                                  std::uint8_t frame_idx) noexcept {
+    const auto& A = ifs08::ALL_ARRAYS[0];   // reuse 24 x 4-cell BE-u16 window
+    if (grid95 == nullptr || frame_idx >= A.frame_count) return Frame{};
+    std::uint8_t b[8];
+    can_dsl::encode_array_window(
+        frame_idx, A.per_frame, A.elem_bits, A.big_endian, A.total_elems,
+        /*sentinel=*/0xFFFFu,
+        [&](unsigned flat) -> std::uint64_t { return grid95[flat]; },
+        b);
+    return detail::to_frame(b);
+}
+
+// ---------------------------------------------------------------------------
 // NTC-temp frame. Each frame carries 8 NTC samples (i8 degC) of the
 // flattened cell_tempC[5][40] grid. frame_idx in [0, PitDiagTempFrames=25).
 // 200 NTCs / 8 = 25 exactly, no padding.

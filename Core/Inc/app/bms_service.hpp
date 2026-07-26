@@ -192,6 +192,18 @@ public:
                                         std::size_t         len,
                                         bool                accumulate = false) noexcept;
 
+    // BENCH DIAGNOSTIC (config::AdowRawDiag): decode both ADOW passes into flat
+    // 95-cell mV grids (module m, cell c -> index m*CellsPerModule + c; upper LTC
+    // -> cells 0..8, lower -> 9..18) for a raw pit-diag dump so the ADOW encoding
+    // / timing can be debugged on a real chain. PEC-skipped cells stay 0xFFFF.
+    // Static + does NOT touch cell_open_mask -- pure raw dump, independent of the
+    // live detector; usable while CellOpenWireCheck is off.
+    static void capture_adow_raw(const std::uint8_t* pu_reply,
+                                 const std::uint8_t* pd_reply,
+                                 std::size_t         len,
+                                 std::uint16_t*      pu_out,
+                                 std::uint16_t*      pd_out) noexcept;
+
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.
     [[nodiscard]] BmsState snapshot() const noexcept;
