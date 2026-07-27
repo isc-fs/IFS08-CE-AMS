@@ -190,21 +190,31 @@ pull-up to LTC6811 `VREF2` (~3.0 V) forms the divider. Recovering
 temperature is a two-step:
 
 ```
-R_ntc = R_series * V_aux / (V_ref - V_aux)
-1/T   = 1/T0 + (1/B) * ln(R_ntc / R_25)
-T_°C  = T - 273.15
+R_ntc = NtcPullupOhm * V_aux / (NtcVrefMv - V_aux)
+T_degC = interpolate(ntc::ResistanceOhm, R_ntc)
 ```
 
-Placeholder calibration constants (`ams_config.hpp`, all tagged
-`COMMISSION`):
+The part is a **Fenghua CMFB103F3950FANT** (R25 = 10 kΩ, B25/50 = 3950 K,
+B25/85 = 4021 K) and the divider pull-up (R145 / R170) is **6.8 kΩ**.
 
-| Constant | Default | Source |
+Temperature comes from the manufacturer's **R-T table**
+([`ntc_table.hpp`](../Core/Inc/app/ntc_table.hpp), generated from
+[`ntc_rt_table.csv`](ntc_rt_table.csv)) by reverse interpolation — *not* from a
+single-beta Steinhart fit. Beta is only accurate near its fitting interval, and
+this part quotes two different betas depending on the interval.
+
+| Constant | Value | Source |
 |---|---:|---|
-| `NtcBeta` | 3380 K | Murata NCP15XH103J datasheet |
-| `NtcR25` | 10 000 Ω | BMS_LITE BOM |
-| `NtcSeriesR` | 10 000 Ω | BMS_LITE BOM |
+| `NtcPullupOhm` | 6 800 Ω | BMS_LITE R145 / R170 |
 | `NtcVrefMv` | 3000 | LTC6811 VREF2 nominal |
-| `NtcT0Kelvin` | 298.15 | 25 °C |
+| `NtcMinValidC` / `NtcMaxValidC` | −40 / +150 °C | plausibility gate |
+
+> **Historical trap.** This used to be a beta fit with **two** wrong constants
+> that partially cancelled: `NtcBeta = 3380` (a Murata NCP15XH103J, not the
+> fitted part) and `NtcSeriesR = 10000` (not the 6.8 kΩ actually on the board).
+> Net was ~7 °C **cold** at 50 °C, so `BalanceTempMax = 50` tripped at ~56 °C
+> true. Fixing **either constant alone made it worse** — which is why the table
+> and the divider correction had to land together.
 
 `BmsService::update_temperature` rejects readings outside
 `[NtcMinValidC, NtcMaxValidC] = [-40, +150]` °C as
@@ -397,6 +407,40 @@ latch discharge beyond one balancing window.
 chain, packs each IC's DCC into `ltc6811::pack_cfga_payload`, ships
 the frame with `Bus::write_chain_command(CmdWRCFGA, ...)`.
 
+### Quiescing before a measurement
+
+The mask is recomputed at 1 Hz but **persists on the chain** between
+writes, so an ordinary 250 ms voltage poll would otherwise measure while
+cells are bleeding. `run_voltage_poll` therefore clears DCC, waits
+`BalanceQuiesceMs`, measures, and restores the cached mask:
+
+```
+WRCFGA(DCC=0) → wait 2 ms → ADCV → RDCVA..D → WRCFGA(cached mask)
+```
+
+**`ADCV`'s `DCP=0` bit is not sufficient on this board.** It suspends the
+LTC's own S-pin switch, but BMS_LITE bleeds through an *external*
+TSM2323 PMOS whose gate sits behind ~10 kΩ / 10 nF (τ ≈ 100 µs). The
+conversion begins immediately on `ADCV` and the first channels finish in
+a few hundred microseconds, so the earliest cells can be sampled while
+current is still flowing.
+
+That matters because the bleed current does **not** return through the
+board's sense path (on-board sensing is close to Kelvin) — it returns
+through the harness. ~179 mA across a plausible 50–200 mΩ of
+tap/connector/fuse impedance is **9–36 mV**, with *opposite sign* on the
+bled cell (reads low) and both its neighbours (read **high**, because the
+shared tap node moves). Against `BalanceDeltaMv = 50 mV` that corrupts
+the very signal the selection rule uses, and it was observed on the bench
+as neighbouring cells reading high whenever balancing was active.
+
+Cost is under 1 % of balancing duty. `g_balance_quiesce_count` (pit-diag)
+climbs at the poll rate while balancing is discharging, so the bench can
+confirm the sequence is running from CAN alone. After a `recover_chain`
+the cached mask is dropped rather than restored — a slept chain has reset
+CFGR, and re-asserting pre-sleep bits the controller has not re-derived
+would be wrong.
+
 ### Policy summary
 
 `balance::compute_mask(state, fsm_state)` returns an all-zero mask
@@ -427,7 +471,7 @@ bench calibration in
 | Bus-level SPI failure (`HAL_SPI_*` non-OK) | `Bus::transfer` / `Bus::read_register_group` returns false | abort the cycle, ++`g_ltc_spi_err_count`, `last_rx_tick` doesn't advance. |
 | Mux SPI lost (open ADG731) | NTC reading rails (`V_aux = 0` or `≥ V_ref`), `ntc_mV_to_tempC` returns sentinel | skip slot, keep previous value. Operator-visible via `cell_tempC` snapshot. |
 | Chain dropped to T_SLEEP | next ADCV broadcast lands while ICs are deaf → PEC fails | freshness window catches it within `BmsStaleMs`. The ~250/500 ms poll traffic normally keeps the chain out of the ~2 s T_SLEEP window; there is no post-boot re-wakeup, so a long-paused poll loop can still let it drop. |
-| Open-wire detection (LTC ADOL) | **not used** — relying on software cell-mV plausibility instead | low-cell-V predicate trips on an open wire reading 0 mV. |
+| Open-wire detection (LTC6811 ADOW) | **implemented but gated OFF again** (`config::CellOpenWireCheck = false`) — enabling it on the bench did NOT fault on a real open (ADOW encoding/timing never validated on a chain). Software cell-mV plausibility (`CellUnderVoltage`/`CellOverVoltage`) is the active voltage open-circuit path. | Code is inert but retained: ADOW PUP=1/PUP=0 in `attempt_open_wire_poll` → `update_open_wire` (per-IC 9/10 decode) → `open_wire::detect_open_conductors` → `FaultReason::CellOpenWire`, host-tested. Re-enable is one line AFTER the ADOW path is fixed + HIL-validated (encoding, timing, detects, no nuisance trips). |
 
 The unifying principle: a single anomalous frame is bookkeeping, a
 sustained anomaly is a freshness expiry → safety supervisor takes

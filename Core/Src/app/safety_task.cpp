@@ -199,10 +199,16 @@ void SafetyTask::run() noexcept {
         // it, so VcuStale arms one tick after the Car lock, which is
         // fine (the VCU is fresh at the moment of a Car lock anyway).
         const bool vcu_required = (mode_locked == fsm::Mode::Car);
+        // Mirror for the charge side: the charger heartbeat (0x101) is required
+        // only once committed to Charger mode. Same one-tick arm lag as
+        // vcu_required (the FSM lock below updates mode_locked afterward), which
+        // is fine -- 0x101 is fresh at the moment of a Charger lock.
+        const bool charger_required = (mode_locked == fsm::Mode::Charger);
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
             force_error_set,
             vcu_required,
+            charger_required,
             now,
         };
         const auto fault_res = safety::evaluate_fault_detail(pred_in);
@@ -341,10 +347,13 @@ void SafetyTask::run() noexcept {
                         error_latched_ = true;
                         // Distinguish FSM-driven Error (precharge
                         // timeout / fault) from a predicate fault on
-                        // pit-diag 0x6C0[6] (#276). 12 == FsmError
-                        // (reserved past FaultReason).
+                        // pit-diag 0x6C0[6] (#276). 12 == FsmError, or the
+                        // dedicated ChargerTsmsOpen (15) when a TSMS drop
+                        // latched us in Charger mode (scrutineering: the
+                        // charge output must not be re-activatable).
                         if (g_fault_reason_telemetry == 0u) {
-                            g_fault_reason_telemetry = 12u;
+                            g_fault_reason_telemetry = safety::fsm_error_reason(
+                                mode_locked == fsm::Mode::Charger, tsms);
                         }
                     }
 

@@ -376,7 +376,7 @@ survive a predicate trip.
 | `0x6C8` | 1 per-IC PEC count (ICs 8..9 + reserved) | `[0]` IC 8, `[1]` IC 9, `[2..7]` reserved 0 | 1 Hz |
 | `0x6C9` | 1 FDCAN1 comms health | `[0..3]` `fdcan1_busoff_recovery_count` LE u32 (Bus-Off Stop/Start recoveries this session; `0` = never went Bus-Off), `[4..7]` `g_acu_tx_fail` LE u32 (ECU-TX-matrix enqueue failures). Lets the CAN-only bench confirm a Bus-Off recovery fired. (#331) | 1 Hz |
 
-`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / Transition guard; note a TSMS drop is non-latching since #327, not an Error). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
+`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / Transition guard; a TSMS drop is non-latching in **Car** mode since #327, so it is *not* an Error there), `13`=TempSensorDisconnected, `14`=ChargerStale (charger `0x101` heartbeat stale > `ChargerStaleMs` while committed to Charger mode — the WarioCharger was disconnected mid-charge), `15`=ChargerTsmsOpen (TSMS dropped while committed to **Charger** mode — unlike Car mode this latches Error so the charge output cannot be re-activated after the SDC opens, per scrutineering; re-energising needs a full reset). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
 
 Encoders are pure-logic in
 [`Core/Inc/app/pit_diag_emitter.hpp`](../Core/Inc/app/pit_diag_emitter.hpp);
@@ -547,6 +547,28 @@ pit-diag `0x6C0[2]` bit 2 so the display can confirm receipt. Magic-gated
 against bus noise; handled in `vehicle_service.cpp`, consumed by
 `BmsPollTask` via `VehicleService::balance_suppressed`.
 
+### `0x104` — operator per-module balance enable
+
+| Field | Value |
+|---|---|
+| Direction | RX (operator tool → AMS) |
+| Bus | FDCAN1 (standard 11-bit) |
+| DLC | ≥ 5 |
+| Payload | bytes `[0..3]` = `42 41 4C 4D` ("BALM") magic; byte `[4]` = 5-bit enable mask, **bit `m` (0..4) = 1 → module `m` may balance**. Other magic ignored (bus-noise safe). |
+| Source | the ChargerDisplayWario pit tool (per-module balance toggles) |
+| Cadence | re-sent ≥ 2 Hz while held |
+| Freshness | stale > `BalanceModulesFreshMs` (5000 ms) or never seen → **all modules enabled** (`BalanceModulesDefaultMask` = `0x1F`) |
+
+Layers **under** the `0x103` master switch: `0x103` decides OFF/ON/AUTO for the
+whole pack, and `0x104` then narrows *which modules* participate. A disabled
+module never discharges (`balance_controller.hpp` skips it), but its cells still
+count toward the pack-wide balance floor. The dead-man deliberately re-enables
+every module on a stale link — the `0x103` dead-man (→ OFF) is what actually
+stops balancing when the WarioCharger link dies, so a lost `0x104` must not
+silently freeze balancing off. **Only affects balancing — never an AIR / safety
+path.** Handled in `vehicle_service.cpp`, resolved by
+`VehicleService::effective_balance_modules_mask`, consumed by `BmsPollTask`.
+
 ### `0x600` — start button **[RETIRED — fix/48]**
 
 Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The
@@ -600,6 +622,169 @@ update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-boo
 | Failure modes | Wrong bus, wrong ID, wrong DLC, or any byte of the payload differing → frame silently dropped, no reboot. |
 
 Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`BlBootReqCanId`, `BlBootReqPayload`, `BlBootReqDlc`).
+
+---
+
+## RX/TX — LOGFS log extraction (FDCAN1, ISO-TP)
+
+On-CAN retrieval of the SD datalogs, so a card never has to be pulled from
+a mounted accumulator. Serves [#406](https://github.com/isc-fs/IFS08-CE-AMS/issues/406)
+(MingoCAN) and [#439](https://github.com/isc-fs/IFS08-CE-AMS/issues/439) (`ui.py`)
+with one protocol.
+
+Unlike everything else in this document, LOGFS is **not** a fixed-layout
+signal frame — it is a request/response protocol over **ISO-TP
+(ISO 15765-2)**, so it does not appear in `ams.dbc`.
+
+### Addressing
+
+| Direction | ID | Note |
+|---|---|---|
+| Host → AMS | `0x000 + NodeID` = **`0x002`** | AMS is node **2** ([#403](https://github.com/isc-fs/IFS08-CE-AMS/issues/403); role map ECU=1 / AMS=2 / uDV=3) |
+| AMS → host | `0x010 + NodeID` = **`0x012`** | |
+
+> **`0x002` is shared with the boot trigger above, and that is safe.** This is
+> now live, not hypothetical — the AMS is node 2.
+> `matches_trigger` requires **DLC 4** *and* the exact `B0 07 AD 11`
+> payload; an ISO-TP frame is always **DLC 8**, and `0xB0` can never be a
+> valid ISO-TP PCI byte (only `0x0`–`0x3` are). The trigger check runs
+> first in `AcuCanTask`, so a LOGFS frame passes through it untouched.
+
+### Message framing
+
+Each reassembled ISO-TP message is `[msg_type][opcode][payload…]`.
+
+Requests use **`msg_type = 0x06` (`BL_MSG_APP_CTRL`)**, *not* `0x00`
+(`BL_MSG_CMD`). Under `CMD` the application and bootloader would share one
+opcode registry, and `0x2x` is bootloader-adjacent (`0x20` is reserved
+there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
+
+> **Consequence for hosts:** the bootloader *silently drops* `APP_CTRL`. A
+> LOGFS command sent while the node sits in the **bootloader** yields a
+> **timeout, not a NACK** — indistinguishable from a dead node. Probe with a
+> bootloader command (`DISCOVER 0x03` / `GET_FW_INFO 0x04` under `CMD`),
+> which the BL *does* answer, before reporting a cable fault.
+
+### Opcodes (little-endian payloads)
+
+| Opcode | Name | Args | ACK payload |
+|---|---|---|---|
+| `0x01` | CONNECT | — | `major:u8`, `minor:u8` (app diag proto, currently 1.0) |
+| `0x02` | DISCONNECT | — | — |
+| `0x21` | LIST | `cursor:u16` | `next_cursor:u16`, `count:u8`, `entry × count` |
+| `0x22` | OPEN | `index:u16` | `handle:u16`, `size:u32`, `crc32:u32` |
+| `0x23` | READ | `handle:u16`, `offset:u32`, `len:u16` | `data` (≤ 512 B) |
+| `0x24` | CRC | `handle:u16` | `crc32:u32` |
+| `0x25` | CLOSE | `handle:u16` | — |
+| `0x27` | FINALIZE | — | `index:u16` |
+
+`entry` is a fixed **22 bytes** — `{index:u16, size:u32, mtime:u32,
+name[12]}` — so a listing is parsed by stride. `mtime` is the packed FAT
+stamp (`fdate << 16 | ftime`). `next_cursor == 0xFFFF` ends the listing.
+
+On OPEN, **`crc32 == 0` means "not available — use `LOGFS_CRC`"**, not a literal
+zero CRC. Every file this firmware seals gets a `.CRC` sidecar, but cards
+written before sidecars existed have none, and OPEN must never block streaming
+4 MiB to compute one.
+
+**A short READ means end-of-file**, and is an ACK, not an error — that is
+the host's normal termination signal. An oversized `len` is clamped to 512
+rather than rejected.
+
+**`FINALIZE` (`0x27`)** seals the *active* log — flush, close, rename to
+`.CSV`, write the CRC sidecar — and returns the sealed index, so the run that
+just happened is immediately listable and openable rather than waiting on
+rotation. It NACKs `FILE_NOT_FOUND` when there is nothing to seal (no active
+file, or no rows written yet), so an eager operator cannot fill the card with
+header-only files. Any open read handle is released, since the file set has
+changed.
+
+**v1 is read-only.** There is no DELETE (`0x26` is deliberately
+unimplemented and NACKs as unsupported): an extraction tool that can also
+erase logs is the wrong tool to hand a pit crew.
+
+### NACK codes
+
+Values ≤ `0x10` are the bootloader's, reused verbatim.
+
+| Code | Meaning |
+|---|---|
+| `0x02` | OUT_OF_BOUNDS — malformed/truncated args |
+| `0x04` | FILE_NOT_FOUND |
+| `0x06` | BAD_SESSION — no CONNECT, or wrong peer |
+| `0x08` | BUSY — a request is already in flight |
+| `0x11` | BAD_HANDLE — stale handle (note: **not** `0x08`, which is BUSY) |
+| `0x12` | NO_SD_CARD |
+| `0x13` | FS_ERROR |
+| `0x14` | READ_ERROR |
+| `0x15` | VEHICLE_STATE — refused: the car must be stopped with the TS off |
+| `0xFE` | UNSUPPORTED |
+
+### Vehicle-state gate
+
+**Log extraction is permitted only with the contactors open and the tractive
+system down — states `Start` and `Error`.** Any LOGFS opcode in `Precharge` /
+`Transition` / `Run` / `Charge` is refused with `NACK VEHICLE_STATE (0x15)`,
+and any open read handle is released.
+
+Beyond the obvious (a pull is a multi-minute, bus-heavy operation and should not
+be invited while the car can move) there is a concrete mechanism: the diag TX id
+`0x010 + NodeID` is numerically **lower** than the VCU heartbeat `0x100`, so
+every queued LOGFS frame **wins arbitration** against the heartbeat the safety
+FSM depends on. `VcuStaleMs` is 200 ms and latches `Error`, which opens the
+contactors. A single reply burst is only ~17–33 ms so the margin is wide, but
+the failure mode is *"a log pull opens the AIRs"* and it is not worth carrying
+when the alternative is simply not extracting while the car is live.
+
+`CONNECT` / `DISCONNECT` remain available in **any** state: they cost nothing on
+the bus and let a host discover *why* it is being refused rather than facing a
+silent node.
+
+> `Error` is permitted deliberately: it is the case the feature exists for.
+> #448 is *"grab the log from the run that just faulted"*, and a faulted car
+> sits in `Error` — with `ErrorLatch` sticky across resets, a power-cycled
+> post-fault car boots back into it. It is also the one state where the
+> arbitration hazard cannot bite: `VcuStale` latching `Error` is precisely what
+> the gate protects against, and in `Error` that has already happened.
+
+### Session
+
+`CONNECT` opens a session; everything except CONNECT/DISCONNECT is refused
+with `BAD_SESSION` without one, so a stray frame cannot stream the card to
+whoever is on the bus. Idle timeout is **10 s**, after which any open file
+handle is released — an operator who unplugs mid-pull does not pin it.
+A CONNECT from a second host takes over, releasing the previous handle.
+
+A `CMD`-typed (`0x00`) frame gets **silence**, not a NACK: the application
+does not answer for the bootloader's namespace.
+
+### Files visible
+
+Only sealed `LOGnnnn.CSV`. The active `LOGnnnn.TMP` is excluded because its
+length would be stale before a host finished reading it, and `LOGnnnn.CRC`
+sidecars are an implementation detail. The sidecar holds the CRC-32
+accumulated as rows were written, so `CRC` answers without re-reading the
+file; absent one, it falls back to streaming.
+
+CRC-32 is **ISO-HDLC / zlib** (poly `0xEDB88320` reflected, init and final
+XOR `0xFFFFFFFF`) — i.e. Python's `zlib.crc32`. Deliberately *not* the
+STM32 hardware CRC default (CRC-32/MPEG-2), which is a different checksum.
+
+### Throughput — plan for it
+
+ISO-TP carries 7 of every 8 bytes, so a 512-byte READ is ~76 frames ≈ 19 ms
+at 500 kbit/s → **~27 KB/s on an idle bus**. With `LogFileMaxBytes` at 4 MiB
+that is **~2.5–3 min per file**, and the bus is not idle. Larger reads buy
+~5%; per-frame overhead dominates. Hosts should show progress, let operators
+pick files from `LIST` sizes, and resume via the offset-based `READ`.
+
+Source: [`Core/Inc/app/isotp.hpp`](../Core/Inc/app/isotp.hpp),
+[`diag_proto.hpp`](../Core/Inc/app/diag_proto.hpp),
+[`diag_dispatch.hpp`](../Core/Inc/app/diag_dispatch.hpp),
+[`logfs_server.hpp`](../Core/Inc/app/logfs_server.hpp),
+[`crc32.hpp`](../Core/Inc/app/crc32.hpp); FatFs backend in
+[`sd_logger_task.cpp`](../Core/Src/app/sd_logger_task.cpp), CAN route in
+[`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
 
 ---
 

@@ -69,7 +69,8 @@ struct Harness {
         // directly via CellFaultDebounce.
         const ams::safety::Inputs pred = {
             bms, cur, veh, /*force_error_set=*/false,
-            /*vcu_required=*/(mode_locked == ams::fsm::Mode::Car), now,
+            /*vcu_required=*/(mode_locked == ams::fsm::Mode::Car),
+            /*charger_required=*/(mode_locked == ams::fsm::Mode::Charger), now,
         };
         const bool predicate_fault = ams::safety::evaluate_fault(pred);
 
@@ -204,32 +205,96 @@ extern "C" void test_sil_charger_path(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Scenario 4b: charger connected, single press enters Precharge, then 0x101
-// goes STALE (charger unplugged) before the proceed -> precharge holds, then
-// the PrechargeMaxMs timeout latches Error. Closing AIR+ into a disconnected
-// charger is exactly what the freshness gate prevents (#305).
+// Scenario 4b: WarioCharger disconnects mid-charge -> Error, stop charging.
+// Once committed to Charger mode the charger must keep emitting 0x101 (>=2 Hz).
+// If it goes silent (unplugged / powered down) longer than ChargerStaleMs the
+// ChargerStale predicate latches Error and opens the AIRs -- never keep the
+// pack connected to a dead charge link. Mirror of the VcuStale path on the car
+// side.
 // ---------------------------------------------------------------------------
-extern "C" void test_sil_charger_stale_request_times_out(void) {
+extern "C" void test_sil_charger_disconnect_in_charge_faults(void) {
     Harness h;
     h.tsms = true;
     h.mode_locked = ams::fsm::Mode::Charger;   // SafetyTask locked this earlier
-    // 0x101 already stale at the press (charger disconnected right after the
-    // mode lock). advance() never re-stamps last_charge_req_tick, so it stays
-    // stale -> the charger proceed gate never fires.
-    h.veh.last_charge_req_tick = h.now - ams::config::ChargeReqFreshMs - 1;
+    h.veh.last_charge_req_tick = h.now;        // charger up, 0x101 fresh
 
+    // Bring the charger path all the way up to Charge (mirrors
+    // test_sil_charger_path): press -> Precharge -> Transition -> Charge, with
+    // 0x101 re-stamped fresh each step.
     h.dash_chg_edge = true;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+    h.advance(20); h.veh.last_charge_req_tick = h.now;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, h.step().next);
+    h.advance(20); h.veh.last_charge_req_tick = h.now;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
 
-    // Hold (0x101 stale) until > PrechargeMaxMs -> Error.
-    const std::uint32_t deadline = h.now + ams::config::PrechargeMaxMs;
-    ams::fsm::State last = ams::fsm::State::Precharge;
+    // Charger unplugged: 0x101 goes silent (last_charge_req_tick frozen). Hold
+    // until it ages past ChargerStaleMs -> ChargerStale latches Error.
+    const std::uint32_t deadline = h.now + ams::config::ChargerStaleMs;
+    ams::fsm::State last = ams::fsm::State::Charge;
     while (h.now <= deadline + 40) {
         h.advance(20);
         last = h.step().next;
         if (last == ams::fsm::State::Error) break;
     }
     TEST_ASSERT_EQUAL(ams::fsm::State::Error, last);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4c: TSMS drops mid-CHARGE -> LATCH Error (scrutineering: the charge
+// output must not be re-activatable once the SDC opens). Contrast with the
+// car-side Scenario 5, where a TSMS drop is a non-latching return to Start
+// (#327). Re-asserting TSMS must NOT recover -- Error is sticky.
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_tsms_drop_in_charge_latches_error(void) {
+    Harness h;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;
+    h.veh.last_charge_req_tick = h.now;
+
+    // Bring the charger up to Charge.
+    h.dash_chg_edge = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+    h.advance(20); h.veh.last_charge_req_tick = h.now;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, h.step().next);
+    h.advance(20); h.veh.last_charge_req_tick = h.now;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Charge, h.step().next);
+
+    // TSMS opens: latch Error + open all contactors (NOT a fall back to Start).
+    h.tsms = false;
+    h.advance(20);
+    const auto out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirN);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+
+    // Re-asserting TSMS does NOT recover -- Error is sticky (needs a reset).
+    h.tsms = true;
+    h.advance(20);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, h.step().next);
+}
+
+// ---------------------------------------------------------------------------
+// Scenario 4d: the latch covers ALL energised charger states -- a TSMS drop
+// during charger PRECHARGE (before AIR+ closes) latches Error too, not just
+// once in Charge.
+// ---------------------------------------------------------------------------
+extern "C" void test_sil_tsms_drop_in_charger_precharge_latches_error(void) {
+    Harness h;
+    h.tsms = true;
+    h.mode_locked = ams::fsm::Mode::Charger;
+    h.veh.last_charge_req_tick = h.now;
+
+    h.dash_chg_edge = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, h.step().next);
+
+    // Drop TSMS while still in charger Precharge -> Error (not Start).
+    h.tsms = false;
+    h.advance(20);
+    const auto out = h.step();
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ForceError);
 }
 
 // ---------------------------------------------------------------------------

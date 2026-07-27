@@ -29,6 +29,11 @@ struct Inputs {
     // Undecided window -- the VCU is expected to be absent (the car
     // isn't running), so its staleness must NOT be a fault (#302).
     bool                vcu_required;
+    // Mirror of vcu_required for the charge side: the charger heartbeat
+    // (0x101) is required only once committed to Charger mode. In Car mode
+    // and the pre-lock window the charger is absent by definition, so its
+    // staleness must NOT fault.
+    bool                charger_required;
     std::uint32_t       now_tick;
 };
 
@@ -50,7 +55,38 @@ enum class FaultReason : std::uint8_t {
     VcuStale           = 11,
     // 12 (FsmError) is reserved for the SafetyTask FSM-driven Error
     // path (precharge timeout / input drop), set there, not here.
+    TempSensorDisconnected = 13,
+    // Charger heartbeat (0x101) went stale while committed to Charger mode
+    // (mirror of VcuStale for the charge side): the WarioCharger unplugged
+    // mid-charge -> Error + open the AIRs. Only fires in Charger mode.
+    ChargerStale       = 14,
+    // TSMS (PF9) dropped while committed to Charger mode. In Car mode a TSMS
+    // drop is a non-latching de-energise to Start (#327); in Charger mode the
+    // scrutineering rule forbids re-activating the charge output after the SDC
+    // opens, so it LATCHES Error instead (re-energising needs a full reset).
+    // FSM-driven (state_machine.hpp), attributed by fsm_error_reason() below.
+    ChargerTsmsOpen    = 15,
+    // A cell-sense wire is OPEN, confirmed by the LTC6811 ADOW two-pass
+    // open-wire check (open_wire.hpp). Catches a broken tap that still reads
+    // in-range, which the software cell-mV plausibility check alone can miss.
+    // Detail byte = offending-module mask. Only armed when
+    // config::CellOpenWireCheck is enabled (see there). Faults in ANY state.
+    CellOpenWire       = 16,
 };
+
+// Reason byte for an FSM-driven Error latch -- one the FSM reached with no
+// predicate fault (precharge timeout, input drop). The FSM evaluates its TSMS
+// guard BEFORE any per-state branch, so losing TSMS while committed to Charger
+// mode is unambiguously the charger-TSMS-open latch; every other FSM-driven
+// Error is the generic FsmError. FsmError has no enum slot (12 is reserved past
+// the predicate reasons -- see the enum note), so it is a bare constant here.
+inline constexpr std::uint8_t FsmErrorReason = 12u;
+[[nodiscard]] inline std::uint8_t
+fsm_error_reason(bool charger_mode, bool tsms) noexcept {
+    return (charger_mode && !tsms)
+               ? static_cast<std::uint8_t>(FaultReason::ChargerTsmsOpen)
+               : FsmErrorReason;
+}
 
 struct FaultResult {
     FaultReason  reason = FaultReason::None;
@@ -147,6 +183,26 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
         }
     }
 
+    // Temperature-sensor DISCONNECT (FS rule: a disconnected temp sensor opens
+    // the SDC). temp_disconnect_mask holds, per online module, whether a channel
+    // that had read valid is now open past the debounce (BmsService). This is a
+    // PRESENCE check, not a range check -- an open NTC reads the rail regardless
+    // of calibration -- so it is armed independently of TempFaultsTrusted, and
+    // self-gated by the "seen valid once" latch so a boot-time or unpopulated
+    // sentinel never trips it. Detail byte = the offending-module mask.
+    if (config::TempSensorPresenceCheck && in.bms.temp_disconnect_mask != 0u) {
+        return { FaultReason::TempSensorDisconnected, in.bms.temp_disconnect_mask };
+    }
+
+    // Cell OPEN-WIRE (LTC6811 ADOW). A confirmed broken cell-sense wire faults in
+    // ANY state -- including the case the software cell-mV plausibility check can
+    // miss, where the open still reads in-range. Armed only when the ADOW poll is
+    // enabled (config::CellOpenWireCheck); BmsPollTask leaves cell_open_mask 0
+    // otherwise. Detail byte = the offending-module mask.
+    if (config::CellOpenWireCheck && in.bms.cell_open_mask != 0u) {
+        return { FaultReason::CellOpenWire, in.bms.cell_open_mask };
+    }
+
     // Cell V / T ranges. Gated on first_full_poll_done (#279): until
     // every module has reported PEC-clean at least once, cell_mV /
     // cell_tempC may hold boot sentinels or a partially-populated mix
@@ -196,6 +252,16 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     if (in.vcu_required &&
         tick_age(in.now_tick, in.vehicle.last_dc_bus_tick) > config::VcuStaleMs) {
         return { FaultReason::VcuStale, 0 };
+    }
+
+    // Charger heartbeat (0x101) stale while committed to Charger mode: the
+    // WarioCharger was disconnected mid-charge. Mirror of VcuStale on the charge
+    // side -- fault and open the AIRs so charging stops. Gated on
+    // charger_required so it never fires in Car mode or the pre-lock window
+    // (where the charger is legitimately absent).
+    if (in.charger_required &&
+        tick_age(in.now_tick, in.vehicle.last_charge_req_tick) > config::ChargerStaleMs) {
+        return { FaultReason::ChargerStale, 0 };
     }
 
     return {};

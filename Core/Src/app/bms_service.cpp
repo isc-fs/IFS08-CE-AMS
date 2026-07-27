@@ -2,11 +2,13 @@
 
 #include "bms_service.hpp"
 
+#include "ntc_table.hpp"
+
 #include "ams_config.hpp"
 #include "ltc6811.hpp"
+#include "open_wire.hpp"
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <limits>
 
@@ -35,15 +37,21 @@ BmsService::BmsService() {
     state_.min_tempC   = std::numeric_limits<std::int16_t>::max();
     state_.max_tempC   = std::numeric_limits<std::int16_t>::min();
 
-    // Default cell_tempC to 25 degC so unpopulated NTC slots can't
-    // dominate the max/min on the first temp poll. Real readings
-    // overwrite each slot once update_temperature commits a valid
-    // Steinhart/Beta conversion.
+    // Seed every cell-temp slot to the NO-READING sentinel, not to a plausible
+    // temperature. This used to be 25 degC "so unpopulated NTC slots can't
+    // dominate the max/min" -- but that inverted the problem: an unpopulated or
+    // mis-muxed channel then reported comfortable room temperature forever, so
+    // max_tempC looked healthy whatever the pack did, and every threshold built
+    // on it was defeated no matter how accurate the conversion was.
+    //
+    // recompute_summaries_ now skips sentinels and counts what remains in
+    // valid_temp_channels, so "no data" is visible instead of disguised.
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
-            state_.cell_tempC[m][t] = 25;
+            state_.cell_tempC[m][t] = config::NtcNoReading;
         }
     }
+    state_.valid_temp_channels = 0;
 
     // Default cell_mV to a nominal-healthy sentinel for the SAME reason
     // (#279): before the first poll, or for a module that the boot
@@ -72,42 +80,47 @@ namespace {
 std::int16_t ntc_mV_to_tempC(std::uint16_t v_aux_mV) noexcept {
     using namespace ams::config;
 
-    // Rail readings -> open or shorted. Drop.
-    if (v_aux_mV == 0u || v_aux_mV >= NtcVrefMv) {
+    // Open or shorted -> drop. NtcOpenMv (< NtcVrefMv) catches a partially-
+    // railed open that would otherwise decode to a plausible but bogus cold
+    // temperature; 0 mV is a short. Both return the sentinel so the caller's
+    // disconnect path -- not a spuriously cold reading -- is what fires.
+    if (v_aux_mV == 0u || v_aux_mV >= NtcOpenMv) {
         return std::numeric_limits<std::int16_t>::min();
     }
 
-    // R_ntc = R_series * V_aux / (V_ref - V_aux)
-    const float v_aux_f = static_cast<float>(v_aux_mV);
-    const float v_ref_f = static_cast<float>(NtcVrefMv);
-    const float r_ntc   = static_cast<float>(NtcSeriesR) * v_aux_f
-                          / (v_ref_f - v_aux_f);
+    // R_ntc = R_pullup * V_aux / (V_ref - V_aux). Integer maths: the divider
+    // is exact here and the table lookup does the rest, so there is no reason
+    // to go through float.
+    const std::uint32_t v_aux = v_aux_mV;
+    const std::uint32_t v_ref = NtcVrefMv;
+    const std::uint32_t r_ntc =
+        (static_cast<std::uint32_t>(NtcPullupOhm) * v_aux) / (v_ref - v_aux);
 
-    // Beta model: 1/T = 1/T0 + (1/B) * ln(R/R25)
-    const float ratio = r_ntc / static_cast<float>(NtcR25);
-    if (!(ratio > 0.0f)) {
+    // Table lookup (ntc_table.hpp) rather than a single-beta Steinhart fit:
+    // beta is only accurate near its fitting interval, and this part's own
+    // datasheet quotes two different betas (3950 at 25/50, 4021 at 25/85).
+    std::int32_t decideg = 0;
+    if (!ntc::resistance_to_decideg(r_ntc, decideg)) {
         return std::numeric_limits<std::int16_t>::min();
     }
-    const float inv_T = (1.0f / NtcT0Kelvin)
-                       + (std::log(ratio) / static_cast<float>(NtcBeta));
-    if (!(inv_T > 0.0f)) {
-        return std::numeric_limits<std::int16_t>::min();
-    }
-    const float t_K = 1.0f / inv_T;
-    const float t_C = t_K - 273.15f;
-
-    if (t_C < static_cast<float>(NtcMinValidC) ||
-        t_C > static_cast<float>(NtcMaxValidC)) {
+    // Plausibility gate in tenths, so an unpopulated channel that decodes to a
+    // physically impossible temperature is dropped rather than reported.
+    if (decideg < static_cast<std::int32_t>(NtcMinValidC) * 10 ||
+        decideg > static_cast<std::int32_t>(NtcMaxValidC) * 10) {
         return std::numeric_limits<std::int16_t>::min();
     }
 
-    // Round to nearest degree.
-    return static_cast<std::int16_t>(t_C + (t_C >= 0.0f ? 0.5f : -0.5f));
+    // Round to nearest degree, away from zero. Integer throughout -- the whole
+    // path is now float-free.
+    const std::int32_t rounded = (decideg + (decideg >= 0 ? 5 : -5)) / 10;
+    return static_cast<std::int16_t>(rounded);
 }
 
 }  // namespace
 
 void BmsService::recompute_summaries_() noexcept {
+    state_.temp_disconnect_mask = 0;
+    state_.tap_fault_mask       = 0;
     std::uint32_t sum_v_mV = 0;
     std::uint16_t min_mV   = std::numeric_limits<std::uint16_t>::max();
     std::uint16_t max_mV   = 0;
@@ -126,21 +139,89 @@ void BmsService::recompute_summaries_() noexcept {
         std::int16_t  mod_max_t = std::numeric_limits<std::int16_t>::min();
 
         if ((state_.module_online_mask & (1u << m)) != 0u) {
+            // Tap-artifact guard. A high-resistance / open cell tap shifts the
+            // node SHARED by two physically-adjacent cells when balancing draws
+            // current through it: one cell reads non-physical (> ImplausibleMax
+            // or < ImplausibleMin) and its neighbour compensates the opposite
+            // way, so their PAIR SUM -- which is immune to a shared-tap error --
+            // stays in the normal window. For such a pair, aggregate on the
+            // tap-immune pair AVERAGE instead of the impossible individual
+            // reading, so a bad tap cannot false-trip Cell Over/UnderVoltage and
+            // open the SDC. cell_mV itself is untouched (the pit-diag grid still
+            // shows the raw split). A GENUINE over/under-voltage has a NORMAL
+            // neighbour -> sum runs out of the window -> NOT masked, still faults.
+            std::uint16_t agg_v[config::CellsPerModule];
             for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
-                const std::uint16_t v = state_.cell_mV[m][c];
+                agg_v[c] = state_.cell_mV[m][c];
+            }
+            for (std::uint8_t c = 0; c + 1u < config::CellsPerModule; ++c) {
+                // Physically adjacent == consecutive indices in the SAME LTC
+                // half (balance::physically_adjacent). The only in-range
+                // boundary that is NOT adjacent is the LTC split at
+                // CellsPerLtcUpper.
+                if (c + 1u == config::CellsPerLtcUpper) continue;
+                const std::uint16_t va = state_.cell_mV[m][c];
+                const std::uint16_t vb = state_.cell_mV[m][c + 1u];
+                const std::uint16_t hi = va > vb ? va : vb;
+                const std::uint16_t lo = va < vb ? va : vb;
+                const std::uint32_t sum =
+                    static_cast<std::uint32_t>(va) + static_cast<std::uint32_t>(vb);
+                const bool nonphysical = hi > config::CellImplausibleMaxMv ||
+                                         lo < config::CellImplausibleMinMv;
+                const bool wide_split =
+                    static_cast<std::uint16_t>(hi - lo) > config::TapArtifactMinSplitMv;
+                const bool sum_in_window =
+                    sum >= 2u * static_cast<std::uint32_t>(config::CellUnderVoltageMv) &&
+                    sum <= 2u * static_cast<std::uint32_t>(config::CellOverVoltageMv);
+                if (nonphysical && wide_split && sum_in_window) {
+                    const std::uint16_t avg = static_cast<std::uint16_t>(sum / 2u);
+                    agg_v[c]      = avg;
+                    agg_v[c + 1u] = avg;
+                    state_.tap_fault_mask =
+                        static_cast<std::uint8_t>(state_.tap_fault_mask | (1u << m));
+                }
+            }
+            for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+                const std::uint16_t v = agg_v[c];
                 sum_v_mV += v;
                 if (v < min_mV)    min_mV    = v;
                 if (v > max_mV)    max_mV    = v;
                 if (v < mod_min_v) mod_min_v = v;
                 if (v > mod_max_v) mod_max_v = v;
             }
+            std::uint8_t mod_valid_temps = 0;
             for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
                 const std::int16_t tc = state_.cell_tempC[m][t];
-                if (tc < min_t)    min_t    = tc;
-                if (tc > max_t)    max_t    = tc;
+                if (tc == config::NtcNoReading) {
+                    // Sentinel on a channel that HAS read valid = disconnected
+                    // (open past the debounce). An unpopulated channel is also
+                    // sentinel but was never seen, so it is not a disconnect.
+                    if (seen_valid_[m][t]) {
+                        state_.temp_disconnect_mask =
+                            static_cast<std::uint8_t>(state_.temp_disconnect_mask | (1u << m));
+                    }
+                    continue;   // NOT data -- excluded from min/max/avg
+                }
+                if (tc < min_t)     min_t     = tc;
+                if (tc > max_t)     max_t     = tc;
                 if (tc > mod_max_t) mod_max_t = tc;
                 sum_t += tc;
                 ++n_t;
+                ++mod_valid_temps;
+            }
+
+            // REQUIRED-channel presence (config::RequiredTempSlots): a declared
+            // slot reading open faults regardless of seen-valid history, so an
+            // open-at-boot channel is caught (scrutineering determinism). Gated
+            // on the module having produced >=1 valid temp this poll, so the
+            // boot window (all slots still at the seed sentinel, not yet polled)
+            // does not false-fault a connected channel before it has been read.
+            if (mod_valid_temps > 0) for (std::uint8_t rs : config::RequiredTempSlots) {
+                if (rs < config::TempsPerModule &&
+                    state_.cell_tempC[m][rs] == static_cast<std::int16_t>(config::NtcNoReading)) {
+                    state_.temp_disconnect_mask =
+                        static_cast<std::uint8_t>(state_.temp_disconnect_mask | (1u << m));
+                }
             }
         }
 
@@ -159,6 +240,11 @@ void BmsService::recompute_summaries_() noexcept {
     state_.min_tempC       = min_t;
     state_.max_tempC       = max_t;
     state_.avg_tempC       = (n_t > 0) ? static_cast<std::int16_t>(sum_t / static_cast<std::int32_t>(n_t)) : 0;
+    // Count of channels that actually produced data. With 0, min/max_tempC are
+    // the untouched sentinels (INT16_MAX / INT16_MIN) and callers must treat
+    // them as "unknown" -- notably balancing, whose only thermal guard is
+    // max_tempC and which would otherwise read INT16_MIN as "nice and cool".
+    state_.valid_temp_channels = static_cast<std::uint16_t>(n_t);
 }
 
 bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
@@ -292,21 +378,167 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
         // AUX1 (GPIO1) carries the buffered ADG731 output. AUX2/AUX3
         // are unused on BMS_LITE -- we read them anyway because they
         // come in the same group, but discard.
-        const std::int16_t t = ntc_mV_to_tempC(aux[0]);
-        if (t == std::numeric_limits<std::int16_t>::min()) {
-            continue;  // out of range -> keep last good value
-        }
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
         const std::uint8_t slot     = is_upper
             ? channel_idx
             : static_cast<std::uint8_t>(config::TempsPerLtc + channel_idx);
+
+        const std::int16_t t = ntc_mV_to_tempC(aux[0]);
+        if (t == std::numeric_limits<std::int16_t>::min()) {
+            // OPEN reading (rail voltage). A channel that was never valid is
+            // simply unpopulated -- leave it at the seed sentinel, no fault. A
+            // channel that HAS read valid and now reads open is a candidate
+            // DISCONNECT: keep its last good value while the run is short (a
+            // single anomalous mux read is tolerated), and only once the open
+            // run reaches TempDisconnectPolls mark it NtcNoReading so the
+            // summary flags the module. See config::TempSensorPresenceCheck.
+            if (seen_valid_[module][slot]) {
+                if (open_run_[module][slot] < 0xFFu) ++open_run_[module][slot];
+                if (open_run_[module][slot] >= config::TempDisconnectPolls) {
+                    state_.cell_tempC[module][slot] =
+                        static_cast<std::int16_t>(config::NtcNoReading);
+                }
+            }
+            continue;  // do not overwrite with a temperature
+        }
+
+        // Valid reading: clear the open run, latch that this channel exists.
+        open_run_[module][slot]   = 0;
+        seen_valid_[module][slot] = true;
         state_.cell_tempC[module][slot] = t;
         any_ok = true;
     }
 
     recompute_summaries_();
     return any_ok;
+}
+
+bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
+                                 const std::uint8_t* pd_reply,
+                                 std::size_t         len, bool accumulate) noexcept {
+    // Gated off -> always report "no open" so a stale mask can't linger. Fully
+    // "evaluated" (nothing to retry).
+    if (!config::CellOpenWireCheck) {
+        state_.cell_open_mask = 0u;
+        for (auto& v : state_.cell_open_cells) v = 0u;
+        return true;
+    }
+
+    constexpr std::size_t Seg        = 8;                                // 6 data + 2 PEC
+    constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;     // 80
+    constexpr std::size_t Expected   = 4u * GroupBytes;                  // 320
+    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return true;
+
+    std::uint8_t  new_mask = 0u;
+    std::uint32_t new_cells[config::BmsModuleCount] = {};
+    bool          all_ok   = true;   // false if any IC was PEC-skipped this call
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
+        const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
+        // Per-LTC cell count: 9 on the upper (RDCVD discarded), 10 on the lower
+        // (RDCVD C10 = the 10th cell). NEVER a uniform count -- see #423.
+        const std::uint8_t n_cells  =
+            is_upper ? config::CellsPerLtcUpper : config::CellsPerLtcLower;
+
+        std::uint16_t pu_cells[config::CellsPerLtcLower] = {};   // max 10
+        std::uint16_t pd_cells[config::CellsPerLtcLower] = {};
+        bool ic_ok = true;
+        for (std::uint8_t g = 0; g < 4 && ic_ok; ++g) {
+            std::array<std::uint16_t, 3> gpu{};
+            std::array<std::uint16_t, 3> gpd{};
+            const std::uint8_t* spu = pu_reply + g * GroupBytes + ic * Seg;
+            const std::uint8_t* spd = pd_reply + g * GroupBytes + ic * Seg;
+            // Both passes must PEC-clean or we can't trust the delta; skip the IC
+            // (its loss is already caught by the module-online / stale path).
+            if (!ltc6811::decode_cell_voltage_group(spu, gpu) ||
+                !ltc6811::decode_cell_voltage_group(spd, gpd)) {
+                ic_ok = false;
+                break;
+            }
+            for (std::uint8_t k = 0; k < 3; ++k) {
+                const std::uint8_t idx = static_cast<std::uint8_t>(g * 3 + k);
+                if (idx < n_cells) {   // upper: keep A/B/C (0..8); lower: +RDCVD[0]=idx 9
+                    pu_cells[idx] = gpu[k];
+                    pd_cells[idx] = gpd[k];
+                }
+            }
+        }
+        if (!ic_ok) { all_ok = false; continue; }   // PEC glitch -> caller retries
+        const std::uint16_t conductors = open_wire::detect_open_conductors(
+            pu_cells, pd_cells, n_cells, config::CellOpenWireDeltaMv);
+        if (conductors != 0u) {
+            new_mask = static_cast<std::uint8_t>(new_mask | (1u << module));
+            // Conductor -> cell mapping. Conductor k is the NODE between cells
+            // k-1 and k (IC-local, 0-indexed), so an open there corrupts both of
+            // them; the endpoints C(0) and C(N) border only one cell each. Offset
+            // by the IC's base so upper-LTC cells land on module cells 0..8 and
+            // lower-LTC cells on 9..18 (#423).
+            const std::uint8_t base = is_upper ? 0u : config::CellsPerLtcUpper;
+            for (std::uint8_t k = 0; k <= n_cells; ++k) {
+                if ((conductors & (1u << k)) == 0u) continue;
+                if (k > 0u) {
+                    new_cells[module] |= (1u << (base + k - 1u));
+                }
+                if (k < n_cells) {
+                    new_cells[module] |= (1u << (base + k));
+                }
+            }
+        }
+    }
+    // First attempt overwrites (clears last poll's stale bits); a retry ORs so it
+    // can't erase an open a prior attempt of THIS poll already confirmed.
+    state_.cell_open_mask = accumulate
+        ? static_cast<std::uint8_t>(state_.cell_open_mask | new_mask)
+        : new_mask;
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        state_.cell_open_cells[m] = accumulate
+            ? (state_.cell_open_cells[m] | new_cells[m])
+            : new_cells[m];
+    }
+    return all_ok;
+}
+
+void BmsService::capture_adow_raw(const std::uint8_t* pu_reply,
+                                  const std::uint8_t* pd_reply,
+                                  std::size_t         len,
+                                  std::uint16_t*      pu_out,
+                                  std::uint16_t*      pd_out) noexcept {
+    constexpr std::size_t Seg        = 8;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;
+    constexpr std::size_t Expected   = 4u * GroupBytes;
+    constexpr std::size_t N = static_cast<std::size_t>(config::BmsModuleCount) *
+                              config::CellsPerModule;   // 95
+    if (pu_out == nullptr || pd_out == nullptr) return;
+    for (std::size_t i = 0; i < N; ++i) { pu_out[i] = 0xFFFFu; pd_out[i] = 0xFFFFu; }
+    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return;
+
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
+        const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
+        // Module-cell offset + count: upper LTC = cells 0..8 (9), lower = 9..18 (10).
+        const std::uint8_t base    = is_upper ? 0u : config::CellsPerLtcUpper;
+        const std::uint8_t n_cells = is_upper ? config::CellsPerLtcUpper
+                                              : config::CellsPerLtcLower;
+        for (std::uint8_t g = 0; g < 4; ++g) {
+            std::array<std::uint16_t, 3> gpu{};
+            std::array<std::uint16_t, 3> gpd{};
+            const std::uint8_t* spu = pu_reply + g * GroupBytes + ic * Seg;
+            const std::uint8_t* spd = pd_reply + g * GroupBytes + ic * Seg;
+            const bool ok = ltc6811::decode_cell_voltage_group(spu, gpu) &&
+                            ltc6811::decode_cell_voltage_group(spd, gpd);
+            if (!ok) continue;                       // leave 0xFFFF sentinel
+            for (std::uint8_t k = 0; k < 3; ++k) {
+                const std::uint8_t idx = static_cast<std::uint8_t>(g * 3 + k);  // LTC-local
+                if (idx < n_cells) {
+                    const std::size_t flat =
+                        static_cast<std::size_t>(module) * config::CellsPerModule + base + idx;
+                    pu_out[flat] = gpu[k];
+                    pd_out[flat] = gpd[k];
+                }
+            }
+        }
+    }
 }
 
 BmsState BmsService::snapshot() const noexcept {

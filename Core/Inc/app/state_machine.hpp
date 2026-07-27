@@ -144,6 +144,20 @@ struct Output {
     // above; this branch is reached only on a no-fault tick. (#327)
     if (in.current != State::Start && in.current != State::Error &&
         !in.tsms) {
+        // Charger mode is the exception to the non-latching rule above. The
+        // scrutineering sheet forbids re-activating the charger output once
+        // the shutdown circuit has opened, so a TSMS drop while committed to
+        // Charger mode LATCHES Error across every energised charger state
+        // (Precharge/Transition/Charge) -- re-energising the charge path then
+        // requires a full reset. This is exactly the "AMS_OK drops -> upstream
+        // SDC relay opens -> TSMS reclose alone can't restore the loop"
+        // property the car case avoids: here it is the desired interlock.
+        if (in.mode_locked == Mode::Charger) {
+            return { State::Error,
+                     events::safety::ForceError |
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
+        }
         return { State::Start,
                  events::safety::OpenAirN | events::safety::OpenAirP |
                  events::safety::OpenPrecharge };

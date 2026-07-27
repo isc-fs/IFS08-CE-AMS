@@ -15,7 +15,7 @@
 //      (op_cmd == On runs in ANY state -- operator override of Charge-only)
 //   2. temps not trusted                             -> mask all zero
 //   3. max_tempC > BalanceTempMax                    -> mask all zero
-//   4. cell voltage > min_cell_mV + delta            -> candidate
+//   4. cell voltage > floor + delta (floor = 2nd-lowest cell)  -> candidate
 //   5. per module, keep at most BalanceMaxActive candidates with
 //      the largest excess over the pack minimum (round-robin across
 //      windows is overkill at 1 Hz cadence -- top-k is good enough)
@@ -41,10 +41,35 @@ struct Mask {
 // the FSM won't even fault on, or balance when the operator hasn't asked. The
 // firmware caller passes config::TempFaultsTrusted and the freshness-resolved
 // VehicleService::effective_balance_cmd.
+// Are two module-local cell indices PHYSICALLY adjacent 2512 pairs?
+//
+// Verified from the BMS_LITE PCB placement (pcbs/BMS_LITE): each LTC drives one
+// horizontal row of cell positions, and firmware cell index maps MONOTONICALLY
+// onto that row -- LTC_1 carries module cells 0..(CellsPerLtcUpper-1) left to
+// right, LTC_2 carries the rest. So two cells share a board edge iff they are
+// consecutive indices in the SAME LTC half. The two halves sit in separate
+// board regions (a wide X gap on the layout), so there is no cross-half
+// adjacency -- index 8 and 9 are far apart, not neighbours.
+//
+// BENCH-VERIFIED 2026-07-22 on the real pack: forcing local indices 0..7 lit
+// exactly 8 CONTIGUOUS 2512 pads on one LTC row with the other row cold (IR),
+// confirming consecutive firmware index == physically consecutive resistor and
+// that the two LTC halves are separate board rows. So the derivation below
+// (schematic cell number == LTC channel, monotonic layout) holds on hardware.
+[[nodiscard]] inline bool physically_adjacent(std::uint8_t a, std::uint8_t b) noexcept {
+    const bool a_upper = a < config::CellsPerLtcUpper;
+    const bool b_upper = b < config::CellsPerLtcUpper;
+    if (a_upper != b_upper) return false;                 // different LTC rows
+    const std::uint8_t d = (a > b) ? (a - b) : (b - a);
+    return d == 1u;
+}
+
 [[nodiscard]] inline Mask compute_mask(const BmsState&    s,
                                        fsm::State         fsm_state,
                                        bool               temps_trusted,
-                                       config::BalanceCmd op_cmd) noexcept {
+                                       config::BalanceCmd op_cmd,
+                                       std::uint8_t       module_enable
+                                           = config::AllModulesMask) noexcept {
     Mask out = {};
 
     // Operator master switch (#336). op_cmd is already freshness-resolved by
@@ -69,6 +94,17 @@ struct Mask {
     // predicates, which suppress the cell-temp FAULTS under the same flag.
     if (!temps_trusted)                        return out;
 
+    // Thermal DATA gate, distinct from the trust gate above. The BalanceTempMax
+    // lockout below is balancing's only heat protection, and it reads
+    // s.max_tempC -- which is INT16_MIN when nothing has converted. INT16_MIN
+    // compares as "wonderfully cool", so without this check a pack with a dead
+    // temperature path balances with no thermal protection at all and no
+    // symptom. Refuse instead.
+    //
+    // Before the NtcNoReading sentinel this could not even be detected:
+    // unconverted channels were seeded to a plausible 25 degC.
+    if (s.valid_temp_channels < config::BalanceMinValidTempCh) return out;
+
     // Bang-bang thermal lockout: no hysteresis because compute_mask
     // is stateless by design (pure function, unit-testable in
     // isolation). At the 1 Hz balance-update cadence and the slow
@@ -78,44 +114,83 @@ struct Mask {
     // BalanceController class that owns the latched lockout flag.
     if (s.max_tempC > config::BalanceTempMax) return out;
 
-    // Bottom of the pack we're trying to match. Use the snapshot's
-    // min_cell_mV; it's already the result of an iteration over the
-    // full cell grid in BmsService::recompute_summaries_().
-    const std::uint16_t floor_mV = s.min_cell_mV;
+    // Bottom of the pack we're trying to match -- the SECOND-lowest cell, not
+    // the absolute minimum.
+    //
+    // A disconnected cell tap reads spuriously low (the LTC measures each cell
+    // across shared tap nodes, so an open node collapses one reading). If the
+    // floor were the true minimum, that one bad cell would drop it far below the
+    // pack, every real cell would then sit >BalanceDeltaMv above it, and the
+    // WHOLE STACK would start balancing off a single faulty reading. Using the
+    // 2nd-lowest ignores exactly one outlier, so a single stuck-low cell cannot
+    // trigger pack-wide discharge.
+    //
+    // The true minimum still drives the safety UV predicate + telemetry
+    // (s.min_cell_mV, untouched) -- a genuinely low cell still faults there.
+    // Cost of 2nd-lowest: a single real weak cell is balanced toward the
+    // next-lowest rather than itself, i.e. one deadband short -- negligible, and
+    // the right trade against a false pack-wide bleed.
+    std::uint16_t lo1 = 0xFFFFu;   // lowest
+    std::uint16_t lo2 = 0xFFFFu;   // second-lowest
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+            const std::uint16_t v = s.cell_mV[m][c];
+            if (v < lo1)      { lo2 = lo1; lo1 = v; }
+            else if (v < lo2) { lo2 = v; }
+        }
+    }
+    const std::uint16_t floor_mV = lo2;
 
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        // Per-module operator enable (0x104), layered UNDER the global
+        // OFF/ON/AUTO above: a disabled module never discharges. Already
+        // freshness-resolved by VehicleService::effective_balance_modules_mask
+        // (stale/absent -> all bits set), so the default all-enabled arg keeps
+        // pre-0x104 behaviour. The pack-wide floor (lo2) still includes a
+        // disabled module's cells -- they simply never get selected here.
+        if ((module_enable & (1u << m)) == 0u) continue;
         // Walk the module's 19 cells, keep the top-K by excess over
         // the floor. K = BalanceMaxActive. Insertion sort into a
         // small array -- 19 cells * 4 slots = ~76 compares worst
         // case, well below noise at 1 Hz cadence.
-        struct Cand {
-            std::uint8_t  cell;
-            std::uint16_t excess;
-        };
-        Cand top[config::BalanceMaxActive] = {};
-        std::uint8_t n_top = 0;
+        // Select up to BalanceMaxActive cells, highest excess first, with NO
+        // two PHYSICALLY ADJACENT resistors on at once (see physically_adjacent
+        // + BalanceSpreadNoAdjacent). Spreads the discharge heat across the
+        // board instead of concentrating a hot cluster of 2512 pads -- measured
+        // at ~71 C per pad at 8/module, so keeping neighbours cold bounds the
+        // local hot-spot over a multi-hour C/101 balancing session.
+        //
+        // Greedy: repeatedly take the highest-excess cell that is over the delta
+        // and not adjacent to one already chosen. It may select FEWER than the
+        // cap when the imbalanced cells cluster -- which is correct: a smaller
+        // set that never overlaps is exactly the goal, and the skipped cells are
+        // bled on later cycles once their neighbours come down. 8*19 compares
+        // per module, trivial at 1 Hz.
+        std::uint8_t chosen[config::BalanceMaxActive] = {};
+        std::uint8_t n_chosen = 0;
 
-        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
-            const std::uint16_t v = s.cell_mV[m][c];
-            if (v <= floor_mV + config::BalanceDeltaMv) continue;
-            const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
+        for (std::uint8_t pick = 0; pick < config::BalanceMaxActive; ++pick) {
+            std::uint16_t best_excess = 0;
+            int           best_cell   = -1;
+            for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+                const std::uint16_t v = s.cell_mV[m][c];
+                if (v <= floor_mV + config::BalanceDeltaMv) continue;  // matched
+                if (out.cell[m][c]) continue;                          // taken
 
-            if (n_top < config::BalanceMaxActive) {
-                top[n_top++] = { c, excess };
-            } else {
-                // Replace the smallest entry if this one is bigger.
-                std::uint8_t smallest = 0;
-                for (std::uint8_t i = 1; i < n_top; ++i) {
-                    if (top[i].excess < top[smallest].excess) smallest = i;
+                if (config::BalanceSpreadNoAdjacent) {
+                    bool adj = false;
+                    for (std::uint8_t i = 0; i < n_chosen; ++i) {
+                        if (physically_adjacent(c, chosen[i])) { adj = true; break; }
+                    }
+                    if (adj) continue;
                 }
-                if (excess > top[smallest].excess) {
-                    top[smallest] = { c, excess };
-                }
+
+                const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
+                if (excess > best_excess) { best_excess = excess; best_cell = c; }
             }
-        }
-
-        for (std::uint8_t i = 0; i < n_top; ++i) {
-            out.cell[m][top[i].cell] = true;
+            if (best_cell < 0) break;                          // nothing eligible
+            out.cell[m][static_cast<std::uint8_t>(best_cell)] = true;
+            chosen[n_chosen++] = static_cast<std::uint8_t>(best_cell);
         }
     }
     return out;

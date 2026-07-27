@@ -33,6 +33,7 @@ ams::CanFrame make_pit_diag_cmd(const std::uint8_t magic[4]) {
 // ---------------------------------------------------------------------------
 extern "C" void test_pit_diag_cell_frame_zero_indexes_module0(void) {
     ams::BmsState bms = {};
+    bms.module_online_mask = ams::config::AllModulesMask;   // all modules fresh
     bms.cell_mV[0][0] = 0x1234;
     bms.cell_mV[0][1] = 0x5678;
     bms.cell_mV[0][2] = 0xABCD;
@@ -53,6 +54,7 @@ extern "C" void test_pit_diag_cell_frame_spans_module_boundary(void) {
     // Frame 4 (cells 16..19) spans cells 16,17,18 of module 0 + cell 0
     // of module 1 (row-major: 5*19=95 total, cells_per_module=19).
     ams::BmsState bms = {};
+    bms.module_online_mask = ams::config::AllModulesMask;   // all modules fresh
     bms.cell_mV[0][16] = 0xAA00;
     bms.cell_mV[0][17] = 0xBB11;
     bms.cell_mV[0][18] = 0xCC22;
@@ -70,6 +72,7 @@ extern "C" void test_pit_diag_cell_frame_last_has_sentinels(void) {
     // 95 cells / 4 = 23.75 -> 24 frames. Frame 23 carries cells 92..94
     // (3 real cells) + one sentinel slot.
     ams::BmsState bms = {};
+    bms.module_online_mask = ams::config::AllModulesMask;   // all modules fresh
     // Cells 92..94 in row-major = module 4, cells 16..18.
     bms.cell_mV[4][16] = 0xAAAA;
     bms.cell_mV[4][17] = 0xBBBB;
@@ -99,6 +102,7 @@ extern "C" void test_pit_diag_cell_frame_out_of_range_returns_zeros(void) {
 // ---------------------------------------------------------------------------
 extern "C" void test_pit_diag_temp_frame_first_byte_is_module0_temp0(void) {
     ams::BmsState bms = {};
+    bms.module_online_mask = ams::config::AllModulesMask;   // all modules fresh
     for (std::uint8_t i = 0; i < 8; ++i) {
         bms.cell_tempC[0][i] = static_cast<std::int16_t>(20 + i);
     }
@@ -111,6 +115,7 @@ extern "C" void test_pit_diag_temp_frame_first_byte_is_module0_temp0(void) {
 
 extern "C" void test_pit_diag_temp_frame_clips_int8_range(void) {
     ams::BmsState bms = {};
+    bms.module_online_mask = ams::config::AllModulesMask;   // all modules fresh
     bms.cell_tempC[0][0] = -300;     // below int8 min
     bms.cell_tempC[0][1] =  300;     // above int8 max
     bms.cell_tempC[0][2] =   25;     // in-range
@@ -124,11 +129,40 @@ extern "C" void test_pit_diag_temp_frame_last_covers_module4(void) {
     // Frame 24 covers temp_indices 192..199 = module 4, temps 32..39
     // (TempsPerModule=40, last 8 of module 4).
     ams::BmsState bms = {};
+    bms.module_online_mask = ams::config::AllModulesMask;   // all modules fresh
     bms.cell_tempC[4][32] = 50;
     bms.cell_tempC[4][39] = -10;
     const auto f = ams::pit_diag::encode_temp_frame(bms, 24);
     TEST_ASSERT_EQUAL_INT8( 50, static_cast<std::int8_t>(f[0]));
     TEST_ASSERT_EQUAL_INT8(-10, static_cast<std::int8_t>(f[7]));
+}
+
+// ---------------------------------------------------------------------------
+// Stale-chain guard: a module past its freshness window (isoSPI disconnected)
+// keeps its last-good values in cell_mV / cell_tempC, but the grid must emit
+// the no-data sentinel so MingoCAN never shows a frozen reading as live.
+// ---------------------------------------------------------------------------
+extern "C" void test_pit_diag_cell_frame_offline_module_is_sentinel(void) {
+    ams::BmsState bms = {};
+    bms.module_online_mask = 0x1E;   // modules 1..4 fresh, module 0 OFFLINE
+    bms.cell_mV[0][0] = 0x1234;      // stale last-good values still in the array
+    bms.cell_mV[0][1] = 0x5678;
+    bms.cell_mV[0][2] = 0xABCD;
+    bms.cell_mV[0][3] = 0x0001;
+    const auto f = ams::pit_diag::encode_cell_frame(bms, 0);   // frame 0 = module 0
+    for (auto b : f) TEST_ASSERT_EQUAL_UINT8(0xFFu, b);        // all "no cell"
+}
+
+extern "C" void test_pit_diag_temp_frame_offline_module_is_sentinel(void) {
+    ams::BmsState bms = {};
+    bms.module_online_mask = 0x1E;   // module 0 OFFLINE, 1..4 fresh (per-module gate)
+    for (std::uint8_t i = 0; i < 8; ++i) {
+        bms.cell_tempC[0][i] = static_cast<std::int16_t>(20 + i);   // stale last-good
+    }
+    const auto f = ams::pit_diag::encode_temp_frame(bms, 0);   // frame 0 = module 0 temps 0..7
+    for (std::uint8_t i = 0; i < 8; ++i) {
+        TEST_ASSERT_EQUAL_INT8(-128, static_cast<std::int8_t>(f[i]));   // NtcNoReading sentinel
+    }
 }
 
 // ---------------------------------------------------------------------------

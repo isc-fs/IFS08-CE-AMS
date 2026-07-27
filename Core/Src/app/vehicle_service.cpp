@@ -62,6 +62,20 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         state_.last_balance_override_tick = f.timestamp_ms;
         return true;
     }
+
+    // 0x104 -- per-module balancing enable. magic "BALM" (bytes 0..3) + byte 4 =
+    // 5-bit enable mask. Unrecognised payload ignored (bus-noise safe), leaving
+    // the prior mask + tick in place.
+    if (f.id == config::BalanceModulesReqId) {
+        if (f.dlc < config::BalanceModulesReqDlc) return false;
+        for (std::size_t i = 0; i < 4u; ++i) {
+            if (f.data[i] != config::BalanceModulesMagic[i]) return false;  // no magic -> ignore
+        }
+        state_.balance_modules_mask =
+            static_cast<std::uint8_t>(f.data[4] & config::AllModulesMask);   // low 5 bits
+        state_.last_balance_modules_tick = f.timestamp_ms;
+        return true;
+    }
     return false;
 }
 
@@ -86,6 +100,22 @@ config::BalanceCmd VehicleService::effective_balance_cmd(
         (now_tick >= last_override_tick) ? (now_tick - last_override_tick) : 0u;
     if (age > config::BalanceOverrideFreshMs) return config::BalanceCmd::Off;  // dead-man
     return last_cmd;
+}
+
+std::uint8_t VehicleService::effective_balance_modules_mask(
+    std::uint32_t now_tick,
+    std::uint32_t last_modules_tick,
+    std::uint8_t  last_mask) noexcept {
+    // Never seen -> all modules enabled (behave as global-only).
+    if (last_modules_tick == 0u) return config::BalanceModulesDefaultMask;
+    // Future-tick safe (the #276 lesson).
+    const std::uint32_t age =
+        (now_tick >= last_modules_tick) ? (now_tick - last_modules_tick) : 0u;
+    // Dead-man: a stale link re-enables every module -- the 0x103 dead-man is
+    // what actually stops balancing on a dead WarioCharger, so a lost 0x104
+    // must not silently freeze balancing off on some modules.
+    if (age > config::BalanceModulesFreshMs) return config::BalanceModulesDefaultMask;
+    return static_cast<std::uint8_t>(last_mask & config::AllModulesMask);
 }
 
 VehicleState VehicleService::snapshot() const noexcept {

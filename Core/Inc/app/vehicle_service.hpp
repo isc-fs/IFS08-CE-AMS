@@ -36,6 +36,13 @@ struct VehicleState {
     // the two through effective_balance_cmd() (dead-man -> Off) each window.
     std::uint32_t     last_balance_override_tick;
     config::BalanceCmd balance_cmd;
+
+    // Per-module balancing enable (0x104). last_balance_modules_tick: 0 = never
+    // seen. balance_modules_mask: last decoded 5-bit mask (bit m = module m
+    // enabled). BmsPollTask resolves the two through effective_balance_modules_-
+    // mask() (dead-man -> all enabled) each window.
+    std::uint32_t     last_balance_modules_tick;
+    std::uint8_t      balance_modules_mask;
 };
 
 class VehicleService {
@@ -65,6 +72,16 @@ public:
         std::uint32_t      now_tick,
         std::uint32_t      last_override_tick,
         config::BalanceCmd last_cmd) noexcept;
+
+    // Effective per-module balancing enable mask right now. Dead-man: if the
+    // last 0x104 is stale (> BalanceModulesFreshMs) or was never seen
+    // (last_modules_tick == 0), returns BalanceModulesDefaultMask (all modules
+    // enabled) so the pack behaves as global-only; otherwise returns the last
+    // mask (low 5 bits). Pure; future-tick safe.
+    [[nodiscard]] static std::uint8_t effective_balance_modules_mask(
+        std::uint32_t now_tick,
+        std::uint32_t last_modules_tick,
+        std::uint8_t  last_mask) noexcept;
 
 private:
     VehicleService() = default;

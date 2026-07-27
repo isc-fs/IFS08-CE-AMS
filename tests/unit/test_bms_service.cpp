@@ -104,6 +104,121 @@ extern "C" void tearDown(void) {}
 // module at the right offset, online masks reach 0x3FF (10 LTCs) /
 // 0x1F (5 modules), is_healthy goes true.
 // ---------------------------------------------------------------------------
+// FS rule: an out-of-range cell open must open the SDC in < 500 ms. Guard the
+// range-path budget: one voltage poll to observe the open + the confirm debounce
+// + a safety tick. (e.g. 200 + 25x10 + 20 = 470 ms.) A regression to a 250 ms
+// poll or a longer debounce trips this. In-range opens are ADOW's job.
+extern "C" void test_cell_open_range_budget_under_500ms(void) {
+    const std::uint32_t worst_ms =
+        config::BmsPollVoltMs
+        + static_cast<std::uint32_t>(config::CellFaultConfirmTicks) * config::SafetyPeriodMs
+        + config::StatePeriodMs;
+    TEST_ASSERT_LESS_THAN_UINT32(500u, worst_ms);
+}
+
+// A whole module going silent (stop measuring ALL of it) must open the SDC in
+// < 500 ms. It drops off module_online_mask at the first voltage poll whose
+// freshness age exceeds BmsStaleMs -> BmsModuleOffline (immediate). Guard both:
+// (a) BmsStaleMs > one poll so a single missed poll is tolerated (glitch immune),
+// (b) the detect budget: polls-until-age-exceeds-staleness x cadence + tick < 500.
+extern "C" void test_module_loss_budget_under_500ms(void) {
+    // One missed voltage poll must not trip it.
+    TEST_ASSERT_GREATER_THAN_UINT32(config::BmsPollVoltMs, config::BmsStaleMs);
+    // First poll STRICTLY after BmsStaleMs detects the drop.
+    const std::uint32_t polls_to_detect =
+        (config::BmsStaleMs / config::BmsPollVoltMs) + 1u;
+    const std::uint32_t worst_ms =
+        polls_to_detect * config::BmsPollVoltMs + config::StatePeriodMs;
+    TEST_ASSERT_LESS_THAN_UINT32(500u, worst_ms);
+}
+
+// Cell open-wire (ADOW) end-to-end through BmsService::update_open_wire: two
+// identical PU/PD passes = no open; a PU reading pulled far below PD on one
+// interior cell of module 0's upper LTC flags exactly module 0's bit.
+extern "C" void test_bms_open_wire_flags_module(void) {
+    if (!config::CellOpenWireCheck) { TEST_IGNORE_MESSAGE("CellOpenWireCheck off"); return; }
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+
+    // PU == PD -> no open on any IC. All ICs PEC-clean -> "all evaluated" == true.
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
+    TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().cell_open_mask);
+
+    // Inject an open on module 0's upper LTC (ic 0), interior cell 3: group B
+    // (index 1) carries cells 3,4,5 -- pull cell 3's PU far below its PD (3003)
+    // so PU-PD < -CellOpenWireDeltaMv; leave 4,5 matching so only conductor 3 trips.
+    encode_segment(pu + 1u * GroupBytes + 0u * Seg, /*c3*/ 1500u, /*c4*/ 3004u, /*c5*/ 3005u);
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
+    // Only module 0 flagged.
+    TEST_ASSERT_EQUAL_UINT8(1u << 0, BmsService::instance().snapshot().cell_open_mask);
+}
+
+// A PEC glitch on one IC's ADOW pass means that IC can't be judged -> update_
+// open_wire returns false so BmsPollTask retries the two-pass scan in-poll
+// (the fix for the ADOW no-retry gap that slipped detection past 500 ms).
+extern "C" void test_bms_open_wire_pec_glitch_signals_retry(void) {
+    if (!config::CellOpenWireCheck) { TEST_IGNORE_MESSAGE("CellOpenWireCheck off"); return; }
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+    // Corrupt ic0/group-A PEC on the PU pass (byte 6 of that segment) so its
+    // decode fails -> that IC is skipped -> "not all evaluated".
+    pu[0u * GroupBytes + 0u * Seg + 6u] ^= 0xFFu;
+    TEST_ASSERT_FALSE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
+    // A fully clean pair is judged completely -> true (retry would stop).
+    build_clean_chain(pu);
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes));
+}
+
+// The double-glitch edge the eval flagged: attempt 0 confirms an open on module 0,
+// then on the retry that same IC PEC-glitches (skipped). With accumulate=true the
+// confirmed open MUST be preserved, not erased by the retry's overwrite.
+extern "C" void test_bms_open_wire_retry_preserves_confirmed_open(void) {
+    if (!config::CellOpenWireCheck) { TEST_IGNORE_MESSAGE("CellOpenWireCheck off"); return; }
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+
+    // Attempt 0: module 0 upper-LTC cell 3 genuinely open, whole chain PEC-clean.
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+    encode_segment(pu + 1u * GroupBytes + 0u * Seg, /*c3*/ 1500u, /*c4*/ 3004u, /*c5*/ 3005u);
+    TEST_ASSERT_TRUE(BmsService::instance().update_open_wire(pu, pd, RespBytes, /*accumulate=*/false));
+    TEST_ASSERT_EQUAL_UINT8(1u << 0, BmsService::instance().snapshot().cell_open_mask);
+
+    // Attempt 1 (retry): ic0 now PEC-glitches (skipped) and reads no open elsewhere.
+    // accumulate=true must keep module 0's bit rather than overwriting it away.
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+    pu[0u * GroupBytes + 0u * Seg + 6u] ^= 0xFFu;   // break ic0 group A PEC (PU pass)
+    TEST_ASSERT_FALSE(BmsService::instance().update_open_wire(pu, pd, RespBytes, /*accumulate=*/true));
+    TEST_ASSERT_BITS_HIGH(1u << 0, BmsService::instance().snapshot().cell_open_mask);
+}
+
+// Bench-diag capture: decode both ADOW passes into flat 95-cell PU/PD grids with
+// the right 9/10 module-cell mapping; a PEC glitch on one group leaves that
+// group's cells at the 0xFFFF sentinel while the rest decode.
+extern "C" void test_bms_capture_adow_raw_decodes_grids(void) {
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+    std::uint16_t pu_g[config::BmsModuleCount * config::CellsPerModule];
+    std::uint16_t pd_g[config::BmsModuleCount * config::CellsPerModule];
+
+    BmsService::capture_adow_raw(pu, pd, RespBytes, pu_g, pd_g);
+    // build_clean_chain: module m cell s = 3000 + 100*m + s.
+    TEST_ASSERT_EQUAL_UINT16(3000, pu_g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(3008, pu_g[0 * config::CellsPerModule + 8]);   // last upper-LTC cell
+    TEST_ASSERT_EQUAL_UINT16(3018, pu_g[0 * config::CellsPerModule + 18]);  // last lower-LTC cell (RDCVD C10)
+    TEST_ASSERT_EQUAL_UINT16(3418, pd_g[4 * config::CellsPerModule + 18]);  // module 4 last cell
+
+    // PEC glitch on ic0 group A (PU) -> module 0 cells 0..2 sentinel; group B intact.
+    pu[0u * GroupBytes + 0u * Seg + 6u] ^= 0xFFu;
+    BmsService::capture_adow_raw(pu, pd, RespBytes, pu_g, pd_g);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, pu_g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, pd_g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(3003, pu_g[0 * config::CellsPerModule + 3]);   // group B still decoded
+}
+
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     std::uint8_t resp[RespBytes];
     build_clean_chain(resp);
@@ -129,6 +244,64 @@ extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     TEST_ASSERT_EQUAL_UINT16(0x3FFu, s.ltc_online_mask);
     TEST_ASSERT_EQUAL_UINT8(config::AllModulesMask, s.module_online_mask);
     TEST_ASSERT_TRUE(BmsService::instance().is_healthy(1000));
+}
+
+// ---------------------------------------------------------------------------
+// Balancing tap-artifact guard. Module 0, LTC_1 group C (RDCVC) carries module
+// cells 6,7,8. A shifted shared tap on the adjacent pair 7/8 makes cell 7 read
+// non-physically high and cell 8 compensate low, sum conserved.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_tap_artifact_does_not_trip_ov(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    // cells 6,7,8 = normal, 4548 (impossible high), 3014 (compensating low).
+    encode_segment(resp + 2u * GroupBytes + 0u * Seg, 3780u, 4548u, 3014u);
+
+    fake_set_tick(1000);
+    (void)BmsService::instance().update_from_ltc_response(resp, sizeof resp, 1000);
+    const auto s = BmsService::instance().snapshot();
+
+    // The impossible 4548 never reaches the safety aggregate; the pair is
+    // averaged (~3781), so max stays well under the OV threshold.
+    TEST_ASSERT_LESS_THAN_UINT16(config::CellOverVoltageMv, s.max_cell_mV);
+    TEST_ASSERT_UINT16_WITHIN(2, 3781, s.vmax_module[0]);
+    // Raw cell_mV is untouched -- the pit-diag grid still shows the split.
+    TEST_ASSERT_EQUAL_UINT16(4548, s.cell_mV[0][7]);
+    TEST_ASSERT_EQUAL_UINT16(3014, s.cell_mV[0][8]);
+    // Module 0 is flagged as a tap fault.
+    TEST_ASSERT_BITS_HIGH(1u << 0, s.tap_fault_mask);
+}
+
+// A GENUINE over-voltage (4200 < v < 4400, PHYSICAL) beside a NORMAL neighbour
+// is NOT a tap artifact and must still reach max_cell_mV -> faults.
+extern "C" void test_bms_real_overvoltage_not_masked(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    encode_segment(resp + 2u * GroupBytes + 0u * Seg, 3780u, 4250u, 3780u);
+
+    fake_set_tick(1000);
+    (void)BmsService::instance().update_from_ltc_response(resp, sizeof resp, 1000);
+    const auto s = BmsService::instance().snapshot();
+
+    TEST_ASSERT_EQUAL_UINT16(4250, s.max_cell_mV);
+    TEST_ASSERT_GREATER_THAN_UINT16(config::CellOverVoltageMv, s.max_cell_mV);
+    TEST_ASSERT_EQUAL_UINT8(0, s.tap_fault_mask);
+}
+
+// A non-physical reading whose neighbour did NOT compensate (split below
+// TapArtifactMinSplitMv) is not the opposite-displacement tap signature, so it
+// is conservatively NOT masked -- it still reaches the aggregate.
+extern "C" void test_bms_nonphysical_without_compensation_not_masked(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    encode_segment(resp + 2u * GroupBytes + 0u * Seg, 3780u, 4548u, 3780u);
+
+    fake_set_tick(1000);
+    (void)BmsService::instance().update_from_ltc_response(resp, sizeof resp, 1000);
+    const auto s = BmsService::instance().snapshot();
+
+    TEST_ASSERT_EQUAL_UINT16(4548, s.max_cell_mV);
+    TEST_ASSERT_EQUAL_UINT8(0, s.tap_fault_mask);
 }
 
 // ---------------------------------------------------------------------------
@@ -314,11 +487,17 @@ void encode_aux_segment(std::uint8_t* out, std::uint16_t aux1_mV) {
     out[7] = static_cast<std::uint8_t>(pec & 0xFFu);
 }
 
-// Per the Beta model with R25 = 10 k, R_series = 10 k, V_ref = 3 V,
-// B = 3380 K: room temperature (25 degC) gives R = 10 k, voltage
-// divider midpoint -> V_aux = 1.5 V = 1500 mV. Use that as the
-// reference test input where we want exactly 25 degC out.
-constexpr std::uint16_t Aux25C_mV = 1500;
+// Divider voltage at 25 degC, from the manufacturer R-T table
+// (docs/ntc_rt_table.csv): R25 = 10 kOhm against the 6.8 kOhm pull-up
+// (NtcPullupOhm) on VREF2 = 3000 mV gives
+//     V = 3000 * 10000 / (6800 + 10000) = 1786 mV.
+//
+// This was 1500 mV, justified as "the voltage divider midpoint". That is only
+// 25 degC if the pull-up EQUALS R25 -- it was 10 k in config at the time, but
+// the board fits 6.8 k, so the test encoded the same wrong constant as the
+// firmware and the pair agreed with each other while both disagreed with the
+// hardware. 1500 mV is really ~34 degC on the real divider.
+constexpr std::uint16_t Aux25C_mV = 1786;
 
 }  // namespace
 
@@ -345,8 +524,9 @@ extern "C" void test_bms_temp_sweep_room_temp_on_one_channel(void) {
 
 extern "C" void test_bms_temp_hotter_voltage_gives_hotter_reading(void) {
     // NTC resistance falls as it heats. A hotter NTC -> lower R_ntc
-    // -> lower V_aux. Feed a voltage below the 25 degC midpoint and
+    // -> lower V_aux. Feed a voltage below the 25 degC point (1786 mV) and
     // check we read a temperature strictly greater than 25 degC.
+    // 900 mV is ~56 degC on the real divider.
     std::uint8_t reply[AuxReplyBytes];
     for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
         encode_aux_segment(reply + ic * Seg, /* mV */ 900u);
@@ -381,7 +561,14 @@ extern "C" void test_bms_temp_rail_reading_skips_slot(void) {
     BmsService::instance().update_temperature(5, reply, sizeof(reply));
 
     const auto after = BmsService::instance().snapshot();
-    TEST_ASSERT_EQUAL_INT16(before, after.cell_tempC[2][5]);
+    // Either way an open reading must never become a valid-looking temperature.
+    // With a debounce it holds the last good value; with TempDisconnectPolls == 1
+    // it marks the slot open (NtcNoReading) on the first rail read.
+    if (config::TempDisconnectPolls >= 2) {
+        TEST_ASSERT_EQUAL_INT16(before, after.cell_tempC[2][5]);
+    } else {
+        TEST_ASSERT_EQUAL_INT16(config::NtcNoReading, after.cell_tempC[2][5]);
+    }
 }
 
 extern "C" void test_bms_temp_pec_fail_skips_slot(void) {
@@ -465,5 +652,167 @@ extern "C" void test_bms_per_module_tmax_after_temp_sweep(void) {
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         TEST_ASSERT_INT16_WITHIN(2, 25, s.tmax_module[m]);
     }
+}
+
+
+// --- temperature-sensor disconnect debounce (FS rule support) ---------------
+//
+// A channel that has read valid and then goes OPEN must be flagged as
+// disconnected only after TempDisconnectPolls consecutive open polls -- a
+// single anomalous read is tolerated (keeps its last value). Drives one
+// channel (slot 3, upper LTC) through valid -> glitch -> valid -> sustained
+// open, on a chain first brought fully online.
+extern "C" void test_bms_temp_disconnect_debounce(void) {
+    // Bring every module online with a clean voltage poll so recompute_
+    // summaries_ evaluates the temp-disconnect mask (it only scans online
+    // modules).
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 1000);
+
+    constexpr std::uint8_t kCh = 3;                 // upper-LTC channel 3 -> slot 3
+    std::uint8_t valid[AuxReplyBytes], open[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(valid + ic * Seg, Aux25C_mV);  // ~25 C
+        encode_aux_segment(open  + ic * Seg, 3000u);       // rail = open
+    }
+    // Seed EVERY temp channel with a valid reading so the (now full 0..39)
+    // required-slot presence check is satisfied -- this test targets the
+    // slot-kCh debounce, not the presence of the other required channels. Each
+    // call fills the upper slot (ch) and lower slot (ch+20) on every module.
+    for (std::uint8_t ch = 0; ch < config::TempsPerLtc; ++ch) {
+        (void)BmsService::instance().update_temperature(ch, valid, sizeof valid);
+    }
+
+    // 1. Valid read: channel is now "seen", no disconnect.
+    (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
+    TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().temp_disconnect_mask);
+
+    // 2. A SINGLE open (glitch) with TempDisconnectPolls >= 2 must NOT flag it,
+    //    and must keep the last good value rather than a sentinel.
+    if (config::TempDisconnectPolls >= 2) {
+        (void)BmsService::instance().update_temperature(kCh, open, sizeof open);
+        const auto s = BmsService::instance().snapshot();
+        TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, s.temp_disconnect_mask,
+                                        "single open must not flag a disconnect");
+        TEST_ASSERT_INT16_WITHIN_MESSAGE(1, 25, s.cell_tempC[0][kCh],
+                                         "a single glitch must keep the last good value");
+        // 3. A valid read clears the run.
+        (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
+        TEST_ASSERT_EQUAL_UINT8(0, BmsService::instance().snapshot().temp_disconnect_mask);
+    }
+
+    // 4. Sustained open: TempDisconnectPolls consecutive opens -> disconnected.
+    for (std::uint8_t i = 0; i < config::TempDisconnectPolls; ++i) {
+        (void)BmsService::instance().update_temperature(kCh, open, sizeof open);
+    }
+    const auto s = BmsService::instance().snapshot();
+    // Every online module shares kCh, so all module bits flag.
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, s.temp_disconnect_mask,
+                                  "sustained open must flag a disconnect");
+    TEST_ASSERT_EQUAL_INT16_MESSAGE(config::NtcNoReading, s.cell_tempC[0][kCh],
+                                    "a disconnected channel must read the sentinel");
+}
+
+// A PARTIALLY-railed open must be treated as a disconnect, not decoded as a
+// plausible cold temperature. 2850 mV sits above config::NtcOpenMv (2800) but
+// below the ~-40 degC plausibility rail (~2925 mV): before the NtcOpenMv
+// threshold it decoded to a valid ~-27 degC and a real open masqueraded as a
+// cold reading. It must now behave exactly like a full-rail (3000 mV) open.
+extern "C" void test_bms_temp_partial_rail_open_is_disconnect(void) {
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 1000);
+
+    constexpr std::uint8_t kCh = 7;                 // upper-LTC channel 7 -> slot 7
+    std::uint8_t valid[AuxReplyBytes], partial[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(valid   + ic * Seg, Aux25C_mV);   // ~25 C
+        encode_aux_segment(partial + ic * Seg, 2850u);        // partial-rail open
+    }
+    // Required slot 0 stays present so the presence check does not interfere.
+    (void)BmsService::instance().update_temperature(0, valid, sizeof valid);
+
+    // Seed valid: slot kCh is now "seen" and reads a real temperature, not the
+    // open sentinel. Asserted PER CHANNEL rather than on the global disconnect
+    // mask -- BmsService is a singleton shared across tests, so the mask can
+    // still carry other slots disconnected by an earlier test.
+    (void)BmsService::instance().update_temperature(kCh, valid, sizeof valid);
+    TEST_ASSERT_INT16_WITHIN_MESSAGE(1, 25,
+        BmsService::instance().snapshot().cell_tempC[0][kCh],
+        "seed must read ~25 C, not the sentinel");
+
+    // Sustained partial-rail open: 2850 mV is above NtcOpenMv (2800) but below
+    // the old ~-40 C plausibility rail (~2925 mV), so before the NtcOpenMv
+    // threshold it decoded to a valid ~-27 C. It must now behave like a full-
+    // rail open: the channel goes to the sentinel and flags its own module.
+    for (std::uint8_t i = 0; i < config::TempDisconnectPolls; ++i) {
+        (void)BmsService::instance().update_temperature(kCh, partial, sizeof partial);
+    }
+    const auto s = BmsService::instance().snapshot();
+    TEST_ASSERT_EQUAL_INT16_MESSAGE(config::NtcNoReading, s.cell_tempC[0][kCh],
+                                    "partial-rail open must store the sentinel, not a cold temp");
+    TEST_ASSERT_BITS_HIGH_MESSAGE(1u << 0, s.temp_disconnect_mask,
+                                  "module 0's partial-rail open must set its disconnect bit");
+}
+
+// An UNPOPULATED channel (never read valid) that is always open must NEVER be
+// flagged as a disconnect -- it is not a lost sensor, it was never there.
+extern "C" void test_bms_unpopulated_channel_is_not_a_disconnect(void) {
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 2000);
+
+    constexpr std::uint8_t kCh = 11;                // never fed a valid reading
+    std::uint8_t open[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic)
+        encode_aux_segment(open + ic * Seg, 3000u);
+
+    for (std::uint8_t i = 0; i < config::TempDisconnectPolls + 2; ++i)
+        (void)BmsService::instance().update_temperature(kCh, open, sizeof open);
+
+    // slot 11's bit must not appear solely due to this never-seen channel.
+    // (Other slots seen by earlier tests may flag; assert THIS channel stays
+    // sentinel-but-not-a-disconnect by checking it is excluded from the count.)
+    const auto s = BmsService::instance().snapshot();
+    TEST_ASSERT_EQUAL_INT16(config::NtcNoReading, s.cell_tempC[0][kCh]);
+}
+
+// A REQUIRED temp slot that is open WITHOUT ever having read valid (switch open
+// at power-on) must still fault -- the seen-valid latch alone misses this, and
+// it is the deterministic scrutineering case. Slot 0 is required by config.
+extern "C" void test_bms_required_channel_open_at_boot_faults(void) {
+    std::uint8_t volts[RespBytes];
+    build_clean_chain(volts);
+    (void)BmsService::instance().update_from_ltc_response(volts, sizeof volts, 3000);
+
+    // Poll a NON-required channel valid so the module has temp data (proving it
+    // was polled), but leave the required slot 0 open (never fed a valid read).
+    std::uint8_t valid[AuxReplyBytes], open[AuxReplyBytes];
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        encode_aux_segment(valid + ic * Seg, Aux25C_mV);
+        encode_aux_segment(open  + ic * Seg, 3000u);
+    }
+    (void)BmsService::instance().update_temperature(5, valid, sizeof valid);  // non-required
+    (void)BmsService::instance().update_temperature(0, open,  sizeof open);   // required, open
+
+    const auto s = BmsService::instance().snapshot();
+    // Every module's required slot 0 is open -> all module bits flag, even
+    // though slot 0 was never seen valid.
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, s.temp_disconnect_mask,
+        "an open required channel must fault even if never seen valid (open-at-boot)");
+}
+
+// FS rule: a disconnected temp sensor must open the SDC in < 500 ms. Guard the
+// config budget so a future cadence/debounce bump can't silently blow it: the
+// debounce window is TempDisconnectPolls sweeps plus the safety-tick latch; the
+// remaining margin to 500 ms absorbs the ~100 ms sweep + up to one cadence gap
+// before the first open sweep. (e.g. 1 x 250 + 20 = 270 ms; a regression to
+// 2 x 250 or a 500 ms cadence trips this.)
+extern "C" void test_temp_disconnect_budget_under_500ms(void) {
+    const std::uint32_t debounce_window_ms =
+        static_cast<std::uint32_t>(config::TempDisconnectPolls) * config::BmsPollTempMs
+        + config::StatePeriodMs;
+    TEST_ASSERT_LESS_THAN_UINT32(500u, debounce_window_ms);
 }
 

@@ -21,6 +21,76 @@ namespace ams::config {
 
 inline constexpr std::uint16_t CellUnderVoltageMv =  2800;  // under-voltage   -- COMMISSION
 inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
+
+// Cell OPEN-WIRE detection (LTC6811 ADOW). Historically the AMS relied on
+// software cell-mV plausibility for a broken sense wire (docs/BMS_LTC6811.md);
+// this arms the datasheet open-wire check instead, which catches an open that
+// still reads in-range. Runs the two-pass ADOW conversion in BmsPollTask and
+// faults FaultReason::CellOpenWire in ANY state.
+//
+// Disabled by #510 because enabling it on the bench did NOT fault on a real
+// open. ROOT CAUSE FOUND (2026-07-26, bench): adow_cmd() had PUP on bit5 with
+// base 0x0248, i.e. PUP and a fixed opcode bit swapped. The PUP=1 pass was
+// correct by coincidence (0x0368) but PUP=0 emitted 0x0348, which the LTC does
+// not accept -- no second conversion ran and RDCV re-returned the pull-up
+// result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, so the
+// PU-PD delta was identically 0 and the open was undetectable. See ltc6811.hpp.
+//
+// RE-ENABLED now that the encoding is fixed and validated end-to-end on a live
+// chain (the sign-off #510 asked for), twice:
+//   * induced open on M2 c2/c3  -> -4210 mV on the cell above the open
+//   * real M5 reseat fault c7/c8 -> -3979 mV, found by the firmware unprompted
+// Both ~10x the 400 mV threshold, with a healthy pack staying inside
+// -130..+50 mV across all 5 modules and PEC clean -- no false positives.
+//
+// This predicate is the ONLY one that can see an open tap: the shared node
+// floats, so the tap-artifact guard in recompute_summaries_ averages the pair
+// back into range and CellUnderVoltage/CellOverVoltage can never fire on it
+// (measured: a cell reading 2364 mV was presented to the FSM as 3823 mV).
+//
+// KNOWN GAP: only INTERIOR conductors are hardware-validated. The endpoint
+// rules -- C(0) via CELL_PU(1)==0 and C(N) via CELL_PD(N)==0 -- use exact-zero
+// comparisons and are still bench-untested; an endpoint open that reads a few
+// mV instead of a hard 0 would be missed. Tracked as a follow-up.
+inline constexpr bool          CellOpenWireCheck   = true;
+inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
+// ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
+// passes must be PEC-clean on an IC to judge its open-wire state; a single PEC
+// glitch would otherwise skip that IC and slip the CellOpenWire fault to the NEXT
+// poll (+BmsPollVoltMs), pushing detection past 500 ms. Re-running the two-pass
+// scan when any IC was skipped absorbs a transient glitch IN THE SAME poll, so
+// detection stays < 500 ms. 1 retry (2 attempts) keeps the added time bounded
+// (~2 x two ADOW passes) while covering the single-glitch case.
+inline constexpr std::uint8_t  OpenWireRetries     = 1;
+// BENCH DIAGNOSTIC: dump the raw ADOW pull-up / pull-down per-cell readings over
+// pit-diag so the ADOW encoding + conversion timing can be debugged on a real
+// chain (compare PU vs PD on a known open). Runs its own two-pass ADOW scan in
+// BmsPollTask INDEPENDENT of CellOpenWireCheck, so you can debug it while live
+// detection stays off. `true` on the feat/adow-raw-diagnostic branch; keep FALSE
+// on dev/flight -- the code stays compiled (dead-code-eliminated when false, so
+// CI still type-checks it) but emits nothing. Blocks: PU @ AdowDiagPuBaseId, PD
+// @ AdowDiagPdBaseId, same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid.
+inline constexpr bool          AdowRawDiag         = false;
+
+// Implausible-cell bounds for the balancing tap-artifact guard (see
+// recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
+// physically cannot sit outside this window -- a reading beyond it is a
+// MEASUREMENT error, not a true voltage. When two PHYSICALLY-ADJACENT cells
+// straddle a shifted shared tap node (balancing current through a high-R tap),
+// one reads impossibly high and its neighbour compensates low while the
+// tap-immune PAIR SUM stays in the normal window; the guard then feeds the pair
+// AVERAGE to the safety aggregates instead of the impossible individual value.
+// These bounds are deliberately WIDER than CellOver/UnderVoltageMv: a genuine
+// over-/under-voltage (e.g. 4200 < v < 4400) has a NORMAL neighbour (sum runs
+// high, not conserved) and is never masked -- it still faults.
+inline constexpr std::uint16_t CellImplausibleMaxMv = 4400;  // > any charging cell (4.2 V CV limit)
+inline constexpr std::uint16_t CellImplausibleMinMv = 1500;  // < any cell in a connected live pack
+// Minimum intra-pair split (|hi - lo|) for the tap-artifact guard to engage.
+// Series-adjacent cells track closely even in a badly imbalanced pack; a split
+// this large only appears when a shared tap node has shifted. Requiring it (on
+// top of the implausible-cell + conserved-sum tests) means a single-cell glitch
+// beside a NORMAL neighbour is never averaged away -- it faults conservatively.
+inline constexpr std::uint16_t TapArtifactMinSplitMv = 800;
 inline constexpr std::int16_t  CellUnderTempC  =   -10;  // under-temp °C   -- COMMISSION
 inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- COMMISSION
 // Cell TEMPERATURE fault gate. NTC temps are read through the per-LTC ADG731
@@ -35,8 +105,24 @@ inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COM
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
-inline constexpr std::uint32_t BmsStaleMs     = 1000;  // any BMS module silent (1000 ms fault-response window)
+// 1000 -> 350 ms: "stop measuring ANY voltage/temperature" includes a whole
+// module going silent, which must open the SDC in < 500 ms (FS rule). A silent
+// module drops off module_online_mask when its freshness exceeds this, firing
+// BmsModuleOffline (immediate, not debounced). Worst case = 350 ms staleness
+// crossed at the 2nd voltage poll after loss (~400 ms) + a 10 ms safety tick
+// ~= 410 ms. 350 > BmsPollVoltMs (200 ms) so ONE missed poll is tolerated (age
+// 200 <= 350); two consecutive misses (400 ms) trip it. SAFE ONLY with bounded
+// poll jitter -- the temp sweep no longer head-of-line-blocks the voltage poll
+// (see run_temperature_poll's yield-to-PollVDue). COMMISSION: confirm no
+// nuisance trips + the exact margin on the HIL bench before flight.
+inline constexpr std::uint32_t BmsStaleMs     = 350;   // any BMS module silent (< 500 ms fault-response)
 inline constexpr std::uint32_t VcuStaleMs     =  200;  // VCU 0x100 stale
+// Charger heartbeat (0x101) stale window while in Charger mode. The WarioCharger
+// re-sends 0x101 at >= 2 Hz (<= 500 ms period), so 1000 ms tolerates one missed
+// heartbeat before faulting Charge -> Error. Charging is not a 10 ms-critical
+// response, so this avoids false trips on a single dropped frame. Matches
+// ChargeReqFreshMs. See safety_predicates FaultReason::ChargerStale.
+inline constexpr std::uint32_t ChargerStaleMs =  1000; // charger 0x101 stale (Charger mode only)
 // At the moment Start->Precharge fires (TSMS+DASH_CHG asserted), the
 // FSM checks "have we heard a VCU 0x100 frame in the last VcuFreshMs?"
 // to decide whether the pack is in the car (Run target) or at the
@@ -95,7 +181,12 @@ inline constexpr std::uint32_t SafetyBootGraceMs = 2000;
 // the ~300 ms confirmation is well within their response budget. Only
 // the cell V/T branches are debounced -- force-error, BMS offline/stale,
 // current-over-limit, and VCU-stale still latch on the first tick.
-inline constexpr std::uint16_t CellFaultConfirmTicks = 30;  // ~300 ms
+// 30 -> 25 (~300 -> ~250 ms): with BmsPollVoltMs = 200, an out-of-range cell
+// open faults in <= 200 ms (next poll) + 250 ms (confirm) + 10 ms tick ~= 460 ms
+// -- inside the < 500 ms open-detection budget -- while the confirm still spans
+// MORE than one 200 ms poll cycle, so a single anomalous poll can't latch. (An
+// open that reads plausibly IN-range is caught only by ADOW, config::CellOpenWireCheck.)
+inline constexpr std::uint16_t CellFaultConfirmTicks = 25;  // ~250 ms
 
 // BmsStale confirmation debounce. BmsStale (a BMS module silent past
 // BmsStaleMs) is a timeout, but it currently latches ERROR on the FIRST
@@ -103,19 +194,33 @@ inline constexpr std::uint16_t CellFaultConfirmTicks = 30;  // ~300 ms
 // evaluations (x SafetyPeriodMs = 10 ms) first, so a far module that flickers
 // just past the window under a brief EMI burst and then reports on its next
 // voltage poll (<= 250 ms later) does not spuriously open the contactors.
-// SAFETY TRADEOFF -- COMMISSION: this ADDS up to BmsStaleConfirmTicks x 10 ms
-// to the detection of a GENUINELY lost module (25 -> 1500 ms window + 250 ms
-// confirm = 1750 ms worst case). Sized to span one 250 ms voltage-poll cycle so
-// a recovering module gets exactly one more chance. Sustained loss (a dead
-// chain through a whole torque event) still latches -- the confirm only delays
-// it, it does not prevent it. Set to 0 to restore first-tick latching.
+// NOTE: this debounce is now a SECONDARY path. A genuinely lost module is caught
+// FASTER by BmsModuleOffline: it drops off module_online_mask the moment its
+// freshness exceeds BmsStaleMs (350 ms) at a voltage poll, and that predicate is
+// immediate (not debounced) -- ~410 ms worst case, < 500 ms. This per-module
+// BmsStale confirm only gates the freshness-loop predicate, which BmsModuleOffline
+// pre-empts, so it does not add to the module-loss detection budget. 25 x 10 ms
+// = 250 ms still spans more than one 200 ms voltage poll, so a module that
+// flickers just past the window and reports on its next poll is not spuriously
+// latched. Set to 0 to restore first-tick latching.
 inline constexpr std::uint16_t BmsStaleConfirmTicks = 25;  // ~250 ms  COMMISSION
 
 inline constexpr std::uint32_t StatePeriodMs     =  20;
 inline constexpr std::uint32_t CurrentPeriodMs   =  50;
 inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
-inline constexpr std::uint32_t BmsPollVoltMs     = 250;
-inline constexpr std::uint32_t BmsPollTempMs     = 500;
+// 250 -> 200 ms: an out-of-range cell open must fault in < 500 ms (FS rule).
+// The range check needs one poll to observe the open + a confirm debounce that
+// spans > one poll for glitch immunity; at 250 ms that floored detection at
+// ~500 ms. 200 ms poll + CellFaultConfirmTicks (~250 ms) = ~460 ms worst case.
+// Minor knock-on: balance updates run ~1.25 Hz (BalanceUpdatePolls x 200 ms) and
+// LogSamplePeriodMs (250) no longer exactly matches a poll -- both non-safety.
+inline constexpr std::uint32_t BmsPollVoltMs     = 200;
+// 500 -> 250 ms: a disconnected temp sensor must fault in < 500 ms (FS rule).
+// With TempDisconnectPolls = 1 the worst-case detect is one sweep cadence +
+// the ~100 ms sweep + a 10 ms safety tick ~= 360 ms. Runs the mux sweep every
+// 250 ms alongside the 200 ms BmsPollVoltMs voltage poll on BmsPollTask --
+// confirm the task keeps up (sweep ~100 ms) on the HIL bench.
+inline constexpr std::uint32_t BmsPollTempMs     = 250;
 inline constexpr std::uint32_t TelemetryPeriodMs = 500;
 inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor snapshot (always-on)
 
@@ -149,13 +254,29 @@ inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
 
 // Seal (rotate) the active file once it reaches this size. Bounded, rotated
 // files make #406 listing / CRC / resume / "only new logs" tractable.
-inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~4 min/file at full per-cell rows)
+// Size cap per file. A real 314-column row is ~1.35 kB (76 B of scalars +
+// 95 cells + 200 temps), so at 4 Hz the card takes ~5.3 KiB/s and 4 MiB is
+// ~13 MINUTES of logging -- not the ~4 min this comment used to claim.
+inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~13 min/file at full per-cell rows)
+
+// Time cap per file. Without this, a file is only sealed to .CSV on the size
+// cap, so any run shorter than ~13 min leaves a .TMP that no tool treats as a
+// finished log (the #406 extractor lists sealed files only). Rotating on time
+// as well means an ordinary bench or test session produces real .CSV files
+// while it runs, instead of one perpetual .TMP.
+//
+// 5 min ~= 1.6 MB per file: short enough that little is at risk if power is
+// cut mid-file, long enough not to litter the card.
+inline constexpr std::uint32_t LogFileMaxMs      = 5u * 60u * 1000u;    // 5 min
 
 // 8.3 names (LFN off in ffconf.h; no RTC wall-clock -- #406/#407). The active
 // file is written as ".TMP" and renamed to ".CSV" on seal, so the extractor
 // only ever sees finished logs. Index is a rotation counter, not a timestamp.
 inline constexpr char          LogActiveNameFmt[] = "LOG%04lu.TMP";
 inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
+// CRC-32 sidecar written beside a sealed CSV (#406): 8 ASCII hex digits.
+// Kept out of the CSV itself so the log stays directly spreadsheet-openable.
+inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
@@ -224,6 +345,20 @@ inline constexpr std::uint32_t BalanceOverrideFreshMs = 5000;   // fall back to 
 // seen command through the freshness dead-man into one of these (stale/never
 // -> Off); balance::compute_mask consumes it.
 enum class BalanceCmd : std::uint8_t { Off = 0, Auto = 1, On = 2 };
+
+// 0x104 Operator_balance_modules -- PER-MODULE balancing enable, layered UNDER
+// the 0x103 master switch. magic "BALM" (bytes 0..3) + byte 4 = 5-bit enable
+// mask (bit m == 1 -> module m may balance). Re-send ~2 Hz. Dead-man: when the
+// frame is stale (> BalanceModulesFreshMs) OR was never seen, EVERY module is
+// enabled (BalanceModulesDefaultMask) -- so the pack behaves as before (global
+// OFF/ON/AUTO only), and the 0x103 dead-man remains the safety net that stops
+// balancing on a dead link. Only ever narrows which modules balance; never an
+// AIR / safety path.
+inline constexpr std::uint32_t BalanceModulesReqId   = 0x104u;  // standard; operator -> AMS
+inline constexpr std::uint8_t  BalanceModulesReqDlc  = 5u;
+inline constexpr std::uint8_t  BalanceModulesMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x4Du };  // "BALM"
+inline constexpr std::uint32_t BalanceModulesFreshMs = 5000;    // stale -> all modules enabled
+inline constexpr std::uint8_t  BalanceModulesDefaultMask = AllModulesMask;  // 0x1F, all enabled
 
 // ACU TX (FDCAN1) -- the ECU's FDCAN2 peripheral is wired to AMS
 // FDCAN1, so the ECU sees these frames and forwards them to real-time
@@ -298,6 +433,11 @@ inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
 inline constexpr std::uint32_t PitDiagCmdRxId            = 0x7F0u;
 inline constexpr std::uint32_t PitDiagAckTxId            = 0x7F1u;
 inline constexpr std::uint32_t PitDiagCellBaseId         = 0x680u;
+// Raw-ADOW diagnostic blocks (config::AdowRawDiag only). 0x6D0..0x6FF is free
+// (after the 0x6C0..0x6CA status block). PU = 0x6D0..0x6E7, PD = 0x6E8..0x6FF;
+// each 24 frames of 4 cells (BE u16 mV), 0xFFFF = PEC-skipped this scan.
+inline constexpr std::uint32_t AdowDiagPuBaseId          = 0x6D0u;
+inline constexpr std::uint32_t AdowDiagPdBaseId          = 0x6E8u;   // = 0x6D0 + 24
 inline constexpr std::uint32_t PitDiagTempBaseId         = 0x6A0u;
 inline constexpr std::uint32_t PitDiagFsmStatusId        = 0x6C0u;
 inline constexpr std::uint32_t PitDiagTimingId           = 0x6C1u;
@@ -455,8 +595,126 @@ inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-
 // accumulator box.
 inline constexpr std::uint16_t BalanceDeltaMv     = 50;    // mV above min to start balancing
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
-inline constexpr std::uint8_t  BalanceMaxActive   = 4;     // cells per module discharging at once
+// Simultaneous dischargers per module. This is a BOARD DISSIPATION limit, not
+// a policy one -- compute_mask is stateless and re-picks the top-N by excess
+// every second, so every imbalanced cell is bled either way. Raising this makes
+// balancing proportionally FASTER; it does not unlock cells that were stuck.
+//
+// BMS_LITE per-cell bleed path (schematic, per-cell sheet): external TSM2323
+// PMOS switching R71 || R72 = 47R || 47R = 23.5 R, both 2512.
+//
+//   cell V   current   W per cell   W per 2512 (2 W part)
+//   4.2 V    179 mA    0.75 W       0.37 W   (~19 % of rating)
+//   4.0 V    170 mA    0.68 W       0.34 W
+//   3.7 V    157 mA    0.58 W       0.29 W
+//
+// Board / pack totals at 4.2 V (worst case):
+//
+//   MaxActive    per module    all 5 modules
+//        4        3.0 W          15 W        (previous)
+//        8        6.0 W          30 W        <-- here
+//       19       14.3 W          71 W        (all cells; not attempted)
+//
+// The resistors are the comfortable part -- they are 2 W devices running at
+// ~0.37 W, under a fifth of rating. The constraint is heat OUT OF THE
+// ACCUMULATOR BOX, and that is unchanged by the part rating: 8 simultaneous
+// dischargers is 6.0 W per module and 30 W across the pack however good the
+// resistors are.
+//
+// COMMISSION: still not measured. Watch cell/board temperature on a bench run
+// at this setting before trusting it in a sealed box, and note that the
+// BalanceTempMax lockout that would catch an overheating board reads the same
+// unvalidated NTC path (see BalanceTempsTrusted).
+inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module discharging at once
+
+// Never discharge two PHYSICALLY ADJACENT cells at once, so the 2512 balance
+// resistors never form a hot cluster on the board. Adjacency is derived from
+// the BMS_LITE layout in balance::physically_adjacent (consecutive index within
+// an LTC half). Measured pad temperature is ~71 C at 8/module concentrated;
+// spreading keeps neighbours cold over the multi-hour C/101 balancing session.
+//
+// May reduce the active count below BalanceMaxActive when imbalanced cells
+// cluster -- that is the intended, safe outcome (less heat, skipped cells bleed
+// on later cycles). The index->board-position map is BENCH-VERIFIED (2026-07-22,
+// IR on the real pack -- see physically_adjacent).
+inline constexpr bool          BalanceSpreadNoAdjacent = true;
+
+// Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
+//
+// Deliberately separate from TempFaultsTrusted, which arms the FSM cell-temp
+// FAULTS. The two ask different questions:
+//
+//   TempFaultsTrusted   -- "do we trust these temps enough to OPEN THE
+//                          CONTACTORS on them?"  Answer: not yet. A misread
+//                          from the unvalidated ADG731 mux path would trip the
+//                          car for no reason, so the faults stay disarmed.
+//   BalanceTempsTrusted -- "do we trust these temps enough to let balancing
+//                          run?"  Balancing's only thermal protection is the
+//                          BalanceTempMax lockout, which reads the same path.
+//
+// Coupling them meant the WarioCharger balance toggle (0x103) was accepted and
+// then produced an all-zero mask forever -- balancing could never run, in any
+// FSM state, on any image. Splitting them lets the operator switch work while
+// temp FAULTS stay disarmed.
+//
+// ---------------------------------------------------------------------------
+// RESIDUAL RISK -- read before changing this to true on a car.
+// ---------------------------------------------------------------------------
+// With this true and TempFaultsTrusted false, passive balancing dissipates into
+// the cells while its ONLY thermal guard reads a path we have not validated.
+// Unpopulated NTC slots read a plausible-looking ~25 C, so a genuinely hot cell
+// whose sensor is mis-routed by the mux would NOT raise max_tempC and would NOT
+// trip the lockout. The mitigations are: the 5 s operator dead-man
+// (BalanceOverrideFreshMs) bounds an unattended run, only BalanceMaxActive
+// cells per module bleed at once, and only cells >BalanceDeltaMv above the pack
+// minimum are selected at all.
+//
+// Balance with cell temperatures observed by some other means until the ADG731
+// mux path is validated end-to-end and TempFaultsTrusted itself goes true --
+// at which point this flag becomes redundant and should be deleted.
+inline constexpr bool          BalanceTempsTrusted = true;   // COMMISSION -- see residual risk above
 inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollVoltMs = 250 ms
+
+// Settle time after clearing the DCC bits and before starting a cell-voltage
+// conversion, so no bleed current is flowing while the cells are measured.
+//
+// WHY THIS EXISTS -- the ADCV DCP=0 bit is not sufficient on this board.
+// DCP=0 does make the LTC6811 suspend its own S-pin switch for the conversion,
+// but BMS_LITE does not bleed through that switch: each cell drives an EXTERNAL
+// TSM2323 PMOS whose gate sits behind R167 (10k) / C32 (10n), tau ~100 us. The
+// conversion starts immediately on ADCV, and the first channels convert in a
+// few hundred microseconds -- the same order as the gate turn-off -- so the
+// earliest cells can be sampled while current is still flowing.
+//
+// WHY IT MATTERS: the bleed current does not return through the sense path on
+// the board (on-board sensing is close to Kelvin), it returns through the
+// harness. 179 mA across a plausible 50-200 mOhm of tap/connector/fuse
+// impedance is 9-36 mV, and it has OPPOSITE SIGN on the bled cell (reads low)
+// and its neighbours (read HIGH, because the shared tap node moves). Against
+// BalanceDeltaMv = 50 mV that is a first-order corruption of the very signal
+// balancing selects on -- observed on the bench as neighbouring cells reading
+// high whenever balancing is active.
+//
+// 2 ms is ~20x the gate RC and covers the LTC input-filter settle, at a cost of
+// under 1 % of balancing duty. Cheap insurance on a C/101 balancer where a
+// wrong selection wastes hours.
+inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
+
+// FDCAN1 TX FIFO slots kept free for the flight telemetry matrix while a LOGFS
+// reply is being shipped (#449).
+//
+// A pull is a MULTI-MINUTE operation. pump_diag_tx() used to fill the 16-deep
+// FIFO to zero free slots, and it runs before the telemetry scheduler in the
+// same loop pass -- so for the whole transfer the flight matrix found no slots
+// and send_or_fail dropped pack currents / voltages / temps SILENTLY (the only
+// evidence being g_acu_tx_fail, which is itself best-effort). Diag also wins
+// arbitration: 0x011/0x012 out-prioritise every AMS telemetry ID.
+//
+// It fails safe -- a dropped ok_precharge means no R2D, never a spurious one --
+// but an invisible telemetry blackout is a debugging trap. Reserving 6 of 16
+// still lets diag move ~10 frames per 1 ms pass, far more than the ~1 frame per
+// pass the transfer actually needs.
+inline constexpr std::uint8_t  DiagTxReservedSlots = 6;
 
 // LTC6811 ADCV / ADAX mode + settling budget. Mode 2 ("Normal",
 // 7 Hz first stage) is the canonical choice for race-pack
@@ -555,11 +813,15 @@ enum class LastFault : std::uint8_t {
 // flash time that the app it's writing matches the BL it's talking
 // to. Changing this requires re-building both halves.
 //
-// 2026-05-18: BL team adopted node ID 0x01 on MLC1 (matches the value
-// already in NVM from factory). This flip aligns the firmware-side
-// firmware_info.reserved[0] with the BL it now talks to. Confirmed
-// by IFS08_HIL#30 turning A-002/A-003 green.
-inline constexpr std::uint32_t AmsNodeId = 0x01u;
+// 2026-05-18: originally 0x01 (MLC1 single-node bring-up; factory NVM),
+// confirmed by IFS08_HIL#30 turning A-002/A-003 green.
+// #403: the shared-bus role map (can-flasher provision) is ECU=1,
+// AMS=2, uDV=3 -- 0x01 is the ECU's slot, so on a shared bus the AMS
+// collided with the ECU. The AMS moves to 0x02. The flight board's BL
+// MUST be re-provisioned to node 2 (-DBL_NODE_ID=2 and/or NVM provision)
+// before flashing this firmware -- both halves change together. Bench
+// (feat/bms-stub-charge) already runs at 0x02.
+inline constexpr std::uint32_t AmsNodeId = 0x02u;
 
 // Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
 // ORIGIN and the bootloader's BL_APP_BASE.
@@ -608,28 +870,126 @@ inline constexpr std::uint8_t Adg731ChannelMap[TempsPerLtc] = {
 // 100-uV units). Thermistor resistance is recovered from the
 // observed AUX voltage:
 //
-//   R_ntc = NtcSeriesR * V_aux / (NtcVrefMv - V_aux)
+//   R_ntc = NtcPullupOhm * V_aux / (NtcVrefMv - V_aux)
 //
-// Temperature is then derived via the Beta model:
+// Temperature then comes from the manufacturer R-T table
+// (Core/Inc/app/ntc_table.hpp, generated from docs/ntc_rt_table.csv), NOT a
+// single-beta Steinhart fit.
 //
-//   1/T = 1/T0 + (1/B) * ln(R_ntc / R0)
+// NTC divider + part. Conversion is a TABLE lookup (ntc_table.hpp), not a
+// single-beta Steinhart fit -- see that header for why.
 //
-// with T0 = 298.15 K (25 degC), R0 = NtcR25.
+// NtcPullupOhm was NtcSeriesR = 10000, which was wrong: the divider pull-up on
+// BMS_LITE is R145 / R170 = 6.8 kOhm. Combined with a beta borrowed from a
+// different part (3380 vs the fitted 3950) the two errors partially cancelled
+// and the whole path read ~7 degC COLD at 50 degC. Renamed as well as
+// corrected so a stale "series resistor" mental model cannot survive the fix.
+inline constexpr std::uint32_t NtcPullupOhm = 6800;   // R145 / R170 pull-up to VREF2
+inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2 nominal
+
+// Open-circuit detection threshold, in AUX millivolts.
 //
-// Placeholder values match the BMS_LITE BOM (Murata NCP15XH103J,
-// B = 3380 K, R25 = 10 Ohm, series resistor 10 Ohm). Real bench
-// calibration during BMS_LITE bring-up may shift these slightly --
-// procedure in docs/COMMISSIONING.md §3.
-inline constexpr std::uint32_t NtcBeta      = 3380;   // K
-inline constexpr std::uint32_t NtcR25       = 10000;  // Ohm
-inline constexpr std::uint32_t NtcSeriesR   = 10000;  // Ohm
-inline constexpr std::uint16_t NtcVrefMv    = 3000;   // LTC6811 VREF2
-inline constexpr float         NtcT0Kelvin  = 298.15f;
+// A disconnected NTC leaves the divider node pulled up through NtcPullupOhm
+// toward VREF2. Ideally it rails to ~3.0 V, but a partially-railed open -- mux
+// leakage, a long or damp sense harness, or a high-impedance fault -- can settle
+// a few hundred millivolts below the rail (~2.7-2.95 V observed). Read literally
+// that decodes to a very cold BUT in-range temperature (2.9 V ~= -35 degC), so a
+// bare `>= NtcVrefMv` open test lets a real disconnect masquerade as a plausible
+// cold reading and slip past the presence check.
+//
+// So treat anything at or above NtcOpenMv as OPEN rather than cold. 2800 mV maps
+// to ~-20 degC on the 6.8 k / VREF2 divider -- colder than any operating cell
+// (and well below the ~-10 degC a cold-soaked pack could see), leaving >=140 mV
+// margin so a genuinely cold NTC never trips it while a floating node reliably
+// does. Must stay below NtcVrefMv (keeps the divider denominator positive in
+// ntc_mV_to_tempC). See ntc_mV_to_tempC.
+inline constexpr std::uint16_t NtcOpenMv    = 2800;   // >= this AUX mV => open, not cold
+static_assert(NtcOpenMv < NtcVrefMv, "open threshold must sit below VREF2");
 
 // Plausibility window for accepted NTC readings. Anything outside
 // this range is dropped (slot left at its previous value) so an
 // unpopulated mux channel can't drive max_tempC into orbit and trip
 // safety::ForceError on a clean pack.
+// Sentinel stored in cell_tempC for a channel that has never produced a valid
+// reading -- unpopulated mux input, open/shorted NTC, or a PEC-failed poll.
+//
+// This used to be a seeded 25 degC, which is the single most dangerous value it
+// could have been: unpopulated channels read as comfortably room temperature,
+// so max_tempC looked healthy no matter what the pack was doing, and every
+// threshold built on it was defeated regardless of how accurate the conversion
+// was. A sentinel makes "no data" distinguishable from "cool".
+inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
+
+// Temperature-sensor DISCONNECT fault (FS rule: a disconnected temp sensor must
+// open the SDC). A sensor that has read valid at least once and then reads OPEN
+// (rail voltage -> NtcNoReading) for TempDisconnectPolls consecutive temp polls
+// is treated as disconnected and latches ERROR, exactly like a missing module
+// faults on the voltage side.
+//
+// This does NOT depend on temperature ACCURACY -- an open NTC reads the rail
+// regardless of the beta/pull-up calibration -- so it is armed independently of
+// TempFaultsTrusted (which gates the range over/under-temp faults).
+//
+// Detect on the FIRST open poll (was 2): the FS rule requires a disconnected
+// temp sensor to open the SDC in < 500 ms, and 2 x BmsPollTempMs was ~1 s.
+// 1 x 250 ms + the ~100 ms sweep + a 10 ms safety tick ~= 360 ms, comfortably
+// inside 500 ms. TRADE-OFF: this drops the single-anomalous-read debounce, so a
+// one-off mux glitch that reads >= NtcOpenMv could nuisance-latch ERROR. That
+// is mitigated -- but not eliminated -- by the #482 mux first-select warm-up and
+// the NtcOpenMv (2800 mV) / plausibility gate that reject the known transients.
+// COMMISSION: watch for spurious TempSensorDisconnected trips on the HIL bench;
+// if a genuine glitch source appears, raise BmsPollTempMs headroom + reinstate a
+// 2-poll debounce that still fits < 500 ms rather than widening the window.
+inline constexpr bool         TempSensorPresenceCheck = true;
+inline constexpr std::uint8_t TempDisconnectPolls     = 1;
+
+// REQUIRED temperature channels: cell-temp slots that MUST be present in every
+// online module. A required slot reading OPEN faults immediately -- WITHOUT the
+// "seen valid once" latch -- so a sensor whose switch is already open at power-on
+// (or after a reset that cleared the seen-valid state) is still caught. This is
+// what makes the disconnect deterministic for scrutineering, where an
+// open-at-boot channel is otherwise indistinguishable from an unpopulated one.
+//
+// Slot numbering: the ADG731 sweep stores LTC_1 (upper) temps in slots 0..19 and
+// LTC_2 (lower) in 20..39. "Temperature 1 of LTC_1" = slot 0. The scrutineering
+// demo switches exactly that channel on each module, so slot 0 is required.
+//
+// FULL populated map (all 40 slots) -- verified from the BMS_LITE schematic:
+// LTC_1 mux U4 carries NTC_1..NTC_20 (S1..S10 + S17..S26) -> slots 0..19, and
+// LTC_2 mux U5 carries NTC_21..NTC_40 (same channels) -> slots 20..39. Every
+// slot on both LTCs is populated on all 5 modules, so ANY open cell-temp sensor
+// -- at boot or after -- now opens the SDC, per the FS rule.
+//
+// CONSEQUENCE (COMMISSION / HIL): this enforces all 40 slots on every online
+// module immediately. A genuinely open channel on the flight harness (e.g. the
+// known M3 upper-LTC open) will now correctly LATCH ERROR at boot until it is
+// repaired -- that is the intended behaviour, but it means the harness must be
+// healthy for the pack to arm. Validate on the bench before flight.
+//
+// Slot 0 is safe to require: the ADG731 first-select drop that used to make
+// temp 1 read open on the first sweep is absorbed by the #482 mux warm-up (the
+// throwaway select to unpopulated S32 in BmsPollTask) -- without that warm-up,
+// requiring slot 0 would false-fault every module at boot.
+inline constexpr std::uint8_t RequiredTempSlots[]   = {
+     0,  1,  2,  3,  4,  5,  6,  7,  8,  9,   // LTC_1 NTC_1..NTC_10
+    10, 11, 12, 13, 14, 15, 16, 17, 18, 19,   // LTC_1 NTC_11..NTC_20
+    20, 21, 22, 23, 24, 25, 26, 27, 28, 29,   // LTC_2 NTC_21..NTC_30
+    30, 31, 32, 33, 34, 35, 36, 37, 38, 39,   // LTC_2 NTC_31..NTC_40
+};
+
+// Minimum valid cell-temp channels before balancing may run at all.
+//
+// COMMISSION: deliberately LOW. Its job today is to catch a completely dead
+// temperature path, not to guarantee coverage -- and setting it above the
+// number of channels actually populated would silently disable balancing,
+// which is the exact failure mode this whole area keeps producing. The board
+// has up to 200 channels (5 modules x 40) but how many are fitted is unknown
+// and the LTC_2 half may not be wired at all.
+//
+// RAISE THIS to the measured populated count once a bench sweep establishes it
+// (M1). BmsState::valid_temp_channels is what to read.
+inline constexpr std::uint16_t BalanceMinValidTempCh = 5;
+
 inline constexpr std::int16_t NtcMinValidC = -40;
 inline constexpr std::int16_t NtcMaxValidC = 150;
 

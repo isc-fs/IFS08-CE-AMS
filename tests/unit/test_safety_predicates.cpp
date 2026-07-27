@@ -48,6 +48,7 @@ ams::safety::Inputs make_nominal(ams::BmsState& bms,
     return { bms, cur, veh,
              /*force_error_set=*/false,
              /*vcu_required=*/true,   // Car-mode nominal (VCU required)
+             /*charger_required=*/false,  // not Charger mode
              now };
 }
 
@@ -158,6 +159,7 @@ extern "C" void test_predicates_boot_grace_suppresses_data_predicates(void) {
         bms, cur, veh,
         /*force_error_set=*/false,
         /*vcu_required=*/true,
+        /*charger_required=*/false,
         /*now_tick=*/500u,  // half a second in -- well inside grace
     };
     TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
@@ -172,6 +174,7 @@ extern "C" void test_predicates_boot_grace_does_not_suppress_force_error(void) {
         bms, cur, veh,
         /*force_error_set=*/true,
         /*vcu_required=*/true,
+        /*charger_required=*/false,
         /*now_tick=*/100u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -188,6 +191,7 @@ extern "C" void test_predicates_after_grace_zero_ticks_faults(void) {
         bms, cur, veh,
         /*force_error_set=*/false,
         /*vcu_required=*/true,
+        /*charger_required=*/false,
         /*now_tick=*/ams::config::SafetyBootGraceMs + 1u,
     };
     TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
@@ -471,4 +475,123 @@ extern "C" void test_predicates_vcu_stale_exempt_when_not_car(void) {
     TEST_ASSERT_EQUAL_UINT8(
         static_cast<std::uint8_t>(ams::safety::FaultReason::VcuStale),
         static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+}
+
+// ---------------------------------------------------------------------------
+// Charger heartbeat (0x101) staleness: mirror of #302 for the charge side.
+// ChargerStale must fire ONLY when committed to Charger mode, so a car / pre-
+// lock window never faults on the (legitimately absent) charger link.
+// ---------------------------------------------------------------------------
+extern "C" void test_predicates_charger_stale_faults_in_charger_mode(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    in.vcu_required     = false;   // Charger mode: VCU absent by definition
+    in.charger_required = true;    // committed to Charger
+    veh.last_charge_req_tick = 10000 - ams::config::ChargerStaleMs - 10;  // stale
+    // WarioCharger unplugged mid-charge -> ChargerStale -> Error.
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(ams::safety::FaultReason::ChargerStale),
+        static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+    // A fresh 0x101 in Charger mode -> no fault.
+    veh.last_charge_req_tick = 10000 - 100;
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+}
+
+extern "C" void test_predicates_charger_stale_exempt_when_not_charger(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    veh.last_charge_req_tick = 10000 - ams::config::ChargerStaleMs - 10;  // stale
+    in.charger_required = false;   // Car / pre-lock Undecided -> charger absent OK
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+}
+
+// --- FSM-driven Error reason attribution (fsm_error_reason) ---------------
+// A TSMS drop while committed to Charger mode is the dedicated ChargerTsmsOpen
+// (15); every other FSM-driven Error (car-mode, or TSMS still held e.g. a
+// precharge timeout) is the generic FsmError (12).
+extern "C" void test_fsm_error_reason_charger_tsms_open(void) {
+    using ams::safety::fsm_error_reason;
+    using ams::safety::FaultReason;
+    TEST_ASSERT_EQUAL_UINT8(
+        static_cast<std::uint8_t>(FaultReason::ChargerTsmsOpen),
+        fsm_error_reason(/*charger_mode=*/true, /*tsms=*/false));
+    // Charger mode but TSMS still held (e.g. precharge timeout) -> FsmError.
+    TEST_ASSERT_EQUAL_UINT8(12u, fsm_error_reason(true,  true));
+    // Car mode -> always FsmError, regardless of TSMS.
+    TEST_ASSERT_EQUAL_UINT8(12u, fsm_error_reason(false, false));
+    TEST_ASSERT_EQUAL_UINT8(12u, fsm_error_reason(false, true));
+}
+
+// --- temperature-sensor disconnect (FS rule: open SDC on a lost temp sensor) --
+
+// A disconnected temp sensor (module bit set in temp_disconnect_mask) faults
+// with the dedicated reason, carrying the offending-module mask as detail.
+extern "C" void test_predicates_temp_sensor_disconnected(void) {
+    ams::BmsState     bms;
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.temp_disconnect_mask = 0x08;   // module 3's required sensor is open
+
+    const auto r = ams::safety::evaluate_fault_detail(in);
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::safety::FaultReason::TempSensorDisconnected),
+                            static_cast<std::uint8_t>(r.reason));
+    TEST_ASSERT_EQUAL_UINT8(0x08, r.detail);
+    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+}
+
+// It is a PRESENCE fault, not a range fault: an open NTC reads the rail
+// regardless of calibration, so it must fire even though TempFaultsTrusted is
+// false (which gates the over/under-temp RANGE faults).
+extern "C" void test_predicates_temp_disconnect_independent_of_temp_trust(void) {
+    // config::TempFaultsTrusted is false on dev; the range faults are suppressed
+    // but the disconnect fault must still trip.
+    ams::BmsState     bms;
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.max_tempC = 200;              // absurd range value -- range fault suppressed
+    bms.temp_disconnect_mask = 0x01;
+    TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+    TEST_ASSERT_EQUAL_UINT8(static_cast<std::uint8_t>(ams::safety::FaultReason::TempSensorDisconnected),
+                            static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+}
+
+// No disconnect -> no temp fault (a healthy mask of 0 must not trip).
+extern "C" void test_predicates_no_disconnect_no_fault(void) {
+    ams::BmsState     bms;
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.temp_disconnect_mask = 0x00;
+    TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+}
+
+// Cell open-wire: the predicate is armed only by config::CellOpenWireCheck,
+// which is OFF on dev until the ADOW path is HIL-validated -- so a set
+// cell_open_mask must be ignored today. Written to track the flag so it asserts
+// the fault fires the moment the flag flips on. The detection algorithm itself
+// is covered in test_open_wire.cpp.
+extern "C" void test_predicates_cell_open_wire_follows_flag(void) {
+    ams::BmsState     bms{};
+    ams::CurrentState cur;
+    ams::VehicleState veh;
+    auto in = make_nominal(bms, cur, veh, 10000);
+    bms.cell_open_mask = 0x04;   // module 2 reports an open cell-sense wire
+    if (ams::config::CellOpenWireCheck) {
+        TEST_ASSERT_TRUE(ams::safety::evaluate_fault(in));
+        TEST_ASSERT_EQUAL_UINT8(
+            static_cast<std::uint8_t>(ams::safety::FaultReason::CellOpenWire),
+            static_cast<std::uint8_t>(ams::safety::evaluate_fault_detail(in).reason));
+    } else {
+        TEST_ASSERT_FALSE(ams::safety::evaluate_fault(in));
+    }
+}
+
+// The disconnect fault outranks a cell over-voltage in the same snapshot: a
+// lost sensor is at least as urgent, and it latches immediately (already
+// debounced at the poll level), not through the cell-range debounce.
+extern "C" void test_predicates_disconnect_is_immediate_not_range_debounced(void) {
+    TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(
+        ams::safety::FaultReason::TempSensorDisconnected));
 }

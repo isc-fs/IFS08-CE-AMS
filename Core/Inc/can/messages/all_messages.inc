@@ -48,5 +48,6 @@
 #include "rx_vcu_dc_bus.def"
 #include "rx_operator_charge_request.def"
 #include "rx_operator_balance_override.def"
+#include "rx_operator_balance_modules.def"
 #include "rx_pitdiag_cmd.def"
 #include "rx_bl_boot_trigger.def"

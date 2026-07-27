@@ -78,6 +78,22 @@ extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
 // pit-diag stream can surface it.
 extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
 
+// Times the voltage poll cleared the DCC bits before measuring (#balance
+// measurement integrity). Climbs at the poll rate whenever balancing is
+// actually discharging, and stays flat when it is not -- so the bench can
+// confirm from CAN alone that the quiesce is running.
+extern "C" volatile std::uint32_t g_balance_quiesce_count = 0;
+
+// BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW pull-up / pull-down per-cell
+// readings (flat 95 = 5 modules x 19 cells), dumped over pit-diag so the ADOW
+// encoding/timing can be debugged on a real chain. Single-writer (BmsPollTask);
+// AcuCanTask reads for the emit. Plain (non-volatile) -- a torn 16-bit read is
+// harmless for a diagnostic. Populated only when AdowRawDiag is on (else stays 0).
+extern "C" std::uint16_t g_adow_diag_pu[ams::config::BmsModuleCount *
+                                        ams::config::CellsPerModule] = {};
+extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
+                                        ams::config::CellsPerModule] = {};
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -85,6 +101,14 @@ namespace {
 volatile std::uint32_t g_balance_cycles_total  = 0;
 volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
+
+// Last CFGA payload actually written to the chain, and whether it asserted any
+// DCC bit. The mask is only recomputed every BalanceUpdatePolls (1 Hz) but
+// PERSISTS on the chain between writes, so quiescing for a measurement has to
+// put it back afterwards -- otherwise clearing it every 250 ms poll would
+// destroy three quarters of the balancing duty.
+std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
+bool         s_balance_active = false;
 
 // ---------------------------------------------------------------------------
 // Chain-sleep recovery.
@@ -125,6 +149,11 @@ void recover_chain() noexcept {
 
     auto& bus = ltc6820::Bus::default_instance();
     bus.wakeup();
+
+    // The chain slept, so CFGR is back at defaults and nothing is discharging.
+    // Drop the balance cache: restoring a pre-sleep mask would re-assert bits
+    // the controller has not re-derived since. The next 1 Hz update recomputes.
+    s_balance_active = false;
 
     const auto   cfg = ltc6811::pack_cfga_payload(/*dcc_bits=*/0u);
     std::uint8_t per_ic[config::LtcChainLength][6];
@@ -230,6 +259,134 @@ VoltAttempt attempt_voltage_poll() {
     return { any_fresh, clean };
 }
 
+// Turn every discharge FET off and wait for it to actually happen, so the
+// cell-voltage conversion is not corrupted by bleed current in the harness.
+// See config::BalanceQuiesceMs for why ADCV's DCP=0 alone is not enough here.
+//
+// Returns true if it quiesced (and therefore owes a restore). A no-op when
+// nothing is balancing, which is the common case outside Charge.
+bool quiesce_balancing() noexcept {
+    using namespace ams;
+    if (!s_balance_active) return false;
+
+    std::uint8_t zeros[config::LtcChainLength][6];
+    const auto   off = ltc6811::pack_cfga_payload(0u);
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) zeros[i][k] = off[k];
+    }
+
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, zeros)) {
+        // Could not prove discharge is off. Measure anyway -- stale cell data
+        // starves the safety predicates, which is worse than a noisy read --
+        // but do not claim a restore is owed, and count the error.
+        ++g_ltc_spi_err_count;
+        return false;
+    }
+    ++g_balance_quiesce_count;
+    osDelay(config::BalanceQuiesceMs);
+    return true;
+}
+
+// Put the balancing mask back after a measurement.
+void restore_balancing() noexcept {
+    using namespace ams;
+    if (!ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, s_last_cfga)) {
+        // Balancing stays off until the next 1 Hz update rewrites it. Harmless:
+        // the policy is stateless, so it simply resumes next cycle.
+        ++g_ltc_spi_err_count;
+        s_balance_active = false;
+    }
+}
+
+// One ADOW conversion pass (open-wire). Mirrors attempt_voltage_poll's ADCV ->
+// RDCV shape but issues ADOW with the given PUP, TWICE, so the pull-up/down
+// current settles before the read (datasheet "Open Wire Check"; the cell-domain
+// twin of the #482 mux first-select warm-up). Fills `reply` (4*GroupBytes) with
+// RDCVA..D. Returns false on any bus error. UNVALIDATED ON HARDWARE (bench down)
+// -- the ADOW encoding + timing need a real-chain check (see open_wire.hpp).
+bool adow_pass(ams::ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexcept {
+    using namespace ams;
+    constexpr std::size_t SegBytes   = 8;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * SegBytes;
+
+    // Two ADOW conversions: the first settles the PUP current, the second is the
+    // one whose result the RDCV* reads pick up.
+    for (std::uint8_t n = 0; n < 2; ++n) {
+        const auto adow = ltc6811::pack_command(
+            ltc6811::adow_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
+                              pull_up, /*discharge_permit=*/false,
+                              ltc6811::CellSel::All));
+        if (!bus.send_command(adow.data())) { ++g_ltc_spi_err_count; return false; }
+        osDelay(config::AdcvSettleMs);
+    }
+
+    // RDCV warm-up (#214): no-op RDCFGA burns the stale-MOSI sample so the
+    // back-to-back RDCV* reads keep bit-sync.
+    const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
+    std::uint8_t warmup[8 * config::LtcChainLength];
+    if (!bus.read_register_group(rdcfga.data(), warmup, sizeof warmup)) {
+        ++g_ltc_spi_err_count; return false;
+    }
+
+    static constexpr std::uint16_t RdcvCmds[4] = {
+        ltc6811::CmdRDCVA, ltc6811::CmdRDCVB, ltc6811::CmdRDCVC, ltc6811::CmdRDCVD,
+    };
+    for (std::uint8_t g = 0; g < 4; ++g) {
+        const auto cmd = ltc6811::pack_command(RdcvCmds[g]);
+        if (!bus.read_register_group(cmd.data(), reply + g * GroupBytes, GroupBytes)) {
+            ++g_ltc_spi_err_count; return false;
+        }
+    }
+    return true;
+}
+
+// Open-wire scan: ADOW PUP=1 then PUP=0, hand both RDCV responses to
+// BmsService::update_open_wire (which owns the per-IC 9/10 decode + the
+// open_wire detector). Caller must have quiesced balancing already -- bleed
+// current corrupts the pull-up/down delta. Gated by config::CellOpenWireCheck.
+//
+// RETRIED (up to config::OpenWireRetries) within THIS poll: update_open_wire
+// needs both passes PEC-clean per IC to judge it, so a single transient PEC
+// glitch on the affected IC would otherwise skip it and slip the CellOpenWire
+// fault to the next poll (+BmsPollVoltMs, blowing the < 500 ms budget). If any
+// IC was skipped we re-run the two-pass scan so the glitch is absorbed in-poll;
+// a persistently-silent IC is caught by BmsModuleOffline instead.
+void attempt_open_wire_poll() noexcept {
+    using namespace ams;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * 8u;
+    auto& bus = ltc6820::Bus::default_instance();
+    std::uint8_t pu[4 * GroupBytes];
+    std::uint8_t pd[4 * GroupBytes];
+    for (std::uint8_t attempt = 0; attempt <= config::OpenWireRetries; ++attempt) {
+        if (!adow_pass(bus, /*pull_up=*/true,  pu)) continue;   // bus error -> retry
+        if (!adow_pass(bus, /*pull_up=*/false, pd)) continue;
+        // attempt 0 overwrites (clears the prior poll); retries OR-accumulate so a
+        // glitch on a later attempt can't erase an open a prior attempt confirmed.
+        if (BmsService::instance().update_open_wire(pu, pd, sizeof pu,
+                                                    /*accumulate=*/attempt != 0u)) {
+            return;   // every IC judged this attempt -> done
+        }
+        // else: an IC PEC-glitched -> retry gives it another clean read
+    }
+}
+
+// BENCH DIAGNOSTIC (config::AdowRawDiag): run one two-pass ADOW scan and stash
+// the raw per-cell PU/PD readings in the diag globals for the pit-diag dump.
+// Independent of CellOpenWireCheck so ADOW can be debugged while live detection
+// is off. Caller quiesces balancing (same reason as attempt_open_wire_poll).
+void capture_adow_diag() noexcept {
+    using namespace ams;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * 8u;
+    auto& bus = ltc6820::Bus::default_instance();
+    std::uint8_t pu[4 * GroupBytes];
+    std::uint8_t pd[4 * GroupBytes];
+    if (adow_pass(bus, /*pull_up=*/true, pu) && adow_pass(bus, /*pull_up=*/false, pd)) {
+        BmsService::capture_adow_raw(pu, pd, sizeof pu, g_adow_diag_pu, g_adow_diag_pd);
+    }
+}
+
 void run_voltage_poll() {
     using namespace ams;
 
@@ -238,6 +395,13 @@ void run_voltage_poll() {
     if (s_consecutive_poll_failures >= RecoverAfterFailedPolls) {
         recover_chain();
     }
+
+    // 0b. Stop bleeding before measuring. The bleed return path is the harness,
+    //     not the board, so current flowing during a conversion shifts the
+    //     shared tap node: the bled cell reads low and BOTH its neighbours read
+    //     high, by 9-36 mV against a 50 mV selection threshold. Left in, the
+    //     selection rule chases its own artifact.
+    const bool quiesced = quiesce_balancing();
 
     // 1. Attempt the read up to (1 + VoltPollRetries) times. Each attempt
     //    digests whatever ICs are PEC-clean (refreshing those modules), so a
@@ -253,6 +417,20 @@ void run_voltage_poll() {
         any_fresh = any_fresh || r.any_module_fresh;
         if (r.clean_ltcs >= config::LtcChainLength) break;  // whole chain clean
     }
+
+    // 1b. Open-wire scan (config::CellOpenWireCheck) while balancing is STILL
+    //     quiesced -- ADOW's pull-up/down delta is corrupted by bleed current,
+    //     same as the voltage measurement. Runs on the 200 ms poll cadence so an
+    //     open faults in < 500 ms. Adds two ADOW passes to the poll -- validate
+    //     the task keeps up on the HIL bench.
+    if (config::CellOpenWireCheck) attempt_open_wire_poll();
+    // Bench-only raw ADOW dump (dead-code-eliminated when AdowRawDiag is false).
+    if (config::AdowRawDiag) capture_adow_diag();
+
+    // 2. Resume bleeding. Done here rather than waiting for the 1 Hz balance
+    //    update, which would otherwise leave discharge off for three polls out
+    //    of four.
+    if (quiesced) restore_balancing();
 
     if (any_fresh) {
         s_consecutive_poll_failures = 0;
@@ -282,12 +460,19 @@ void maybe_run_balance_update() {
     const auto       veh    = VehicleService::instance().snapshot();
     const auto       op_cmd = VehicleService::effective_balance_cmd(
         osKernelGetTickCount(), veh.last_balance_override_tick, veh.balance_cmd);
-    // temps_trusted = config::TempFaultsTrusted: while the ADG731 temp path is
-    // unvalidated on flight, balancing's max_tempC thermal lockout can't be
-    // trusted, so compute_mask returns an all-zero (no-discharge) mask. Flips
-    // on with the same flag that arms the cell-temp faults.
+    // Per-module enable (0x104), freshness-resolved (stale/never -> all modules
+    // enabled). Layered UNDER op_cmd inside compute_mask.
+    const std::uint8_t mod_enable = VehicleService::effective_balance_modules_mask(
+        osKernelGetTickCount(), veh.last_balance_modules_tick, veh.balance_modules_mask);
+    // Balancing gates on config::BalanceTempsTrusted, NOT TempFaultsTrusted:
+    // "trust these temps enough to balance on" is a different question from
+    // "trust them enough to open the contactors on". Coupling the two meant the
+    // WarioCharger 0x103 toggle was accepted and then produced an all-zero mask
+    // forever. See the residual-risk note on BalanceTempsTrusted -- the
+    // BalanceTempMax lockout inside compute_mask still applies.
     const auto       mask   = balance::compute_mask(
-        state, fsm_curr, /*temps_trusted=*/config::TempFaultsTrusted, op_cmd);
+        state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
+        mod_enable);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
@@ -333,6 +518,14 @@ void maybe_run_balance_update() {
         return;
     }
 
+    // Cache what is now on the chain so the next voltage poll can quiesce and
+    // restore it. s_balance_active gates that work away entirely when nothing
+    // is discharging, which is every cycle outside Charge.
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) s_last_cfga[i][k] = per_ic[i][k];
+    }
+    s_balance_active = any_dcc;
+
     ++g_balance_cycles_total;
     if (any_dcc) ++g_balance_cycles_active;
     // Mirror to extern-linkage copies for pit-diag.
@@ -367,8 +560,29 @@ void maybe_run_balance_update() {
 // across all sweeps since boot; useful for catching intermittent NTC /
 // mux failures that don't show up every cycle. Reset on next boot by
 // writing 0 to sticky_mask.
+//
+// extern "C" so the pit-diag stream (#247) can surface last_mask via
+// AcuCanTask. These MUST live outside the anonymous namespace: an
+// extern "C" object declared inside an unnamed namespace still gets
+// internal linkage, so the symbol would not be exported and
+// acu_can_task.cpp's reference would fail to link.
+}  // close anonymous namespace for the extern "C" decls
+
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask   = 0;
 extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
+
+namespace {
+
+// Sweep resume state (#contention fix). A sweep can PAUSE after any channel to
+// let a due voltage poll run, bounding the voltage poll's jitter to ~one channel
+// (~3 ms) instead of a whole ~60 ms sweep -- which is what makes the tightened
+// BmsStaleMs (350 ms) safe against nuisance trips. s_temp_ch is the next channel
+// to sweep (0 = start a fresh sweep); s_temp_sweep_fail accumulates the failure
+// mask across the pauses so it isn't lost mid-sweep. Single-writer (BmsPollTask),
+// so no sync needed. isoSPI stays single-owner -- the sweep just interleaves with
+// the voltage poll on the SAME task rather than blocking it.
+std::uint8_t  s_temp_ch         = 0;
+std::uint32_t s_temp_sweep_fail = 0;
 
 void run_temperature_poll() {
     using namespace ams;
@@ -379,38 +593,50 @@ void run_temperature_poll() {
     // ADG731 ignores the bits it can't address (only ch < 32 used).
     std::uint8_t per_ic_payload[config::LtcChainLength][6];
 
-    // Per-sweep failure tracking. Each bit corresponds to one
-    // temperature-table channel (ch_idx 0..19) that failed at any of
-    // the WRCOMM / STCOMM / ADAX / RDAUXA steps. Captured at end of
-    // sweep into the globals so the bench can localise which NTC /
-    // mux is misbehaving.
-    std::uint32_t this_sweep_fail = 0;
+    // Warm-up mux select (the mux-domain twin of the #214 RDCV warm-up). Runs
+    // ONLY at the start of a sweep (s_temp_ch == 0), never on a resume after a
+    // yield. The FIRST WRCOMM/STCOMM after the voltage poll's cell-read burst can
+    // be dropped -- slaves re-sync on CS edges after the multi-ms idle -- so the
+    // sweep's first channel (Adg731ChannelMap[0] = S1) never latches and every
+    // mux stays on its previous channel. Result: temp1 / slot 0 reads rail
+    // (~VREF2) on ALL modules at once, a false open on every sweep. Confirmed on
+    // the bench via a 32-channel raw dump: 9/10 muxes' S1 came alive the instant
+    // this warm-up landed (the 10th was a genuine hardware open). The throwaway
+    // select targets an UNPOPULATED address (S32, NC on every mux) and its reply
+    // is discarded, so a dropped warm-up can never cost a real temperature.
+    if (s_temp_ch == 0) {
+        s_temp_sweep_fail = 0;
+        constexpr std::uint8_t WarmUpAddr = 31u;   // S32, unpopulated on all muxes
+        const auto warm = ltc6811::pack_adg731_select(WarmUpAddr);
+        for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+            for (std::size_t k = 0; k < 6; ++k) per_ic_payload[ic][k] = warm[k];
+        }
+        (void)bus.write_chain_command(ltc6811::CmdWRCOMM, per_ic_payload);
+        (void)bus.stcomm();
+        osDelay(1);
+    }
 
-    for (std::uint8_t ch_idx = 0; ch_idx < config::TempsPerLtc; ++ch_idx) {
+    // Resumable sweep: continues from s_temp_ch so a yield mid-sweep doesn't
+    // restart it. Each channel: WRCOMM/STCOMM select -> settle -> ADAX -> RDAUXA.
+    for (; s_temp_ch < config::TempsPerLtc; ++s_temp_ch) {
+        const std::uint8_t ch_idx = s_temp_ch;
         const std::uint8_t mux_ch = config::Adg731ChannelMap[ch_idx];
         const auto sel = ltc6811::pack_adg731_select(mux_ch);
 
         for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
-            for (std::size_t k = 0; k < 6; ++k) {
-                per_ic_payload[ic][k] = sel[k];
-            }
+            for (std::size_t k = 0; k < 6; ++k) per_ic_payload[ic][k] = sel[k];
         }
 
         // 1. WRCOMM: load the select word into every IC's COMM reg.
         if (!bus.write_chain_command(ltc6811::CmdWRCOMM, per_ic_payload)) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
         // 2. STCOMM: shift COMM register out -> mux receives.
         if (!bus.stcomm()) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
-        // 3. Settling for the mux + NTC voltage-divider. The
-        //    osDelay tick (1 Hz) is plenty; ADG731 t_TRANSITION is
-        //    ~80 ns and the 10 k / 10 k divider settles in << 1 ms.
+        // 3. Settling for the mux + NTC voltage-divider (~80 ns transition,
+        //    divider << 1 ms; the 1 ms tick is plenty).
         osDelay(1);
 
         // 4. ADAX(Gpio1) broadcast -> AUX-ADC conversion on every IC.
@@ -418,9 +644,7 @@ void run_temperature_poll() {
             ltc6811::adax_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                               ltc6811::AuxSel::Gpio1));
         if (!bus.send_command(adax_cmd.data())) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
         osDelay(config::AdaxSettleMs);
 
@@ -429,16 +653,27 @@ void run_temperature_poll() {
         std::uint8_t reply[Reply] = {};
         const auto rdauxa = ltc6811::pack_command(ltc6811::CmdRDAUXA);
         if (!bus.read_register_group(rdauxa.data(), reply, sizeof(reply))) {
-            ++g_ltc_spi_err_count;
-            this_sweep_fail |= (1u << ch_idx);
-            continue;
+            ++g_ltc_spi_err_count; s_temp_sweep_fail |= (1u << ch_idx); continue;
         }
 
         (void)BmsService::instance().update_temperature(ch_idx, reply, sizeof(reply));
+
+        // YIELD to a due voltage poll and resume this sweep immediately after, so
+        // no channel's cadence slips. This bounds the voltage poll's jitter to
+        // ~one channel (~3 ms) instead of a whole ~60 ms sweep -- the precondition
+        // that makes the tightened BmsStaleMs (350 ms) safe from nuisance trips.
+        // Re-arm PollTDue so the task finishes this sweep right after the V-poll.
+        if (s_temp_ch + 1u < config::TempsPerLtc &&
+            (osEventFlagsGet(bms_eventsHandle) & ams::events::bms::PollVDue) != 0u) {
+            ++s_temp_ch;
+            osEventFlagsSet(bms_eventsHandle, ams::events::bms::PollTDue);
+            return;
+        }
     }
 
-    g_temp_sweep_last_mask    = this_sweep_fail;
-    g_temp_sweep_sticky_mask |= this_sweep_fail;
+    g_temp_sweep_last_mask    = s_temp_sweep_fail;
+    g_temp_sweep_sticky_mask |= s_temp_sweep_fail;
+    s_temp_ch = 0;   // sweep complete -> fresh warm-up next time
 }
 
 }  // namespace
