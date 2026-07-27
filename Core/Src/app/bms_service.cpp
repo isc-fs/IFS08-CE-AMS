@@ -419,15 +419,20 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
                                  std::size_t         len, bool accumulate) noexcept {
     // Gated off -> always report "no open" so a stale mask can't linger. Fully
     // "evaluated" (nothing to retry).
-    if (!config::CellOpenWireCheck) { state_.cell_open_mask = 0u; return true; }
+    if (!config::CellOpenWireCheck) {
+        state_.cell_open_mask = 0u;
+        for (auto& v : state_.cell_open_cells) v = 0u;
+        return true;
+    }
 
     constexpr std::size_t Seg        = 8;                                // 6 data + 2 PEC
     constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;     // 80
     constexpr std::size_t Expected   = 4u * GroupBytes;                  // 320
     if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return true;
 
-    std::uint8_t new_mask = 0u;
-    bool         all_ok   = true;   // false if any IC was PEC-skipped this call
+    std::uint8_t  new_mask = 0u;
+    std::uint32_t new_cells[config::BmsModuleCount] = {};
+    bool          all_ok   = true;   // false if any IC was PEC-skipped this call
     for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
@@ -460,9 +465,25 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
             }
         }
         if (!ic_ok) { all_ok = false; continue; }   // PEC glitch -> caller retries
-        if (open_wire::detect_open_conductors(pu_cells, pd_cells, n_cells,
-                                              config::CellOpenWireDeltaMv) != 0u) {
+        const std::uint16_t conductors = open_wire::detect_open_conductors(
+            pu_cells, pd_cells, n_cells, config::CellOpenWireDeltaMv);
+        if (conductors != 0u) {
             new_mask = static_cast<std::uint8_t>(new_mask | (1u << module));
+            // Conductor -> cell mapping. Conductor k is the NODE between cells
+            // k-1 and k (IC-local, 0-indexed), so an open there corrupts both of
+            // them; the endpoints C(0) and C(N) border only one cell each. Offset
+            // by the IC's base so upper-LTC cells land on module cells 0..8 and
+            // lower-LTC cells on 9..18 (#423).
+            const std::uint8_t base = is_upper ? 0u : config::CellsPerLtcUpper;
+            for (std::uint8_t k = 0; k <= n_cells; ++k) {
+                if ((conductors & (1u << k)) == 0u) continue;
+                if (k > 0u) {
+                    new_cells[module] |= (1u << (base + k - 1u));
+                }
+                if (k < n_cells) {
+                    new_cells[module] |= (1u << (base + k));
+                }
+            }
         }
     }
     // First attempt overwrites (clears last poll's stale bits); a retry ORs so it
@@ -470,7 +491,54 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
     state_.cell_open_mask = accumulate
         ? static_cast<std::uint8_t>(state_.cell_open_mask | new_mask)
         : new_mask;
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+        state_.cell_open_cells[m] = accumulate
+            ? (state_.cell_open_cells[m] | new_cells[m])
+            : new_cells[m];
+    }
     return all_ok;
+}
+
+void BmsService::capture_adow_raw(const std::uint8_t* pu_reply,
+                                  const std::uint8_t* pd_reply,
+                                  std::size_t         len,
+                                  std::uint16_t*      pu_out,
+                                  std::uint16_t*      pd_out) noexcept {
+    constexpr std::size_t Seg        = 8;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * Seg;
+    constexpr std::size_t Expected   = 4u * GroupBytes;
+    constexpr std::size_t N = static_cast<std::size_t>(config::BmsModuleCount) *
+                              config::CellsPerModule;   // 95
+    if (pu_out == nullptr || pd_out == nullptr) return;
+    for (std::size_t i = 0; i < N; ++i) { pu_out[i] = 0xFFFFu; pd_out[i] = 0xFFFFu; }
+    if (pu_reply == nullptr || pd_reply == nullptr || len < Expected) return;
+
+    for (std::uint8_t ic = 0; ic < config::LtcChainLength; ++ic) {
+        const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
+        const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
+        // Module-cell offset + count: upper LTC = cells 0..8 (9), lower = 9..18 (10).
+        const std::uint8_t base    = is_upper ? 0u : config::CellsPerLtcUpper;
+        const std::uint8_t n_cells = is_upper ? config::CellsPerLtcUpper
+                                              : config::CellsPerLtcLower;
+        for (std::uint8_t g = 0; g < 4; ++g) {
+            std::array<std::uint16_t, 3> gpu{};
+            std::array<std::uint16_t, 3> gpd{};
+            const std::uint8_t* spu = pu_reply + g * GroupBytes + ic * Seg;
+            const std::uint8_t* spd = pd_reply + g * GroupBytes + ic * Seg;
+            const bool ok = ltc6811::decode_cell_voltage_group(spu, gpu) &&
+                            ltc6811::decode_cell_voltage_group(spd, gpd);
+            if (!ok) continue;                       // leave 0xFFFF sentinel
+            for (std::uint8_t k = 0; k < 3; ++k) {
+                const std::uint8_t idx = static_cast<std::uint8_t>(g * 3 + k);  // LTC-local
+                if (idx < n_cells) {
+                    const std::size_t flat =
+                        static_cast<std::size_t>(module) * config::CellsPerModule + base + idx;
+                    pu_out[flat] = gpu[k];
+                    pd_out[flat] = gpd[k];
+                }
+            }
+        }
+    }
 }
 
 BmsState BmsService::snapshot() const noexcept {

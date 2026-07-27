@@ -194,6 +194,31 @@ extern "C" void test_bms_open_wire_retry_preserves_confirmed_open(void) {
     TEST_ASSERT_BITS_HIGH(1u << 0, BmsService::instance().snapshot().cell_open_mask);
 }
 
+// Bench-diag capture: decode both ADOW passes into flat 95-cell PU/PD grids with
+// the right 9/10 module-cell mapping; a PEC glitch on one group leaves that
+// group's cells at the 0xFFFF sentinel while the rest decode.
+extern "C" void test_bms_capture_adow_raw_decodes_grids(void) {
+    std::uint8_t pu[RespBytes], pd[RespBytes];
+    build_clean_chain(pu);
+    build_clean_chain(pd);
+    std::uint16_t pu_g[config::BmsModuleCount * config::CellsPerModule];
+    std::uint16_t pd_g[config::BmsModuleCount * config::CellsPerModule];
+
+    BmsService::capture_adow_raw(pu, pd, RespBytes, pu_g, pd_g);
+    // build_clean_chain: module m cell s = 3000 + 100*m + s.
+    TEST_ASSERT_EQUAL_UINT16(3000, pu_g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(3008, pu_g[0 * config::CellsPerModule + 8]);   // last upper-LTC cell
+    TEST_ASSERT_EQUAL_UINT16(3018, pu_g[0 * config::CellsPerModule + 18]);  // last lower-LTC cell (RDCVD C10)
+    TEST_ASSERT_EQUAL_UINT16(3418, pd_g[4 * config::CellsPerModule + 18]);  // module 4 last cell
+
+    // PEC glitch on ic0 group A (PU) -> module 0 cells 0..2 sentinel; group B intact.
+    pu[0u * GroupBytes + 0u * Seg + 6u] ^= 0xFFu;
+    BmsService::capture_adow_raw(pu, pd, RespBytes, pu_g, pd_g);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, pu_g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, pd_g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(3003, pu_g[0 * config::CellsPerModule + 3]);   // group B still decoded
+}
+
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     std::uint8_t resp[RespBytes];
     build_clean_chain(resp);

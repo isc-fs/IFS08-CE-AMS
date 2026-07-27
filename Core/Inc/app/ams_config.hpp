@@ -28,15 +28,31 @@ inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    --
 // still reads in-range. Runs the two-pass ADOW conversion in BmsPollTask and
 // faults FaultReason::CellOpenWire in ANY state.
 //
-// DISABLED (2026-07-26): enabling this on the bench did NOT fault on a real
-// open -- the ADOW register encoding / conversion timing were never validated on
-// a real LTC chain and don't work as-is. Gated back off so the (working) range
-// check CellUnderVoltage/CellOverVoltage remains the voltage open-circuit path
-// while the ADOW path is fixed + HIL-validated end-to-end. The pure detector
-// (open_wire.hpp), adow_cmd(), update_open_wire and the retry stay in the tree
-// (host-tested, inert) so re-enabling after a real-chain fix is one line. Flip
-// to true ONLY once ADOW is confirmed to detect + not nuisance-trip on hardware.
-inline constexpr bool          CellOpenWireCheck   = false;
+// Disabled by #510 because enabling it on the bench did NOT fault on a real
+// open. ROOT CAUSE FOUND (2026-07-26, bench): adow_cmd() had PUP on bit5 with
+// base 0x0248, i.e. PUP and a fixed opcode bit swapped. The PUP=1 pass was
+// correct by coincidence (0x0368) but PUP=0 emitted 0x0348, which the LTC does
+// not accept -- no second conversion ran and RDCV re-returned the pull-up
+// result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, so the
+// PU-PD delta was identically 0 and the open was undetectable. See ltc6811.hpp.
+//
+// RE-ENABLED now that the encoding is fixed and validated end-to-end on a live
+// chain (the sign-off #510 asked for), twice:
+//   * induced open on M2 c2/c3  -> -4210 mV on the cell above the open
+//   * real M5 reseat fault c7/c8 -> -3979 mV, found by the firmware unprompted
+// Both ~10x the 400 mV threshold, with a healthy pack staying inside
+// -130..+50 mV across all 5 modules and PEC clean -- no false positives.
+//
+// This predicate is the ONLY one that can see an open tap: the shared node
+// floats, so the tap-artifact guard in recompute_summaries_ averages the pair
+// back into range and CellUnderVoltage/CellOverVoltage can never fire on it
+// (measured: a cell reading 2364 mV was presented to the FSM as 3823 mV).
+//
+// KNOWN GAP: only INTERIOR conductors are hardware-validated. The endpoint
+// rules -- C(0) via CELL_PU(1)==0 and C(N) via CELL_PD(N)==0 -- use exact-zero
+// comparisons and are still bench-untested; an endpoint open that reads a few
+// mV instead of a hard 0 would be missed. Tracked as a follow-up.
+inline constexpr bool          CellOpenWireCheck   = true;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
 // ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
 // passes must be PEC-clean on an IC to judge its open-wire state; a single PEC
@@ -46,6 +62,15 @@ inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open th
 // detection stays < 500 ms. 1 retry (2 attempts) keeps the added time bounded
 // (~2 x two ADOW passes) while covering the single-glitch case.
 inline constexpr std::uint8_t  OpenWireRetries     = 1;
+// BENCH DIAGNOSTIC: dump the raw ADOW pull-up / pull-down per-cell readings over
+// pit-diag so the ADOW encoding + conversion timing can be debugged on a real
+// chain (compare PU vs PD on a known open). Runs its own two-pass ADOW scan in
+// BmsPollTask INDEPENDENT of CellOpenWireCheck, so you can debug it while live
+// detection stays off. `true` on the feat/adow-raw-diagnostic branch; keep FALSE
+// on dev/flight -- the code stays compiled (dead-code-eliminated when false, so
+// CI still type-checks it) but emits nothing. Blocks: PU @ AdowDiagPuBaseId, PD
+// @ AdowDiagPdBaseId, same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid.
+inline constexpr bool          AdowRawDiag         = false;
 
 // Implausible-cell bounds for the balancing tap-artifact guard (see
 // recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
@@ -408,6 +433,11 @@ inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
 inline constexpr std::uint32_t PitDiagCmdRxId            = 0x7F0u;
 inline constexpr std::uint32_t PitDiagAckTxId            = 0x7F1u;
 inline constexpr std::uint32_t PitDiagCellBaseId         = 0x680u;
+// Raw-ADOW diagnostic blocks (config::AdowRawDiag only). 0x6D0..0x6FF is free
+// (after the 0x6C0..0x6CA status block). PU = 0x6D0..0x6E7, PD = 0x6E8..0x6FF;
+// each 24 frames of 4 cells (BE u16 mV), 0xFFFF = PEC-skipped this scan.
+inline constexpr std::uint32_t AdowDiagPuBaseId          = 0x6D0u;
+inline constexpr std::uint32_t AdowDiagPdBaseId          = 0x6E8u;   // = 0x6D0 + 24
 inline constexpr std::uint32_t PitDiagTempBaseId         = 0x6A0u;
 inline constexpr std::uint32_t PitDiagFsmStatusId        = 0x6C0u;
 inline constexpr std::uint32_t PitDiagTimingId           = 0x6C1u;

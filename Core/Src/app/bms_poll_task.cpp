@@ -84,6 +84,16 @@ extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
 // confirm from CAN alone that the quiesce is running.
 extern "C" volatile std::uint32_t g_balance_quiesce_count = 0;
 
+// BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW pull-up / pull-down per-cell
+// readings (flat 95 = 5 modules x 19 cells), dumped over pit-diag so the ADOW
+// encoding/timing can be debugged on a real chain. Single-writer (BmsPollTask);
+// AcuCanTask reads for the emit. Plain (non-volatile) -- a torn 16-bit read is
+// harmless for a diagnostic. Populated only when AdowRawDiag is on (else stays 0).
+extern "C" std::uint16_t g_adow_diag_pu[ams::config::BmsModuleCount *
+                                        ams::config::CellsPerModule] = {};
+extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
+                                        ams::config::CellsPerModule] = {};
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -362,6 +372,21 @@ void attempt_open_wire_poll() noexcept {
     }
 }
 
+// BENCH DIAGNOSTIC (config::AdowRawDiag): run one two-pass ADOW scan and stash
+// the raw per-cell PU/PD readings in the diag globals for the pit-diag dump.
+// Independent of CellOpenWireCheck so ADOW can be debugged while live detection
+// is off. Caller quiesces balancing (same reason as attempt_open_wire_poll).
+void capture_adow_diag() noexcept {
+    using namespace ams;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * 8u;
+    auto& bus = ltc6820::Bus::default_instance();
+    std::uint8_t pu[4 * GroupBytes];
+    std::uint8_t pd[4 * GroupBytes];
+    if (adow_pass(bus, /*pull_up=*/true, pu) && adow_pass(bus, /*pull_up=*/false, pd)) {
+        BmsService::capture_adow_raw(pu, pd, sizeof pu, g_adow_diag_pu, g_adow_diag_pd);
+    }
+}
+
 void run_voltage_poll() {
     using namespace ams;
 
@@ -399,6 +424,8 @@ void run_voltage_poll() {
     //     open faults in < 500 ms. Adds two ADOW passes to the poll -- validate
     //     the task keeps up on the HIL bench.
     if (config::CellOpenWireCheck) attempt_open_wire_poll();
+    // Bench-only raw ADOW dump (dead-code-eliminated when AdowRawDiag is false).
+    if (config::AdowRawDiag) capture_adow_diag();
 
     // 2. Resume bleeding. Done here rather than waiting for the 1 Hz balance
     //    update, which would otherwise leave discharge off for three polls out
@@ -533,8 +560,18 @@ void maybe_run_balance_update() {
 // across all sweeps since boot; useful for catching intermittent NTC /
 // mux failures that don't show up every cycle. Reset on next boot by
 // writing 0 to sticky_mask.
+//
+// extern "C" so the pit-diag stream (#247) can surface last_mask via
+// AcuCanTask. These MUST live outside the anonymous namespace: an
+// extern "C" object declared inside an unnamed namespace still gets
+// internal linkage, so the symbol would not be exported and
+// acu_can_task.cpp's reference would fail to link.
+}  // close anonymous namespace for the extern "C" decls
+
 extern "C" volatile std::uint32_t g_temp_sweep_last_mask   = 0;
 extern "C" volatile std::uint32_t g_temp_sweep_sticky_mask = 0;
+
+namespace {
 
 // Sweep resume state (#contention fix). A sweep can PAUSE after any channel to
 // let a due voltage poll run, bounding the voltage poll's jitter to ~one channel

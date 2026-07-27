@@ -62,6 +62,22 @@ struct BmsState {
     // config::CellOpenWireCheck is enabled; 0 otherwise.
     std::uint8_t  cell_open_mask;
 
+    // Which INDIVIDUAL cells straddle a confirmed open tap: bit c of
+    // cell_open_cells[m] set <=> cell c of module m borders a conductor that
+    // ADOW reported open. 19 cells fit the low 19 bits; bits 19..31 stay 0.
+    //
+    // An open conductor destroys BOTH readings that share the floating node --
+    // one reads high, the other low, only their SUM survives -- so an interior
+    // conductor k flags cells k-1 and k, while the endpoint conductors C(0) /
+    // C(N) flag the single cell they touch. Neither of a flagged pair can be
+    // recovered individually (the node potential is unknowable once the wire is
+    // gone), so the pit-diag grid emits PitDiagCellSentinel for them rather than
+    // publishing a measurement that is not one. cell_mV itself is left ALONE:
+    // recompute_summaries_ still needs the raw pair for the tap-artifact average
+    // that keeps pack_voltage_mV exact and OV/UV honest.
+    // Only written when config::CellOpenWireCheck is enabled; 0 otherwise.
+    std::uint32_t cell_open_cells[config::BmsModuleCount];
+
     // Per-module aggregates feeding the 0x131..0x134 + 0x136..0x137
     // ECU TX matrix (fix/53). Recomputed in recompute_summaries_()
     // from cell_mV / cell_tempC; no extra cost beyond a single pass
@@ -191,6 +207,18 @@ public:
                                         const std::uint8_t* pd_reply,
                                         std::size_t         len,
                                         bool                accumulate = false) noexcept;
+
+    // BENCH DIAGNOSTIC (config::AdowRawDiag): decode both ADOW passes into flat
+    // 95-cell mV grids (module m, cell c -> index m*CellsPerModule + c; upper LTC
+    // -> cells 0..8, lower -> 9..18) for a raw pit-diag dump so the ADOW encoding
+    // / timing can be debugged on a real chain. PEC-skipped cells stay 0xFFFF.
+    // Static + does NOT touch cell_open_mask -- pure raw dump, independent of the
+    // live detector; usable while CellOpenWireCheck is off.
+    static void capture_adow_raw(const std::uint8_t* pu_reply,
+                                 const std::uint8_t* pd_reply,
+                                 std::size_t         len,
+                                 std::uint16_t*      pu_out,
+                                 std::uint16_t*      pd_out) noexcept;
 
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.

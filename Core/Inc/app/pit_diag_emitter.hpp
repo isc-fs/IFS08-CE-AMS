@@ -67,8 +67,37 @@ namespace detail {
             if ((bms.module_online_mask & (1u << m)) == 0u) {
                 return config::PitDiagCellSentinel;
             }
+            // Cells straddling an ADOW-confirmed open tap: the shared node is
+            // floating, so BOTH readings are displaced (one high, one low) and
+            // neither is recoverable -- only their sum survives. Emit "no data"
+            // rather than a number that looks like a measurement and is not.
+            // cell_mV keeps the raw split; recompute_summaries_ still uses it for
+            // the pair average, and the raw values remain visible on the ADOW
+            // diagnostic grid (0x6D0/0x6E8) when config::AdowRawDiag is on.
+            if ((bms.cell_open_cells[m] & (1u << c)) != 0u) {
+                return config::PitDiagCellSentinel;
+            }
             return bms.cell_mV[m][c];
         },
+        b);
+    return detail::to_frame(b);
+}
+
+// ---------------------------------------------------------------------------
+// BENCH DIAGNOSTIC (config::AdowRawDiag): dump a flat 95-cell uint16 mV grid
+// (the raw ADOW PU or PD readings) with the SAME window layout as the 0x680 cell
+// grid, so the decoder + tooling are identical -- just on AdowDiagPuBaseId /
+// AdowDiagPdBaseId. 0xFFFF = no cell / PEC-skipped this scan.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_adow_grid_frame(const std::uint16_t* grid95,
+                                                  std::uint8_t frame_idx) noexcept {
+    const auto& A = ifs08::ALL_ARRAYS[0];   // reuse 24 x 4-cell BE-u16 window
+    if (grid95 == nullptr || frame_idx >= A.frame_count) return Frame{};
+    std::uint8_t b[8];
+    can_dsl::encode_array_window(
+        frame_idx, A.per_frame, A.elem_bits, A.big_endian, A.total_elems,
+        /*sentinel=*/0xFFFFu,
+        [&](unsigned flat) -> std::uint64_t { return grid95[flat]; },
         b);
     return detail::to_frame(b);
 }

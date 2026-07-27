@@ -77,6 +77,11 @@ extern "C" volatile std::uint32_t g_ltc_pec_err_count[ams::config::LtcChainLengt
 
 // Balance state mirrors written by maybe_run_balance_update().
 extern "C" volatile std::uint32_t g_balance_dcc_bits[ams::config::BmsModuleCount];
+// Raw ADOW diagnostic grids (config::AdowRawDiag only), written by BmsPollTask.
+extern "C" std::uint16_t g_adow_diag_pu[ams::config::BmsModuleCount *
+                                        ams::config::CellsPerModule];
+extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
+                                        ams::config::CellsPerModule];
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
 
@@ -366,6 +371,18 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     send_or_fail_blocking(ams::config::PitDiagCommsHealthId,
                           ams::pit_diag::encode_comms_health(
                               g_fdcan1_busoff_recovery_count, g_acu_tx_fail));
+
+    // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW PU + PD per-cell dump,
+    // same 24-frame layout as the 0x680 cell grid, on AdowDiagPuBaseId /
+    // AdowDiagPdBaseId. Dead-code-eliminated on flight builds (flag false).
+    if (ams::config::AdowRawDiag) {
+        for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
+            send_or_fail_blocking(ams::config::AdowDiagPuBaseId + i,
+                                  ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pu, i));
+            send_or_fail_blocking(ams::config::AdowDiagPdBaseId + i,
+                                  ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pd, i));
+        }
+    }
 }
 
 // Ungated firmware-health frame (#411). 1 Hz, emitted REGARDLESS of the

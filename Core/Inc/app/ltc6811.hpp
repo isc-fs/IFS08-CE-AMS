@@ -109,17 +109,24 @@ enum class AuxSel   : std::uint8_t { All = 0, Gpio1 = 1, Gpio2 = 2, Gpio3 = 3,
 }
 
 // ADOW -- Start Open-Wire ADC Conversion (datasheet table 38 / "Open Wire
-// Check"). Same 11-bit family as ADCV, but the fixed bit5 becomes the PUP
-// (pull-up/down current select) bit and bit3 is set:
-//   ADCV = 0 1 MD1 MD0 1  1  DCP 0 CH2 CH1 CH0   -> base 0x0260
-//   ADOW = 0 1 MD1 MD0 1 PUP DCP 1 CH2 CH1 CH0   -> base 0x0248
-// so ADOW = 0x0248 | (MD << 7) | (PUP << 5) | (DCP << 4) | CH.
-// Worked check: MD=10 (7 kHz), PUP=1, DCP=0, CH=000 -> 0x0248|0x100|0x020 = 0x0368;
-// PUP=0 -> 0x0348. Two conversions (PUP=1 then PUP=0), each read back with the
-// normal RDCV* groups, feed ams::open_wire::detect_open_conductors().
-// NB: derived from the datasheet command structure + the validated adcv_cmd
-// encoding above; cross-check against LTC6811-1 datasheet table 38 and validate
-// on the HIL chain before enabling config::CellOpenWireCheck.
+// Check"). Same 11-bit family as ADCV; PUP (pull-up/down current select) rides
+// bit6, bit5 stays a fixed 1, and bit3 is set:
+//   ADCV = 0 1 MD1 MD0 1   1 DCP 0 CH2 CH1 CH0   -> base 0x0260
+//   ADOW = 0 1 MD1 MD0 PUP 1 DCP 1 CH2 CH1 CH0   -> base 0x0228
+// so ADOW = 0x0228 | (MD << 7) | (PUP << 6) | (DCP << 4) | CH.
+// Worked check: MD=10 (7 kHz), DCP=0, CH=000 -> PUP=1 gives 0x0228|0x100|0x040
+// = 0x0368, PUP=0 gives 0x0328. Matches the Linduino LTC681x_adow reference
+// (cmd = 0x0228 + (PUP<<6) + (DCP<<4) + CH, MD split across the two bytes).
+// Two conversions (PUP=1 then PUP=0), each read back with the normal RDCV*
+// groups, feed ams::open_wire::detect_open_conductors().
+//
+// HARDWARE-CONFIRMED (bench, feat/adow-raw-diagnostic): the previous encoding
+// used base 0x0248 with PUP<<5, i.e. PUP and the fixed bit5 were SWAPPED. That
+// left the PUP=1 pass correct by coincidence (0x0368) but emitted 0x0348 for
+// PUP=0 -- b6 set (still pull-UP) and the fixed b5 clear -- which the LTC does
+// not accept, so no second conversion ran and RDCV re-returned the pull-up
+// result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, making
+// the PU-PD delta identically 0 and CellOpenWire impossible to trigger.
 [[nodiscard]] inline std::uint16_t adow_cmd(AdcMode mode, bool pull_up,
                                             bool discharge_permit,
                                             CellSel cell = CellSel::All) noexcept {
@@ -128,7 +135,7 @@ enum class AuxSel   : std::uint8_t { All = 0, Gpio1 = 1, Gpio2 = 2, Gpio3 = 3,
     const std::uint16_t dcp_v = discharge_permit ? 1u : 0u;
     const std::uint16_t ch_v  = static_cast<std::uint16_t>(cell);
     return static_cast<std::uint16_t>(
-        0x0248u | (md_v << 7) | (pup_v << 5) | (dcp_v << 4) | ch_v);
+        0x0228u | (md_v << 7) | (pup_v << 6) | (dcp_v << 4) | ch_v);
 }
 
 // ---------------------------------------------------------------------------
