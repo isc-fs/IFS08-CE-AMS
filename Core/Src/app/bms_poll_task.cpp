@@ -42,6 +42,13 @@
 // read guarantees on Cortex-M7.
 extern "C" volatile std::uint8_t g_state_telemetry;
 
+// Latched fault reason, written by MainTask at the transition into ERROR (same
+// single-writer / 8-bit-read contract as g_state_telemetry above; acu_can_task
+// consumes it the same way). BalanceController needs it because a latched
+// CELL-DATA fault means the cell voltages it ranks are untrustworthy -- see
+// balance::is_cell_data_fault.
+extern "C" volatile std::uint8_t g_fault_reason_telemetry;
+
 namespace {
 
 osTimerId_t s_volt_timer = nullptr;
@@ -84,6 +91,14 @@ extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
 // confirm from CAN alone that the quiesce is running.
 extern "C" volatile std::uint32_t g_balance_quiesce_count = 0;
 
+// Times the quiesce could NOT be proven (both WRCFGA attempts failed) and the
+// poll therefore measured with balancing still live. Those cell voltages carry
+// the 9-36 mV bleed displacement, so the balance selector skips that cycle --
+// the safety predicates still consume them, which is the right split. Climbing
+// alongside g_ltc_spi_err_count means isoSPI trouble is corrupting the balancing
+// input; climbing on its own would be a chain that only fails on writes.
+extern "C" volatile std::uint32_t g_balance_quiesce_fail_count = 0;
+
 // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW pull-up / pull-down per-cell
 // readings (flat 95 = 5 modules x 19 cells), dumped over pit-diag so the ADOW
 // encoding/timing can be debugged on a real chain. Single-writer (BmsPollTask);
@@ -109,6 +124,13 @@ std::uint32_t          s_volt_poll_count       = 0;
 // destroy three quarters of the balancing duty.
 std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
 bool         s_balance_active = false;
+
+// Set by quiesce_balancing() when it could not prove discharge was off, so the
+// cell voltages this poll produced were taken under bleed. Consumed and cleared
+// by maybe_run_balance_update(), which skips the update rather than re-rank the
+// pack on displaced readings. Single-writer (BmsPollTask), same thread, so a
+// plain bool is sufficient -- no volatile needed.
+bool         g_balance_quiesce_fail = false;
 
 // ---------------------------------------------------------------------------
 // Chain-sleep recovery.
@@ -275,12 +297,33 @@ bool quiesce_balancing() noexcept {
         for (std::size_t k = 0; k < 6; ++k) zeros[i][k] = off[k];
     }
 
-    if (!ltc6820::Bus::default_instance().write_chain_command(
-            ltc6811::CmdWRCFGA, zeros)) {
-        // Could not prove discharge is off. Measure anyway -- stale cell data
-        // starves the safety predicates, which is worse than a noisy read --
-        // but do not claim a restore is owed, and count the error.
-        ++g_ltc_spi_err_count;
+    // RETRY once before giving up. WRCFGA is idempotent (it writes an absolute
+    // DCC mask, not a delta) and costs ~1.3 ms at 515 kHz, so a second attempt is
+    // cheap next to the alternative: measuring the whole pack under full bleed.
+    //
+    // DCP=0 on the ADCV does NOT rescue that case. Per LTC6811 datasheet Table 53
+    // it suppresses discharge only on the cell being measured AND its immediate
+    // neighbours -- during the CELL1/7 window S1/S2 are off but S3/S4/S5 stay ON.
+    // So roughly half the selected cells keep pulling ~165 mA through the shared
+    // tap harness for the whole conversion, which is exactly the 9-36 mV
+    // displacement (bled cell low, both neighbours high) that BalanceQuiesceMs
+    // exists to eliminate. The quiesce is the ONLY full stop; treat it that way.
+    bool quiesced = false;
+    for (std::uint8_t attempt = 0; attempt < 2u && !quiesced; ++attempt) {
+        quiesced = ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, zeros);
+        if (!quiesced) ++g_ltc_spi_err_count;
+    }
+
+    if (!quiesced) {
+        // Still could not prove discharge is off. Measure anyway -- stale cell
+        // data starves the safety predicates, which is worse than a noisy read --
+        // but flag the poll so the BALANCE SELECTOR ignores it. The safety path
+        // wants the reading regardless; the balancing policy must not act on
+        // voltages it knows were taken under bleed, or it chases its own artifact
+        // at the same order of magnitude as BalanceDeltaMv (50 mV).
+        g_balance_quiesce_fail = true;
+        ++g_balance_quiesce_fail_count;
         return false;
     }
     ++g_balance_quiesce_count;
@@ -452,6 +495,18 @@ void maybe_run_balance_update() {
     if (++s_volt_poll_count < config::BalanceUpdatePolls) return;
     s_volt_poll_count = 0;
 
+    // The quiesce could not be proven on this cycle, so the snapshot we would
+    // rank was measured with cells still bleeding: the bled cell reads ~9-36 mV
+    // LOW and both its neighbours read high, against a 50 mV BalanceDeltaMv.
+    // Re-picking on that inverts the very comparison the selector exists to
+    // make. Hold the previous mask (already on the chain, and the policy is
+    // stateless so the next clean cycle re-derives it) and wait one window --
+    // 800 ms at BalanceUpdatePolls=4, immaterial on a multi-hour C/101 balancer.
+    if (g_balance_quiesce_fail) {
+        g_balance_quiesce_fail = false;
+        return;
+    }
+
     const auto       state    = BmsService::instance().snapshot();
     const fsm::State fsm_curr =
         static_cast<fsm::State>(g_state_telemetry);
@@ -470,9 +525,13 @@ void maybe_run_balance_update() {
     // WarioCharger 0x103 toggle was accepted and then produced an all-zero mask
     // forever. See the residual-risk note on BalanceTempsTrusted -- the
     // BalanceTempMax lockout inside compute_mask still applies.
+    // A latched CELL-DATA fault (open wire / OV / UV) stops balancing for BOTH
+    // Auto and the operator On override -- the voltages compute_mask ranks are
+    // not trustworthy once one of those has fired.
+    const auto       fault    = static_cast<safety::FaultReason>(g_fault_reason_telemetry);
     const auto       mask   = balance::compute_mask(
         state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
-        mod_enable);
+        fault, mod_enable);
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
