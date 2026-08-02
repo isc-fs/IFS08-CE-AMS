@@ -10,8 +10,17 @@
  *
  * Mirrors ams::acu_tx::encode_soc(). TELEMETRY ONLY -- nothing in the safety
  * path produces or consumes this value.
+ *
+ * 250 ms to match config::EcuSlowTxMs, the group tx_soc() actually rides in
+ * (acu_can_task.cpp, alongside 0x136/0x137). This was declared 1000 ms when the
+ * message landed while the scheduler sent it at 250 -- so the DBC told every
+ * consumer 1 Hz while the AMS transmitted at 4 Hz. Harmless on the wire (one
+ * extra byte-sized frame 3x/s on a 500 kbps bus) but wrong in the file other
+ * teams import as the contract, and it would mis-size any receive timeout
+ * derived from GenMsgCycleTime. If tx_soc() is ever moved to another cadence
+ * group, this number moves with it.
  */
 
-CAN_MSG(ACU_soc, 0x130, 1, "AMS", 1000)
+CAN_MSG(ACU_soc, 0x130, 1, "AMS", 250)
     FIELD_BE (soc_percent, uint8_t, 0, 8, 1, 0, "%")
 CAN_MSG_END(ACU_soc)
