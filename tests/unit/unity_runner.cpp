@@ -395,6 +395,9 @@ void test_fw_health_encode_clamps_heap(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
+void test_balance_cell_open_wire_blocks_even_operator_on(void);
+void test_balance_ov_uv_block_balancing(void);
+void test_balance_non_cell_faults_stay_overridable(void);
 void test_balance_per_module_enable_gates_modules(void);
 void test_balance_single_hot_cell_in_charge(void);
 void test_balance_caps_at_max_active_per_module(void);
@@ -847,6 +850,9 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_fw_health_encode_clamps_heap);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
+    RUN_TEST(test_balance_cell_open_wire_blocks_even_operator_on);
+    RUN_TEST(test_balance_ov_uv_block_balancing);
+    RUN_TEST(test_balance_non_cell_faults_stay_overridable);
     RUN_TEST(test_balance_per_module_enable_gates_modules);
     RUN_TEST(test_balance_single_hot_cell_in_charge);
     RUN_TEST(test_balance_caps_at_max_active_per_module);

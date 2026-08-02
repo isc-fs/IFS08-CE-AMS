@@ -24,6 +24,7 @@
 
 #include "ams_config.hpp"
 #include "bms_service.hpp"
+#include "safety_predicates.hpp"   // safety::FaultReason (cell-data fault gate)
 #include "state_machine.hpp"
 
 #include <array>
@@ -64,10 +65,29 @@ struct Mask {
     return d == 1u;
 }
 
+// Does this latched fault mean the CELL VOLTAGES compute_mask ranks are
+// untrustworthy? Only these -- a fault elsewhere in the system (current sensor,
+// VCU/charger link, contactor path) leaves cell data intact and must stay
+// operator-overridable so a pack can still be rebalanced in the pit.
+//
+// CellOpenWire: the tap is open, so BOTH cells sharing that node are wrong (one
+//   rails high, one low, pair sum conserved) -- and the high one is exactly what
+//   the greedy selects first.
+// CellOverVoltage / CellUnderVoltage: either a real excursion (balancing must
+//   not be part of the response) or the artifact that produced it, and we cannot
+//   tell which from here.
+[[nodiscard]] inline bool is_cell_data_fault(safety::FaultReason r) noexcept {
+    return r == safety::FaultReason::CellOpenWire     ||
+           r == safety::FaultReason::CellOverVoltage  ||
+           r == safety::FaultReason::CellUnderVoltage;
+}
+
 [[nodiscard]] inline Mask compute_mask(const BmsState&    s,
                                        fsm::State         fsm_state,
                                        bool               temps_trusted,
                                        config::BalanceCmd op_cmd,
+                                       safety::FaultReason fault_reason
+                                           = safety::FaultReason::None,
                                        std::uint8_t       module_enable
                                            = config::AllModulesMask) noexcept {
     Mask out = {};
@@ -83,6 +103,27 @@ struct Mask {
     if (op_cmd == config::BalanceCmd::Off)     return out;
     if (op_cmd == config::BalanceCmd::Auto &&
         fsm_state != fsm::State::Charge)       return out;
+
+    // CELL-DATA gate, and it binds On as well as Auto. The selector below reads
+    // RAW s.cell_mV -- the tap-artifact guard's corrected pair average lives in a
+    // LOCAL agg_v[] inside recompute_summaries_ and never reaches this function.
+    // So a split tap (one half reading 4600 mV, the other 3000) is masked for the
+    // OV predicate but still presents 4600 mV here, and the greedy picks it first
+    // on every cycle, forever, while BalanceSpreadNoAdjacent locks out its
+    // genuinely-imbalanced neighbour.
+    //
+    // ADOW (config::CellOpenWireCheck, live since v2.1.0) latches exactly this in
+    // under 500 ms in ANY state -- but Auto only stops because the AIRs open and
+    // we leave Charge, and On skips the state gate entirely. Refuse instead: a
+    // latched cell-data fault means the voltages this function ranks are not
+    // trustworthy, and heating the pack on numbers we have already faulted on is
+    // never right. This finishes implementing the principle stated above (the
+    // operator overrides the ENABLE decision, never the guards).
+    //
+    // Deliberately narrow: ONLY the reasons that say "the cell voltages are
+    // wrong". A contactor/IMD/current fault leaves the cell data perfectly good,
+    // so those stay overridable and the pit keeps its manual-rebalance path.
+    if (is_cell_data_fault(fault_reason))      return out;
 
     // Temperature-trust gate. Passive balancing dumps heat into the cells and
     // the max_tempC lockout below is its ONLY thermal protection. When the

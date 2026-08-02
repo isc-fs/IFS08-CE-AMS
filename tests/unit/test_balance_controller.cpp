@@ -85,7 +85,7 @@ extern "C" void test_balance_per_module_enable_gates_modules(void) {
     // Enable only modules 0, 2, 4 (mask 0b10101).
     const auto sel = balance::compute_mask(
         state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto,
-        /*module_enable=*/0x15);
+        /*fault_reason=*/safety::FaultReason::None, /*module_enable=*/0x15);
     TEST_ASSERT_GREATER_THAN_UINT8(0, count_set_in_module(sel, 0));
     TEST_ASSERT_EQUAL_UINT8(0, count_set_in_module(sel, 1));   // disabled -> empty
     TEST_ASSERT_GREATER_THAN_UINT8(0, count_set_in_module(sel, 2));
@@ -586,4 +586,61 @@ extern "C" void test_balance_real_imbalance_still_works_with_robust_floor(void) 
         for (std::uint8_t c = 0; c < config::CellsPerModule; ++c)
             n += mask.cell[m][c] ? 1 : 0;
     TEST_ASSERT_GREATER_THAN_UINT8(0, n);
+}
+
+// --- cell-data fault gate: binds the operator On override too --------------
+// The selector ranks RAW s.cell_mV; the tap-artifact guard's corrected average
+// never reaches it. So once ADOW has latched CellOpenWire, the high half of a
+// split tap is still the top candidate and would be bled forever. The gate must
+// hold for On, which skips the Charge state gate entirely.
+extern "C" void test_balance_cell_open_wire_blocks_even_operator_on(void) {
+    auto state = make_uniform_state(3700, 25);
+    // Split tap: cell 5 of module 1 rails high, its neighbour compensates low.
+    // Pair sum is conserved, which is exactly why OV/UV do not catch it.
+    state.cell_mV[1][5] = 4600;
+    state.cell_mV[1][6] = 3000;
+
+    // Healthy: the 4600 mV cell is selected (this is the behaviour being gated).
+    TEST_ASSERT_TRUE(balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true,
+        config::BalanceCmd::On, safety::FaultReason::None).cell[1][5]);
+
+    // Latched CellOpenWire -> nothing anywhere, despite op_cmd == On.
+    const auto gated = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true,
+        config::BalanceCmd::On, safety::FaultReason::CellOpenWire);
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m)
+        for (std::uint8_t c = 0; c < config::CellsPerModule; ++c)
+            TEST_ASSERT_FALSE(gated.cell[m][c]);
+}
+
+// OV / UV are cell-data faults too: either a real excursion (balancing must not
+// be part of the response) or the artifact that caused it.
+extern "C" void test_balance_ov_uv_block_balancing(void) {
+    auto state = make_uniform_state(3700, 25);
+    state.cell_mV[0][3] = 4100;   // well above floor+delta, would be selected
+
+    for (auto r : {safety::FaultReason::CellOverVoltage,
+                   safety::FaultReason::CellUnderVoltage}) {
+        const auto m0 = balance::compute_mask(
+            state, fsm::State::Charge, /*temps_trusted=*/true,
+            config::BalanceCmd::On, r);
+        TEST_ASSERT_FALSE(m0.cell[0][3]);
+    }
+}
+
+// NON-cell faults leave the voltages trustworthy, so the pit keeps its manual
+// rebalance path. Regression guard against widening the gate to "any fault".
+extern "C" void test_balance_non_cell_faults_stay_overridable(void) {
+    auto state = make_uniform_state(3700, 25);
+    state.cell_mV[0][3] = 4100;
+
+    for (auto r : {safety::FaultReason::CurrentSensorFault,
+                   safety::FaultReason::VcuStale,
+                   safety::FaultReason::BmsModuleOffline}) {
+        TEST_ASSERT_FALSE(balance::is_cell_data_fault(r));
+        TEST_ASSERT_TRUE(balance::compute_mask(
+            state, fsm::State::Charge, /*temps_trusted=*/true,
+            config::BalanceCmd::On, r).cell[0][3]);
+    }
 }
