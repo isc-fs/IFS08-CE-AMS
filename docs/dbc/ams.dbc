@@ -606,7 +606,7 @@ BA_ "GenMsgCycleTime" BO_ 308 100;
 BA_ "GenMsgCycleTime" BO_ 309 50;
 BA_ "GenMsgCycleTime" BO_ 310 250;
 BA_ "GenMsgCycleTime" BO_ 311 250;
-BA_ "GenMsgCycleTime" BO_ 304 1000;
+BA_ "GenMsgCycleTime" BO_ 304 250;
 BA_ "GenMsgCycleTime" BO_ 1728 1000;
 BA_ "GenMsgCycleTime" BO_ 1729 1000;
 BA_ "GenMsgCycleTime" BO_ 1730 1000;
