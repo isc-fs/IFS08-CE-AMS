@@ -182,4 +182,218 @@ private:
     bool         anchored_   = false;
 };
 
+// ---------------------------------------------------------------------------
+// SoC -> OCV, and the curve slope. The Coulomb counter only needs the inverse
+// map (voltage -> SoC) for anchoring; the Kalman filter needs the forward map
+// for its measurement prediction and the SLOPE for its observation matrix.
+// ---------------------------------------------------------------------------
+
+// Forward map: rested cell voltage for a given SoC. Same breakpoints as
+// ocv_to_soc_permille, walked the other way.
+[[nodiscard]] inline double ocv_from_soc(double soc) noexcept {
+    if (soc <= 0.0) return static_cast<double>(OcvCellMv[0]) * 1e-3;
+    if (soc >= 1.0) return static_cast<double>(OcvCellMv[OcvPoints - 1u]) * 1e-3;
+
+    const double permille = soc * 1000.0;
+    for (std::uint8_t i = 1; i < OcvPoints; ++i) {
+        if (permille <= static_cast<double>(OcvSocPermille[i])) {
+            const double s0 = static_cast<double>(OcvSocPermille[i - 1u]);
+            const double s1 = static_cast<double>(OcvSocPermille[i]);
+            const double v0 = static_cast<double>(OcvCellMv[i - 1u]) * 1e-3;
+            const double v1 = static_cast<double>(OcvCellMv[i]) * 1e-3;
+            return v0 + (v1 - v0) * (permille - s0) / (s1 - s0);
+        }
+    }
+    return static_cast<double>(OcvCellMv[OcvPoints - 1u]) * 1e-3;
+}
+
+// dOCV/dSoC in volts per unit SoC. THIS IS THE OBSERVATION MATRIX H, and it is
+// why an EKF is the right tool here rather than a fixed blend: the gain is
+// proportional to it, so the filter automatically trusts voltage where the curve
+// carries information and ignores it where the curve is flat.
+//
+// On this fitted VTC6 curve the slope spans roughly 0.94 V/unit on the plateau
+// (3468 -> 3655 mV over SoC 0.30 -> 0.50) to 2.26 V/unit at the top
+// (3994 -> 4220 mV over 0.90 -> 1.00) -- a 2.4x swing in how much a millivolt
+// is worth. Outside the curve the slope is zero, which correctly means "this
+// measurement says nothing about SoC" and drives the gain to zero rather than
+// letting a railed reading yank the estimate.
+[[nodiscard]] inline double ocv_slope(double soc) noexcept {
+    if (soc <= 0.0 || soc >= 1.0) return 0.0;
+
+    const double permille = soc * 1000.0;
+    for (std::uint8_t i = 1; i < OcvPoints; ++i) {
+        if (permille <= static_cast<double>(OcvSocPermille[i])) {
+            const double ds = (static_cast<double>(OcvSocPermille[i]) -
+                              static_cast<double>(OcvSocPermille[i - 1u])) * 1e-3;
+            const double dv = (static_cast<double>(OcvCellMv[i]) -
+                              static_cast<double>(OcvCellMv[i - 1u])) * 1e-3;
+            return dv / ds;
+        }
+    }
+    return 0.0;
+}
+
+// Internal resistance of ONE SERIES ELEMENT, in ohms.
+//
+//     R_cell(T, SoC) = R_NOM * f_SoC(SoC) * max(1 + ALPHA_R*(T - 25), 0.4)
+//     R_element      = R_cell / CellsInParallel
+//
+// The parallel divide is not cosmetic: the LTC measures a 6P GROUP, so the
+// resistance in the measurement model is a sixth of a cell's. Forgetting it
+// would overstate the I*R term 6x and make the filter fight a drop that is not
+// there. The 0.4 floor is the simulator's own clamp, keeping the linear fit
+// physical at high temperature.
+[[nodiscard]] inline double r_int_element_ohm(double soc, std::int16_t tempC) noexcept {
+    // f_SoC: piecewise linear over the fitted breakpoints.
+    const double permille = (soc <= 0.0) ? 0.0 : (soc >= 1.0 ? 1000.0 : soc * 1000.0);
+    double f_soc = static_cast<double>(config::RIntSocValMilli[config::RIntSocPoints - 1u]) * 1e-3;
+    if (permille <= static_cast<double>(config::RIntSocBpPermille[0])) {
+        f_soc = static_cast<double>(config::RIntSocValMilli[0]) * 1e-3;
+    } else {
+        for (std::uint8_t i = 1; i < config::RIntSocPoints; ++i) {
+            if (permille <= static_cast<double>(config::RIntSocBpPermille[i])) {
+                const double s0 = static_cast<double>(config::RIntSocBpPermille[i - 1u]);
+                const double s1 = static_cast<double>(config::RIntSocBpPermille[i]);
+                const double v0 = static_cast<double>(config::RIntSocValMilli[i - 1u]) * 1e-3;
+                const double v1 = static_cast<double>(config::RIntSocValMilli[i]) * 1e-3;
+                f_soc = v0 + (v1 - v0) * (permille - s0) / (s1 - s0);
+                break;
+            }
+        }
+    }
+
+    const double alpha = static_cast<double>(config::RIntAlphaMicroPerK) * 1e-6;
+    double f_T = 1.0 + alpha * static_cast<double>(tempC - config::RIntTempRefC);
+    if (f_T < 0.4) f_T = 0.4;
+
+    const double r_cell = static_cast<double>(config::RIntNomMicroOhm) * 1e-6 * f_soc * f_T;
+    return r_cell / static_cast<double>(config::CellsInParallel);
+}
+
+// ---------------------------------------------------------------------------
+// Extended Kalman filter on SoC.
+// ---------------------------------------------------------------------------
+// One state (SoC). Prediction IS Coulomb counting; correction is the voltage
+// residual against the equivalent-circuit model:
+//
+//   predict:  x' = x - I*dt/Q                         P' = P + Q_proc*dt
+//   measure:  h(x) = OCV(x) - I*R_element(x,T)        H = dOCV/dSoC
+//   update:   K = P'H / (H P' H + R)                  x = x' + K*(z - h(x'))
+//                                                     P = (1 - K H) P'
+//
+// Two properties worth stating because they are the reason to prefer this over
+// CC-plus-periodic-anchor:
+//
+//  1. H = dOCV/dSoC means the gain self-schedules. On the flat plateau H is
+//     small, K is small, and the filter rides Coulomb counting. Near the ends H
+//     is 2.4x larger and voltage pulls harder. No hand-written blending rule.
+//
+//  2. R grows with I^2, so a measurement taken under load is automatically
+//     distrusted -- which is what stops the filter interpreting an I*R drop as
+//     lost charge. That replaces CC's binary rest gate with a continuous one.
+//
+// H deliberately omits the dR_int/dSoC term. It is not negligible at high
+// current (~0.17 V/unit at 100 A, vs a 0.94 V/unit plateau slope), but f_SoC is
+// non-monotonic and piecewise, so its derivative is discontinuous and would make
+// H jump at breakpoints. Inflating R with I^2 handles the same physics smoothly:
+// both say "trust voltage less under load", but only one keeps H well behaved.
+//
+// WHY double AND NOT float: the process-noise step is Q*dt = 1e-8 * 0.05 =
+// 5e-10, while float32 epsilon at P ~ 0.04 is ~4.8e-9. Every single increment
+// would round to ZERO, P would never grow, and the filter would silently go
+// deaf to voltage after its first few corrections -- an EKF failure mode that
+// looks like "it just stopped converging" and is very hard to spot from the
+// output. A host test (variance_grows_on_predict_shrinks_on_correct) caught it.
+// The Cortex-M7 here is -mfpu=fpv5-d16, i.e. hardware double precision, so this
+// costs essentially nothing at the 20 Hz this runs at.
+//
+// TELEMETRY ONLY -- see the safety contract at the top of this file.
+class KalmanSoc {
+public:
+    // First valid measurement seeds the state; there is no separate anchor step
+    // and no rest requirement. P starts at SocEkfInitVar (sigma ~20 % SoC), so
+    // early corrections pull hard and the estimate converges within seconds
+    // instead of waiting minutes for the pack to go quiet.
+    void seed(std::uint16_t cell_mV) noexcept {
+        soc_       = static_cast<double>(ocv_to_soc_permille(cell_mV)) * 1e-3;
+        var_       = config::SocEkfInitVar;
+        converged_ = true;
+    }
+
+    void invalidate() noexcept { converged_ = false; }
+    [[nodiscard]] bool valid() const noexcept { return converged_; }
+
+    // Coulomb-counting prediction. `current_mA` is + = DISCHARGE, matching
+    // CurrentState::filtered_mA.
+    void predict(std::int32_t current_mA, std::uint32_t dt_ms) noexcept {
+        if (!converged_) return;
+        if (dt_ms == 0u || dt_ms > config::SocMaxIntegrationGapMs) return;
+
+        const double dt_s      = static_cast<double>(dt_ms) * 1e-3;
+        const double amps      = static_cast<double>(current_mA) * 1e-3;
+        const double coulombs  = static_cast<double>(config::PackCapacityMah) * 3.6;  // mAh -> A*s
+        soc_ -= amps * dt_s / coulombs;
+
+        // Uncertainty always grows through prediction. Without this P would
+        // collapse after a few corrections and the filter would stop listening
+        // to voltage entirely -- the classic way an EKF goes deaf.
+        var_ += config::SocEkfProcessVarPerS * dt_s;
+        clamp();
+    }
+
+    // Voltage correction against the equivalent-circuit model. `cell_mV` should
+    // be the MINIMUM cell: usable pack charge is set by the weakest element.
+    void correct(std::uint16_t cell_mV, std::int32_t current_mA,
+                 std::int16_t tempC) noexcept {
+        if (!converged_) return;
+
+        const double amps = static_cast<double>(current_mA) * 1e-3;
+        const double z    = static_cast<double>(cell_mV) * 1e-3;
+
+        // Predicted terminal voltage: OCV minus the ohmic drop. Positive
+        // (discharge) current pulls the terminal BELOW OCV.
+        const double h = ocv_from_soc(soc_) - amps * r_int_element_ohm(soc_, tempC);
+        const double H = ocv_slope(soc_);
+
+        // Flat curve (or railed outside it) -> this measurement carries no SoC
+        // information. Bail rather than divide by a near-zero denominator.
+        if (H <= 1e-6) return;
+
+        const double R = config::SocEkfMeasVarBase +
+                        config::SocEkfMeasVarPerA2 * amps * amps;
+        const double S = H * var_ * H + R;
+        if (S <= 0.0) return;
+
+        const double K = var_ * H / S;
+        soc_ += K * (z - h);
+        var_  = (1.0 - K * H) * var_;
+        if (var_ < 0.0) var_ = 0.0;      // guard against FP round-off
+        clamp();
+    }
+
+    [[nodiscard]] double soc() const noexcept { return soc_; }
+    [[nodiscard]] double variance() const noexcept { return var_; }
+
+    [[nodiscard]] std::uint16_t soc_permille() const noexcept {
+        if (!converged_) return 0u;
+        return static_cast<std::uint16_t>(soc_ * 1000.0 + 0.5);
+    }
+
+    [[nodiscard]] std::uint8_t soc_percent() const noexcept {
+        if (!converged_) return Unknown;
+        return static_cast<std::uint8_t>(soc_ * 100.0 + 0.5);
+    }
+
+private:
+    void clamp() noexcept {
+        if (soc_ < 0.0) soc_ = 0.0;
+        if (soc_ > 1.0) soc_ = 1.0;
+    }
+
+    double soc_       = 0.0;
+    double var_       = config::SocEkfInitVar;
+    bool  converged_ = false;
+};
+
 }  // namespace ams::soc

@@ -212,3 +212,188 @@ extern "C" void test_soc_counter_1C_discharge_empties_in_one_hour(void) {
     TEST_ASSERT_UINT16_WITHIN(10, 0, cc.soc_permille());
     TEST_ASSERT_EQUAL_INT64(full_mAs(), static_cast<std::int64_t>(config::PackCapacityMah) * 3600);
 }
+
+// ===========================================================================
+// Extended Kalman filter
+// ===========================================================================
+
+// --- forward OCV map + slope ------------------------------------------------
+
+extern "C" void test_soc_ocv_forward_inverse_round_trip(void) {
+    // ocv_from_soc and ocv_to_soc_permille must be the same curve walked in
+    // opposite directions. A mismatch would make the filter's predicted
+    // measurement disagree with its own seed.
+    for (std::uint16_t p = 0; p <= 1000; p += 25) {
+        const float  soc = static_cast<float>(p) * 1e-3f;
+        const float  v   = soc::ocv_from_soc(soc);
+        const auto   mv  = static_cast<std::uint16_t>(v * 1000.0f + 0.5f);
+        TEST_ASSERT_UINT16_WITHIN(12, p, soc::ocv_to_soc_permille(mv));
+    }
+}
+
+extern "C" void test_soc_ocv_slope_is_steeper_at_the_top(void) {
+    // The whole reason an EKF suits this problem: the curve carries far more
+    // information near full than on the plateau, and the gain follows it.
+    const float plateau = soc::ocv_slope(0.40f);   // 3468->3655 mV over 0.30..0.50
+    const float top     = soc::ocv_slope(0.95f);   // 3994->4220 mV over 0.90..1.00
+    TEST_ASSERT_TRUE(plateau > 0.0f);
+    TEST_ASSERT_TRUE(top > plateau);
+    TEST_ASSERT_TRUE(top > 2.0f * plateau);        // measured ~2.4x on this fit
+    // Outside the curve a reading says nothing about SoC -> zero gain.
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, soc::ocv_slope(0.0f));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, soc::ocv_slope(1.0f));
+}
+
+// --- internal resistance model ---------------------------------------------
+
+extern "C" void test_soc_r_int_matches_fitted_model(void) {
+    // At 25 C and mid-SoC: f_T = 1, f_SoC ~ 0.986 (interpolated at 0.5).
+    // R_cell = 0.020060 * 0.986 = 19.78 mOhm; element = /6 = 3.30 mOhm.
+    const float r = soc::r_int_element_ohm(0.50f, 25);
+    TEST_ASSERT_FLOAT_WITHIN(0.0002f, 0.00330f, r);
+
+    // The 6P divide is load-bearing -- forgetting it overstates I*R six-fold.
+    TEST_ASSERT_TRUE(r < 0.020060f / 5.0f);
+}
+
+extern "C" void test_soc_r_int_falls_with_temperature(void) {
+    // f_T = 1 + ALPHA_R*(T-25) with ALPHA_R negative -> hotter cell, lower R.
+    const float cold = soc::r_int_element_ohm(0.5f, 0);
+    const float warm = soc::r_int_element_ohm(0.5f, 25);
+    const float hot  = soc::r_int_element_ohm(0.5f, 45);
+    TEST_ASSERT_TRUE(cold > warm);
+    TEST_ASSERT_TRUE(warm > hot);
+    // And the simulator's 0.4 floor keeps the LINEAR fit physical when
+    // extrapolated far past the fitted range.
+    TEST_ASSERT_TRUE(soc::r_int_element_ohm(0.5f, 120) > 0.0f);
+}
+
+// --- filter behaviour -------------------------------------------------------
+
+extern "C" void test_soc_ekf_starts_invalid_and_seeds(void) {
+    soc::KalmanSoc k;
+    TEST_ASSERT_FALSE(k.valid());
+    TEST_ASSERT_EQUAL_UINT8(soc::Unknown, k.soc_percent());
+
+    k.seed(3655);                                  // OCV breakpoint at 50 %
+    TEST_ASSERT_TRUE(k.valid());
+    TEST_ASSERT_EQUAL_UINT8(50, k.soc_percent());
+}
+
+extern "C" void test_soc_ekf_predict_matches_coulomb_counting(void) {
+    // With no corrections the prediction step must BE Coulomb counting -- the
+    // EKF subsumes it rather than replacing it.
+    soc::KalmanSoc      k;
+    soc::CoulombCounter cc;
+    k.seed(4220);            // 100 %
+    cc.anchor(1000);
+
+    for (int i = 0; i < 2000; ++i) { k.predict(64800, 50); cc.update(64800, 50); }
+    TEST_ASSERT_UINT16_WITHIN(6, cc.soc_permille(), k.soc_permille());
+}
+
+extern "C" void test_soc_ekf_variance_grows_on_predict_shrinks_on_correct(void) {
+    // The two halves of a Kalman filter. If P never grew the filter would go
+    // deaf to voltage; if it never shrank the estimate would never sharpen.
+    soc::KalmanSoc k;
+    k.seed(3655);
+    const float v0 = k.variance();
+
+    for (int i = 0; i < 100; ++i) k.predict(0, 50);
+    TEST_ASSERT_TRUE_MESSAGE(k.variance() > v0, "P must grow through prediction");
+
+    const float v1 = k.variance();
+    for (int i = 0; i < 20; ++i) k.correct(3655, 0, 25);
+    TEST_ASSERT_TRUE_MESSAGE(k.variance() < v1, "P must shrink through correction");
+}
+
+extern "C" void test_soc_ekf_converges_from_a_wrong_seed(void) {
+    // Seeded 30 points high, then shown a consistent rested voltage. It must
+    // walk back to the truth -- this is the behaviour plain CC cannot offer
+    // without a 5-minute rest gate.
+    soc::KalmanSoc k;
+    k.seed(3936);                                  // ~80 %
+    for (int i = 0; i < 400; ++i) { k.predict(0, 50); k.correct(3655, 0, 25); }
+    TEST_ASSERT_UINT16_WITHIN(40, 500, k.soc_permille());   // pulled to ~50 %
+}
+
+extern "C" void test_soc_ekf_trusts_voltage_less_under_load(void) {
+    // R inflates with I^2, so the same voltage error moves the estimate far
+    // less at 150 A than at rest. This is what stops the filter reading an I*R
+    // drop as lost charge.
+    const std::uint16_t wrong_mv = 3468;           // reads ~30 % vs a 50 % seed
+
+    soc::KalmanSoc rest;  rest.seed(3655);
+    soc::KalmanSoc load;  load.seed(3655);
+    for (int i = 0; i < 20; ++i) {
+        rest.correct(wrong_mv, 0,      25);
+        load.correct(wrong_mv, 150000, 25);        // 150 A
+    }
+    const int moved_rest = 500 - static_cast<int>(rest.soc_permille());
+    const int moved_load = 500 - static_cast<int>(load.soc_permille());
+    TEST_ASSERT_TRUE_MESSAGE(moved_rest > moved_load,
+                             "a loaded measurement must move the estimate less");
+}
+
+extern "C" void test_soc_ekf_ignores_measurements_where_curve_is_flat(void) {
+    // Railed outside the curve -> slope 0 -> no information -> no update.
+    // Without this guard the gain denominator collapses.
+    soc::KalmanSoc k;
+    k.seed(4220);                                  // 100 %, slope is 0 there
+    const std::uint16_t before = k.soc_permille();
+    for (int i = 0; i < 50; ++i) k.correct(2500, 0, 25);
+    TEST_ASSERT_EQUAL_UINT16(before, k.soc_permille());
+}
+
+extern "C" void test_soc_ekf_rejects_implausible_gaps_like_cc(void) {
+    soc::KalmanSoc k;
+    k.seed(3655);
+    const std::uint16_t before = k.soc_permille();
+    k.predict(100000, config::SocMaxIntegrationGapMs + 1u);
+    TEST_ASSERT_EQUAL_UINT16(before, k.soc_permille());
+}
+
+extern "C" void test_soc_ekf_invalidate_returns_to_unknown(void) {
+    soc::KalmanSoc k;
+    k.seed(3843);
+    TEST_ASSERT_EQUAL_UINT8(70, k.soc_percent());
+    k.invalidate();
+    TEST_ASSERT_EQUAL_UINT8(soc::Unknown, k.soc_percent());
+    k.predict(64800, 50);                          // inert while invalid
+    TEST_ASSERT_EQUAL_UINT8(soc::Unknown, k.soc_percent());
+}
+
+// --- the headline claim -----------------------------------------------------
+
+extern "C" void test_soc_ekf_beats_coulomb_counting_with_a_biased_sensor(void) {
+    // THE reason to prefer the EKF. A current sensor with a small offset makes
+    // Coulomb counting drift WITHOUT BOUND -- the error integrates linearly and
+    // nothing corrects it until the pack rests. The EKF sees the voltage
+    // disagreeing and pulls back continuously.
+    //
+    // Scenario: pack truly sits at 50 % SoC, at rest. The sensor reads a
+    // constant +2 A that is not really flowing. Over 30 minutes CC bleeds away
+    // a large chunk of nonexistent charge; the EKF holds.
+    soc::KalmanSoc      k;
+    soc::CoulombCounter cc;
+    k.seed(3655);              // 50 %
+    cc.anchor(500);
+
+    const std::int32_t phantom_mA = 2000;          // 2 A of pure sensor offset
+    for (int i = 0; i < 36000; ++i) {              // 30 min at 50 ms
+        cc.update(phantom_mA, 50);
+        k.predict(phantom_mA, 50);
+        k.correct(3655, 0, 25);                    // truth: rested at 50 %
+    }
+
+    const int cc_err  = static_cast<int>(cc.soc_permille()) - 500;
+    const int ekf_err = static_cast<int>(k.soc_permille())  - 500;
+    const int cc_abs  = cc_err  < 0 ? -cc_err  : cc_err;
+    const int ekf_abs = ekf_err < 0 ? -ekf_err : ekf_err;
+
+    // CC should have drifted badly: 2 A * 1800 s = 3600 A*s = 5.6 % of 18 Ah.
+    TEST_ASSERT_TRUE_MESSAGE(cc_abs > 40, "expected Coulomb counting to drift");
+    // The EKF should be far closer to truth.
+    TEST_ASSERT_TRUE_MESSAGE(ekf_abs < cc_abs / 2,
+                             "EKF must beat CC under a biased current sensor");
+}

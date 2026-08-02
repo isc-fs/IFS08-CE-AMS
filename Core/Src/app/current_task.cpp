@@ -14,6 +14,9 @@
 //   4. Reconfigure ADC3 regular channel for INP11 single-ended (DCDC),
 //      start, poll, get
 //   5. Feed into CurrentService::update_dcdc_from_adc
+//   5b. Advance the SoC filter (predict from current, correct from cell
+//       voltage). Runs here because this task already owns the current
+//       samples and is not realtime-critical. TELEMETRY ONLY.
 //   6. On HAL error at any step: skip that channel's update so the
 //      corresponding last_*_update_tick does not advance -> SafetyTask
 //      trips on staleness for the pack channel (IStaleMs = 200 ms) and
@@ -67,69 +70,70 @@ volatile std::uint32_t g_current_adc_dcdc_fail = 0;
 volatile std::uint8_t  g_current_disconnect_streak = 0;
 
 // ---------------------------------------------------------------------------
-// State of charge -- Coulomb counting anchored on OCV. TELEMETRY ONLY; see the
-// safety contract at the top of soc_estimator.hpp. Owned by this task (single
-// writer), published as a plain byte for AcuCanTask to read.
+// State of charge -- EKF over the equivalent-circuit model. TELEMETRY ONLY; see
+// the safety contract at the top of soc_estimator.hpp. Owned by this task
+// (single writer), published as a plain byte for AcuCanTask to read.
 // ---------------------------------------------------------------------------
-ams::soc::CoulombCounter s_soc;
-std::uint32_t            s_soc_last_tick = 0;
-std::uint32_t            s_rest_since    = 0;   // tick the pack last went quiet
-bool                     s_resting       = false;
+ams::soc::KalmanSoc s_soc;
+std::uint32_t       s_soc_last_tick = 0;
 
-// Published SoC percent, or soc::Unknown. Single-writer (this task), read by
-// AcuCanTask -- an 8-bit read is atomic on Cortex-M7, same contract as
-// g_state_telemetry.
+// State-of-charge update, run once per CurrentPeriodMs (50 ms).
+//
+// Structure is the textbook EKF pair: PREDICT from the current integral
+// (which is exactly Coulomb counting), then CORRECT against the measured cell
+// voltage through the equivalent-circuit model. The gain schedules itself off
+// the OCV slope, so no rest gate and no hand-written blend -- the filter leans
+// on voltage where the curve is steep and on the integral where it is flat.
+//
+// TELEMETRY ONLY. Nothing below can influence the FSM, the contactors or
+// AMS_OK; the single byte it publishes is read only by AcuCanTask for 0x130.
 void update_soc() noexcept {
     using namespace ams;
 
-    const auto        cur = CurrentService::instance().snapshot();
+    const auto          cur = CurrentService::instance().snapshot();
     const std::uint32_t now = osKernelGetTickCount();
 
-    // A faulted or stale current sensor makes the integral meaningless: the
-    // charge that flowed while we could not measure it is simply unknown, and
-    // continuing to integrate a stale value would fabricate it. Drop the anchor
-    // and wait for a fresh OCV rest.
     // Unsigned tick subtraction, wrap-safe -- same form the safety predicate
     // uses for IStaleMs. This task is the writer, so a stale timestamp means an
     // ADC conversion failed and update_from_adc was never called.
     const std::uint32_t age = now - cur.last_update_tick;
     if (cur.sensor_fault || age > config::IStaleMs) {
+        // Charge that moved while we could not measure it is simply unknown,
+        // and predicting through it would fabricate it. Drop the estimate
+        // rather than publish a number we cannot stand behind.
         s_soc.invalidate();
-        s_resting = false;
-        g_soc_percent = soc::Unknown;
+        g_soc_percent   = soc::Unknown;
         s_soc_last_tick = now;
         return;
     }
 
-    // Track how long the pack has been quiet, for the OCV rest gate.
-    const std::int32_t mag = cur.filtered_mA < 0 ? -cur.filtered_mA : cur.filtered_mA;
-    if (mag <= static_cast<std::int32_t>(config::SocRestCurrentMa)) {
-        if (!s_resting) { s_resting = true; s_rest_since = now; }
-    } else {
-        s_resting = false;
-    }
-
-    // Integrate first, so the charge moved since the last sample is counted
-    // even on the cycle an anchor lands.
+    // --- predict (Coulomb counting) ---
     if (s_soc_last_tick != 0u) {
-        s_soc.update(cur.filtered_mA, now - s_soc_last_tick);
+        s_soc.predict(cur.filtered_mA, now - s_soc_last_tick);
     }
     s_soc_last_tick = now;
 
-    // (Re-)anchor whenever the pack has been genuinely at rest long enough.
-    // This is what stops Coulomb drift accumulating without bound -- sensor
-    // offset integrates linearly, so an unanchored counter is only as good as
-    // its zero-point calibration times the hours since it started.
-    //
-    // Anchor off the MINIMUM cell: usable pack charge is set by the weakest
-    // cell, and that is the number an operator cares about. It also matches the
-    // TFM model's framing, which estimates a single cell's SoC.
+    // --- correct (voltage residual) ---
+    // Needs a trustworthy cell voltage, so require the whole chain online and
+    // at least one complete poll. Without it we keep predicting, which degrades
+    // gracefully to plain Coulomb counting rather than to nothing.
     const auto bms = BmsService::instance().snapshot();
-    if (bms.module_online_mask == config::AllModulesMask &&
-        bms.first_full_poll_done &&
-        s_resting &&
-        soc::ocv_anchor_valid(cur.filtered_mA, now - s_rest_since)) {
-        s_soc.anchor(soc::ocv_to_soc_permille(bms.min_cell_mV));
+    const bool cells_trustworthy =
+        bms.module_online_mask == config::AllModulesMask && bms.first_full_poll_done;
+
+    if (cells_trustworthy) {
+        // Seed on the first good sample. Unlike the pure-CC path this does NOT
+        // wait for the pack to rest: P starts wide and the correction step
+        // walks the estimate in, which is the whole advantage of the filter.
+        // A seed taken under load is a poor guess, and that is fine -- the
+        // I^2 term in R makes the filter discount it until the pack quietens.
+        if (!s_soc.valid()) {
+            s_soc.seed(bms.min_cell_mV);
+        }
+        // Minimum cell: usable pack charge is set by the weakest element.
+        // avg_tempC drives R_int -- we cannot know the min cell's own
+        // temperature, and the pack average is the honest representative.
+        s_soc.correct(bms.min_cell_mV, cur.filtered_mA, bms.avg_tempC);
     }
 
     g_soc_percent = s_soc.soc_percent();
