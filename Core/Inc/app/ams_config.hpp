@@ -293,6 +293,101 @@ inline constexpr std::uint8_t  BmsModuleCount      = 5;
 inline constexpr std::uint8_t  CellsPerModule      = 19;
 inline constexpr std::uint8_t  TempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 
+// ---------------------------------------------------------------------------
+// Pack energy + state-of-charge (soc_estimator.hpp). TELEMETRY ONLY -- no
+// safety predicate reads any of this.
+// ---------------------------------------------------------------------------
+// Usable capacity of ONE SERIES ELEMENT, which is what Coulomb counting
+// integrates against: the pack is 95S6P of Sony/Murata VTC6 (3.0 Ah nominal),
+// so each of the 95 series positions is a 6-parallel group of 6 x 3.0 = 18.0 Ah.
+// Every series element carries the full pack current by definition, so pack SoC
+// and element SoC are the same number -- no scaling by series count.
+//
+// Sourced from the TFM pack model (raulmoranguerra/TFM_RMG,
+// BMS_DL/sim/params.py: CELL_CAPACITY_AH = 3.0, N_PARALLEL = 6, 95S6P) and
+// independently corroborated by this firmware's own "C/101 balancer" phrasing,
+// which back-solves to ~18 Ah at the 179 mA balance current.
+//
+// COMMISSION: nominal datasheet capacity, NOT measured on this pack. Real usable
+// capacity falls with age and is temperature-dependent; a 10 % error here is a
+// 10 % proportional error in every Coulomb-counted SoC. Replace with a measured
+// full-discharge figure once one exists.
+inline constexpr std::uint32_t PackCapacityMah     = 18000;  // 6P x 3.0 Ah -- COMMISSION
+
+// OCV anchoring gate. Terminal voltage only equals open-circuit voltage at rest;
+// under load it carries I*R_int (~20 mOhm/cell fitted, so 10 A moves a cell
+// ~200 mV -- worth ~20 SoC points on the flat part of the curve). Both
+// conditions must hold before an anchor is taken.
+//
+// 500 mA: comfortably above sensor noise and the balancing bleed (~179 mA/cell)
+// while still small enough that the residual I*R error is ~10 mV, i.e. ~1 SoC
+// point mid-curve.
+inline constexpr std::uint32_t SocRestCurrentMa    = 500;
+// 5 min: the ohmic part of the polarisation recovers in microseconds, but the
+// concentration gradient relaxes over minutes. Anchoring too early reads low.
+// COMMISSION: not characterised on this cell -- if anchors land consistently
+// below a known-good reference, this is the first number to raise.
+inline constexpr std::uint32_t SocRestSettleMs     = 300000;  // 5 min -- COMMISSION
+
+// Longest gap the integrator will accept in one step. Beyond this the sample is
+// dropped rather than extrapolated: a gap that long means the task was starved
+// or the counter was just anchored, and inventing charge across it is worse than
+// losing that interval. 10x CurrentPeriodMs (50 ms).
+inline constexpr std::uint32_t SocMaxIntegrationGapMs = 500;
+
+// ---------------------------------------------------------------------------
+// SoC Kalman filter -- equivalent-circuit measurement model.
+// ---------------------------------------------------------------------------
+// Coulomb counting alone only re-anchors after SocRestSettleMs at rest, which
+// during a race session may simply never happen -- leaving pure integrator drift
+// for the whole run. The EKF corrects CONTINUOUSLY from the voltage residual,
+// and the Kalman gain does the weighting for free: it leans on voltage where the
+// OCV curve is steep (near full/empty) and on Coulomb counting across the flat
+// plateau, because the gain is proportional to dOCV/dSoC.
+//
+// Cell model, taken verbatim from the fitted VTC6 parameters in the TFM pack
+// simulator (raulmoranguerra/TFM_RMG, BMS_DL/sim/params.py + pack_model.py):
+//
+//     R_int(T, SoC) = R_NOM * f_SoC(SoC) * f_T(T)
+//     f_T(T)        = max(1 + ALPHA_R * (T - 25 degC), 0.4)     <- LINEAR, not exp
+//
+// Same characterisation that produced the network's training data, so firmware
+// and dataset stay on one model.
+inline constexpr std::uint32_t RIntNomMicroOhm    = 20060;   // R_NOM 0.020060 ohm, per CELL
+inline constexpr std::int32_t  RIntAlphaMicroPerK = -19926;  // ALPHA_R -0.019926 /K
+inline constexpr std::int16_t  RIntTempRefC       = 25;      // T_REF 298.15 K
+inline constexpr std::uint8_t  CellsInParallel    = 6;       // 95S6P -- element R = cell R / 6
+
+// f_SoC(SoC) piecewise-linear resistance shape (F_SOC_BP / F_SOC_VAL), x1000.
+// Non-monotonic by nature: internal resistance rises at both extremes.
+inline constexpr std::uint8_t  RIntSocPoints          = 7;
+inline constexpr std::uint16_t RIntSocBpPermille[RIntSocPoints] =
+    {   0,  100,  200,  500,  800,  900, 1000 };
+inline constexpr std::uint16_t RIntSocValMilli[RIntSocPoints] =
+    {1033, 1043, 1030,  986, 1051, 1006, 1009 };
+
+// --- Filter tuning. All COMMISSION: derived from first principles below, none
+// --- fitted against a measured SoC reference on this pack.
+//
+// P0 -- initial variance. sigma = 0.2 (20 % SoC), i.e. "the first voltage
+// reading is a hint, not a fix". Lets the filter converge quickly from a cold
+// start without a rest period, which is the whole point over plain CC.
+inline constexpr double SocEkfInitVar        = 0.04;
+// Q -- process noise per second. Coulomb counting is very good over short
+// horizons; this is the slow leak that stops P collapsing to zero and the filter
+// going deaf to voltage. sigma grows ~0.6 % SoC over an hour.
+inline constexpr double SocEkfProcessVarPerS = 1.0e-8;
+// R at zero current -- dominated by OCV CURVE FIT error, not ADC noise. The LTC
+// measures to ~1 mV but the fitted curve is worth ~10 mV, so sigma = 10 mV.
+inline constexpr double SocEkfMeasVarBase    = 1.0e-4;
+// R growth with current, scaled by I^2 because the error is PROPORTIONAL to
+// current: an uncertain R_int (say 20 % of 20 mOhm/6 per element) becomes
+// ~0.67 mOhm x I volts of unmodelled drop. At 100 A that is ~67 mV, so
+// var ~ 4.5e-3 -> k = 4.5e-3 / 100^2. This is what makes the filter
+// automatically distrust voltage under load instead of chasing I*R as if it
+// were charge.
+inline constexpr double SocEkfMeasVarPerA2   = 4.5e-7;
+
 // Accumulator bus (FDCAN1).
 //
 // Retired in fix/48 (TSMS+DASH_CHG FSM): AcuRxStartBtnId (0x600) and

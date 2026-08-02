@@ -110,6 +110,9 @@ BO_ 311 ACU_tmax_module_b: 6 AMS
  SG_ tmax_module4 : 23|16@0- (1,0) [0|0] "degC" Vector__XXX
  SG_ tmax_dcdc : 39|16@0- (1,0) [0|0] "degC" Vector__XXX
 
+BO_ 304 ACU_soc: 1 AMS
+ SG_ soc_percent : 7|8@0+ (1,0) [0|0] "%" Vector__XXX
+
 BO_ 1728 PIT_fsm_status: 8 AMS
  SG_ fsm_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
  SG_ mode_locked : 8|8@1+ (1,0) [0|0] "enum" Vector__XXX
@@ -603,6 +606,7 @@ BA_ "GenMsgCycleTime" BO_ 308 100;
 BA_ "GenMsgCycleTime" BO_ 309 50;
 BA_ "GenMsgCycleTime" BO_ 310 250;
 BA_ "GenMsgCycleTime" BO_ 311 250;
+BA_ "GenMsgCycleTime" BO_ 304 1000;
 BA_ "GenMsgCycleTime" BO_ 1728 1000;
 BA_ "GenMsgCycleTime" BO_ 1729 1000;
 BA_ "GenMsgCycleTime" BO_ 1730 1000;

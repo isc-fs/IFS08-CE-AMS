@@ -14,6 +14,9 @@
 //   4. Reconfigure ADC3 regular channel for INP11 single-ended (DCDC),
 //      start, poll, get
 //   5. Feed into CurrentService::update_dcdc_from_adc
+//   5b. Advance the SoC filter (predict from current, correct from cell
+//       voltage). Runs here because this task already owns the current
+//       samples and is not realtime-critical. TELEMETRY ONLY.
 //   6. On HAL error at any step: skip that channel's update so the
 //      corresponding last_*_update_tick does not advance -> SafetyTask
 //      trips on staleness for the pack channel (IStaleMs = 200 ms) and
@@ -34,7 +37,9 @@
 #include "app/current_task.h"
 
 #include "ams_config.hpp"
+#include "bms_service.hpp"
 #include "current_service.hpp"
+#include "soc_estimator.hpp"
 
 #include "cmsis_os2.h"
 #include "main.h"
@@ -42,6 +47,13 @@
 extern "C" {
 extern ADC_HandleTypeDef hadc3;
 }
+
+// Pack state of charge, 0..100 %, or ams::soc::Unknown (0xFF) when there is no
+// trustworthy estimate. Written only by CurrentSensorTask, read by AcuCanTask
+// for CAN 0x130 -- same single-writer / 8-bit-atomic contract as
+// g_state_telemetry. TELEMETRY ONLY: no safety predicate reads this, and
+// nothing downstream of it can influence the FSM, the contactors or AMS_OK.
+extern "C" volatile std::uint8_t g_soc_percent = ams::soc::Unknown;
 
 namespace {
 
@@ -56,6 +68,76 @@ volatile std::uint32_t g_current_adc_dcdc_fail = 0;
 // single glitch during the diff->SE channel reconfigure can't latch a
 // sticky Error. Exposed for telemetry/bench visibility.
 volatile std::uint8_t  g_current_disconnect_streak = 0;
+
+// ---------------------------------------------------------------------------
+// State of charge -- EKF over the equivalent-circuit model. TELEMETRY ONLY; see
+// the safety contract at the top of soc_estimator.hpp. Owned by this task
+// (single writer), published as a plain byte for AcuCanTask to read.
+// ---------------------------------------------------------------------------
+ams::soc::KalmanSoc s_soc;
+std::uint32_t       s_soc_last_tick = 0;
+
+// State-of-charge update, run once per CurrentPeriodMs (50 ms).
+//
+// Structure is the textbook EKF pair: PREDICT from the current integral
+// (which is exactly Coulomb counting), then CORRECT against the measured cell
+// voltage through the equivalent-circuit model. The gain schedules itself off
+// the OCV slope, so no rest gate and no hand-written blend -- the filter leans
+// on voltage where the curve is steep and on the integral where it is flat.
+//
+// TELEMETRY ONLY. Nothing below can influence the FSM, the contactors or
+// AMS_OK; the single byte it publishes is read only by AcuCanTask for 0x130.
+void update_soc() noexcept {
+    using namespace ams;
+
+    const auto          cur = CurrentService::instance().snapshot();
+    const std::uint32_t now = osKernelGetTickCount();
+
+    // Unsigned tick subtraction, wrap-safe -- same form the safety predicate
+    // uses for IStaleMs. This task is the writer, so a stale timestamp means an
+    // ADC conversion failed and update_from_adc was never called.
+    const std::uint32_t age = now - cur.last_update_tick;
+    if (cur.sensor_fault || age > config::IStaleMs) {
+        // Charge that moved while we could not measure it is simply unknown,
+        // and predicting through it would fabricate it. Drop the estimate
+        // rather than publish a number we cannot stand behind.
+        s_soc.invalidate();
+        g_soc_percent   = soc::Unknown;
+        s_soc_last_tick = now;
+        return;
+    }
+
+    // --- predict (Coulomb counting) ---
+    if (s_soc_last_tick != 0u) {
+        s_soc.predict(cur.filtered_mA, now - s_soc_last_tick);
+    }
+    s_soc_last_tick = now;
+
+    // --- correct (voltage residual) ---
+    // Needs a trustworthy cell voltage, so require the whole chain online and
+    // at least one complete poll. Without it we keep predicting, which degrades
+    // gracefully to plain Coulomb counting rather than to nothing.
+    const auto bms = BmsService::instance().snapshot();
+    const bool cells_trustworthy =
+        bms.module_online_mask == config::AllModulesMask && bms.first_full_poll_done;
+
+    if (cells_trustworthy) {
+        // Seed on the first good sample. Unlike the pure-CC path this does NOT
+        // wait for the pack to rest: P starts wide and the correction step
+        // walks the estimate in, which is the whole advantage of the filter.
+        // A seed taken under load is a poor guess, and that is fine -- the
+        // I^2 term in R makes the filter discount it until the pack quietens.
+        if (!s_soc.valid()) {
+            s_soc.seed(bms.min_cell_mV);
+        }
+        // Minimum cell: usable pack charge is set by the weakest element.
+        // avg_tempC drives R_int -- we cannot know the min cell's own
+        // temperature, and the pack average is the honest representative.
+        s_soc.correct(bms.min_cell_mV, cur.filtered_mA, bms.avg_tempC);
+    }
+
+    g_soc_percent = s_soc.soc_percent();
+}
 
 // One-shot single-channel read on ADC3. Reconfigures rank 1 to the
 // requested channel and single/differential mode, starts, polls, gets
@@ -143,5 +225,13 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
         } else {
             ++g_current_adc_dcdc_fail;
         }
+
+        // --- State of charge (TELEMETRY ONLY) ---
+        // Runs here rather than in MainTask because this task already owns the
+        // current samples and is NOT realtime-critical. Nothing in the safety
+        // path reads the result: it reaches CAN 0x130 and stops there. If every
+        // line below misbehaved the AMS would fault, precharge and open the
+        // contactors exactly as it does today.
+        update_soc();
     }
 }

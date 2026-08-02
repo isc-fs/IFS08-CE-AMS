@@ -1,0 +1,17 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x130  ACU_soc -- pack state of charge, 0..100 %.
+ *
+ * 0xFF is the "no trustworthy estimate" sentinel (ams::soc::Unknown), NOT a
+ * real reading: consumers must treat it as "unknown" rather than clamping it
+ * to 100. It appears before the first OCV anchor and whenever the current
+ * sensor faults or goes stale, since Coulomb counting cannot be trusted across
+ * an unmeasured interval.
+ *
+ * Mirrors ams::acu_tx::encode_soc(). TELEMETRY ONLY -- nothing in the safety
+ * path produces or consumes this value.
+ */
+
+CAN_MSG(ACU_soc, 0x130, 1, "AMS", 1000)
+    FIELD_BE (soc_percent, uint8_t, 0, 8, 1, 0, "%")
+CAN_MSG_END(ACU_soc)

@@ -66,16 +66,30 @@ encode_ok_precharge(std::uint8_t fsm_state) noexcept {
     return detail::to_array(buf);
 }
 
-// 0x130 SoC % — DEFERRED. No SOC estimator in firmware yet. Stub
-// returns the "unknown" sentinel 0xFF so consumers can distinguish
-// "no estimator running" from a real 0..100 value once one lands.
-// Not currently called by acu_can_task.cpp's TX scheduler -- reserve
-// the encoder for the contract-first day someone wires a real SoC.
-// Intentionally NOT on the DSL yet (no .def, no DBC row) because the
-// frame is not transmitted; ID stays reserved.
+// 0x130 SoC % — Coulomb counting anchored on the VTC6 OCV curve
+// (soc_estimator.hpp), produced by CurrentSensorTask.
+//
+// 0xFF (ams::soc::Unknown) is the "no trustworthy estimate" sentinel,
+// NOT a reading: it appears before the first OCV anchor and whenever
+// the current sensor faults or goes stale. Consumers must render it as
+// "unknown" rather than clamping to 100 %.
+//
+// TELEMETRY ONLY. Nothing in the safety path produces or consumes this
+// value, and no fault predicate reads it.
+[[nodiscard]] inline std::array<std::uint8_t, 1>
+encode_soc(std::uint8_t soc_percent) noexcept {
+    ifs08::ACU_soc_t in{};
+    in.soc_percent = soc_percent;
+    std::uint8_t buf[1] = {0};
+    ifs08::encode_ACU_soc(in, buf);
+    return detail::to_array(buf);
+}
+
+// Retained so the existing contract test keeps asserting the sentinel
+// value independently of the estimator.
 [[nodiscard]] inline std::array<std::uint8_t, 1>
 encode_soc_stub() noexcept {
-    return { std::uint8_t{0xFFu} };
+    return encode_soc(0xFFu);
 }
 
 // 0x12C v_cell_min — BE u16 mV (pack-wide cell min).

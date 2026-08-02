@@ -29,6 +29,7 @@
 #include "acu_currents.def"
 #include "acu_tmax_module_a.def"
 #include "acu_tmax_module_b.def"
+#include "acu_soc.def"
 
 #include "pit_fsm_status.def"
 #include "pit_timing.def"
