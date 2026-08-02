@@ -293,6 +293,48 @@ inline constexpr std::uint8_t  BmsModuleCount      = 5;
 inline constexpr std::uint8_t  CellsPerModule      = 19;
 inline constexpr std::uint8_t  TempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 
+// ---------------------------------------------------------------------------
+// Pack energy + state-of-charge (soc_estimator.hpp). TELEMETRY ONLY -- no
+// safety predicate reads any of this.
+// ---------------------------------------------------------------------------
+// Usable capacity of ONE SERIES ELEMENT, which is what Coulomb counting
+// integrates against: the pack is 95S6P of Sony/Murata VTC6 (3.0 Ah nominal),
+// so each of the 95 series positions is a 6-parallel group of 6 x 3.0 = 18.0 Ah.
+// Every series element carries the full pack current by definition, so pack SoC
+// and element SoC are the same number -- no scaling by series count.
+//
+// Sourced from the TFM pack model (raulmoranguerra/TFM_RMG,
+// BMS_DL/sim/params.py: CELL_CAPACITY_AH = 3.0, N_PARALLEL = 6, 95S6P) and
+// independently corroborated by this firmware's own "C/101 balancer" phrasing,
+// which back-solves to ~18 Ah at the 179 mA balance current.
+//
+// COMMISSION: nominal datasheet capacity, NOT measured on this pack. Real usable
+// capacity falls with age and is temperature-dependent; a 10 % error here is a
+// 10 % proportional error in every Coulomb-counted SoC. Replace with a measured
+// full-discharge figure once one exists.
+inline constexpr std::uint32_t PackCapacityMah     = 18000;  // 6P x 3.0 Ah -- COMMISSION
+
+// OCV anchoring gate. Terminal voltage only equals open-circuit voltage at rest;
+// under load it carries I*R_int (~20 mOhm/cell fitted, so 10 A moves a cell
+// ~200 mV -- worth ~20 SoC points on the flat part of the curve). Both
+// conditions must hold before an anchor is taken.
+//
+// 500 mA: comfortably above sensor noise and the balancing bleed (~179 mA/cell)
+// while still small enough that the residual I*R error is ~10 mV, i.e. ~1 SoC
+// point mid-curve.
+inline constexpr std::uint32_t SocRestCurrentMa    = 500;
+// 5 min: the ohmic part of the polarisation recovers in microseconds, but the
+// concentration gradient relaxes over minutes. Anchoring too early reads low.
+// COMMISSION: not characterised on this cell -- if anchors land consistently
+// below a known-good reference, this is the first number to raise.
+inline constexpr std::uint32_t SocRestSettleMs     = 300000;  // 5 min -- COMMISSION
+
+// Longest gap the integrator will accept in one step. Beyond this the sample is
+// dropped rather than extrapolated: a gap that long means the task was starved
+// or the counter was just anchored, and inventing charge across it is worse than
+// losing that interval. 10x CurrentPeriodMs (50 ms).
+inline constexpr std::uint32_t SocMaxIntegrationGapMs = 500;
+
 // Accumulator bus (FDCAN1).
 //
 // Retired in fix/48 (TSMS+DASH_CHG FSM): AcuRxStartBtnId (0x600) and

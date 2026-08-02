@@ -184,9 +184,20 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 
 - 50 ms — `0x135` currents
 - 100 ms — `0x020`, `0x12C`, `0x131..0x134`
-- 250 ms — `0x136..0x137`
+- 250 ms — `0x136..0x137`, `0x130`
 
-`0x130` (SOC) deferred — no SOC estimator in firmware yet.
+`0x130` (SOC) — pack state of charge, 1 byte, `0..100 %`. **`0xFF` is the
+"no trustworthy estimate" sentinel, not a reading**: it appears before the
+first OCV anchor and whenever the pack current sensor faults or goes stale,
+since Coulomb counting cannot be trusted across an unmeasured interval.
+Consumers must render `0xFF` as *unknown* rather than clamping it to 100 %.
+
+Produced by `CurrentSensorTask` via `soc_estimator.hpp`: Coulomb counting
+against `PackCapacityMah` (18 Ah = 6P x 3.0 Ah VTC6), re-anchored on the
+fitted VTC6 OCV curve whenever the pack has rested below `SocRestCurrentMa`
+for `SocRestSettleMs`. The anchor is taken off the **minimum** cell, since
+usable pack charge is set by the weakest one. TELEMETRY ONLY — no safety
+predicate reads it.
 
 ### `0x020` — ok_precharge
 

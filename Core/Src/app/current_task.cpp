@@ -34,7 +34,9 @@
 #include "app/current_task.h"
 
 #include "ams_config.hpp"
+#include "bms_service.hpp"
 #include "current_service.hpp"
+#include "soc_estimator.hpp"
 
 #include "cmsis_os2.h"
 #include "main.h"
@@ -42,6 +44,13 @@
 extern "C" {
 extern ADC_HandleTypeDef hadc3;
 }
+
+// Pack state of charge, 0..100 %, or ams::soc::Unknown (0xFF) when there is no
+// trustworthy estimate. Written only by CurrentSensorTask, read by AcuCanTask
+// for CAN 0x130 -- same single-writer / 8-bit-atomic contract as
+// g_state_telemetry. TELEMETRY ONLY: no safety predicate reads this, and
+// nothing downstream of it can influence the FSM, the contactors or AMS_OK.
+extern "C" volatile std::uint8_t g_soc_percent = ams::soc::Unknown;
 
 namespace {
 
@@ -56,6 +65,75 @@ volatile std::uint32_t g_current_adc_dcdc_fail = 0;
 // single glitch during the diff->SE channel reconfigure can't latch a
 // sticky Error. Exposed for telemetry/bench visibility.
 volatile std::uint8_t  g_current_disconnect_streak = 0;
+
+// ---------------------------------------------------------------------------
+// State of charge -- Coulomb counting anchored on OCV. TELEMETRY ONLY; see the
+// safety contract at the top of soc_estimator.hpp. Owned by this task (single
+// writer), published as a plain byte for AcuCanTask to read.
+// ---------------------------------------------------------------------------
+ams::soc::CoulombCounter s_soc;
+std::uint32_t            s_soc_last_tick = 0;
+std::uint32_t            s_rest_since    = 0;   // tick the pack last went quiet
+bool                     s_resting       = false;
+
+// Published SoC percent, or soc::Unknown. Single-writer (this task), read by
+// AcuCanTask -- an 8-bit read is atomic on Cortex-M7, same contract as
+// g_state_telemetry.
+void update_soc() noexcept {
+    using namespace ams;
+
+    const auto        cur = CurrentService::instance().snapshot();
+    const std::uint32_t now = osKernelGetTickCount();
+
+    // A faulted or stale current sensor makes the integral meaningless: the
+    // charge that flowed while we could not measure it is simply unknown, and
+    // continuing to integrate a stale value would fabricate it. Drop the anchor
+    // and wait for a fresh OCV rest.
+    // Unsigned tick subtraction, wrap-safe -- same form the safety predicate
+    // uses for IStaleMs. This task is the writer, so a stale timestamp means an
+    // ADC conversion failed and update_from_adc was never called.
+    const std::uint32_t age = now - cur.last_update_tick;
+    if (cur.sensor_fault || age > config::IStaleMs) {
+        s_soc.invalidate();
+        s_resting = false;
+        g_soc_percent = soc::Unknown;
+        s_soc_last_tick = now;
+        return;
+    }
+
+    // Track how long the pack has been quiet, for the OCV rest gate.
+    const std::int32_t mag = cur.filtered_mA < 0 ? -cur.filtered_mA : cur.filtered_mA;
+    if (mag <= static_cast<std::int32_t>(config::SocRestCurrentMa)) {
+        if (!s_resting) { s_resting = true; s_rest_since = now; }
+    } else {
+        s_resting = false;
+    }
+
+    // Integrate first, so the charge moved since the last sample is counted
+    // even on the cycle an anchor lands.
+    if (s_soc_last_tick != 0u) {
+        s_soc.update(cur.filtered_mA, now - s_soc_last_tick);
+    }
+    s_soc_last_tick = now;
+
+    // (Re-)anchor whenever the pack has been genuinely at rest long enough.
+    // This is what stops Coulomb drift accumulating without bound -- sensor
+    // offset integrates linearly, so an unanchored counter is only as good as
+    // its zero-point calibration times the hours since it started.
+    //
+    // Anchor off the MINIMUM cell: usable pack charge is set by the weakest
+    // cell, and that is the number an operator cares about. It also matches the
+    // TFM model's framing, which estimates a single cell's SoC.
+    const auto bms = BmsService::instance().snapshot();
+    if (bms.module_online_mask == config::AllModulesMask &&
+        bms.first_full_poll_done &&
+        s_resting &&
+        soc::ocv_anchor_valid(cur.filtered_mA, now - s_rest_since)) {
+        s_soc.anchor(soc::ocv_to_soc_permille(bms.min_cell_mV));
+    }
+
+    g_soc_percent = s_soc.soc_percent();
+}
 
 // One-shot single-channel read on ADC3. Reconfigures rank 1 to the
 // requested channel and single/differential mode, starts, polls, gets
@@ -143,5 +221,13 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
         } else {
             ++g_current_adc_dcdc_fail;
         }
+
+        // --- State of charge (TELEMETRY ONLY) ---
+        // Runs here rather than in MainTask because this task already owns the
+        // current samples and is NOT realtime-critical. Nothing in the safety
+        // path reads the result: it reaches CAN 0x130 and stops there. If every
+        // line below misbehaved the AMS would fault, precharge and open the
+        // contactors exactly as it does today.
+        update_soc();
     }
 }

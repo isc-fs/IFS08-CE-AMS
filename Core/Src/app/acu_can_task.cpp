@@ -69,6 +69,8 @@ extern "C" volatile std::uint8_t  g_mode_locked_telemetry;
 // (#276). reason matches ams::safety::FaultReason; detail is the
 // per-branch detail byte (module index / mask).
 extern "C" volatile std::uint8_t  g_fault_reason_telemetry;
+// Pack SoC %, or ams::soc::Unknown (0xFF). Written by CurrentSensorTask.
+extern "C" volatile std::uint8_t  g_soc_percent;
 extern "C" volatile std::uint8_t  g_fault_detail_telemetry;
 extern "C" volatile std::uint32_t g_bms_volt_poll_ms;
 extern "C" volatile std::uint32_t g_bms_volt_poll_max;
@@ -262,6 +264,12 @@ void tx_temp_module_a(const ams::BmsState& b) noexcept {
 }
 void tx_temp_module_b(const ams::BmsState& b) noexcept {
     send_or_fail(ams::config::AcuTxTempMaxModuleBId, ams::acu_tx::encode_tmax_module_b(b));
+}
+// 0x130 SoC %, or 0xFF when there is no trustworthy estimate. Read straight
+// from the byte CurrentSensorTask publishes -- TELEMETRY ONLY, nothing in the
+// safety path is involved.
+void tx_soc() noexcept {
+    send_or_fail(ams::config::AcuTxSocId, ams::acu_tx::encode_soc(g_soc_percent));
 }
 
 // ---- Pit-diag stream (#247) -----------------------------------------------
@@ -589,6 +597,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         if (now2 - last_slow_tx >= ams::config::EcuSlowTxMs) {
             tx_temp_module_a(bms);
             tx_temp_module_b(bms);
+            tx_soc();
             last_slow_tx = now2;
         }
         if (s_pit_diag_enabled &&
