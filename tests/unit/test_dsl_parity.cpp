@@ -175,7 +175,8 @@ extern "C" void test_dsl_registry_well_formed(void) {
     // fw-health (#411): +1 AMS_fw_health (0x6CA, ungated) = 30.
     // per-module balancing: +1 Operator_balance_modules (0x104) = 31.
     // SoC (phase 1, Coulomb counting): +1 ACU_soc (0x130) = 32.
-    TEST_ASSERT_EQUAL_UINT(32u, ifs08::ALL_MSGS_COUNT);
+    // balance-quiesce health: +1 PIT_balance_health (0x6CB) = 33.
+    TEST_ASSERT_EQUAL_UINT(33u, ifs08::ALL_MSGS_COUNT);
     // Spot-check the BE field's DBC start_bit convention (8*byte+7).
     bool checked = false;
     for (unsigned i = 0; i < ifs08::ALL_MSGS_COUNT; ++i) {

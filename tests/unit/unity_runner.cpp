@@ -387,6 +387,7 @@ void test_pit_diag_pec_per_ic_saturates(void);
 void test_pit_diag_comms_health_layout(void);
 void test_pit_diag_comms_health_zero_when_clean(void);
 void test_pit_diag_comms_health_fields_independent(void);
+void test_pit_encode_balance_health_layout(void);
 
 // test_fw_health.cpp
 void test_fw_health_reset_cause_priority(void);
@@ -875,6 +876,7 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_pit_diag_comms_health_layout);
     RUN_TEST(test_pit_diag_comms_health_zero_when_clean);
     RUN_TEST(test_pit_diag_comms_health_fields_independent);
+    RUN_TEST(test_pit_encode_balance_health_layout);
 
     RUN_TEST(test_fw_health_reset_cause_priority);
     RUN_TEST(test_fw_health_encode_layout);

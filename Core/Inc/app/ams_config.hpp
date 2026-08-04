@@ -544,6 +544,12 @@ inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + 
 inline constexpr std::uint32_t PitDiagPecPerIcAId        = 0x6C7u;  // per-IC PEC count: ICs 0..7 (saturating u8)
 inline constexpr std::uint32_t PitDiagPecPerIcBId        = 0x6C8u;  // per-IC PEC count: ICs 8..9 + reserved
 inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail (#331)
+// Balance-quiesce health: how often the pre-measurement DCC clear succeeded vs
+// failed. Published because DCP=0 does not cover a failed quiesce (LTC6811
+// Table 53 suppresses discharge only on the measured cell and its neighbours),
+// so a failing quiesce means cell voltages are being sampled under bleed -- and
+// the balance selector ranks exactly those numbers.
+inline constexpr std::uint32_t PitDiagBalanceHealthId    = 0x6CBu;
 // UNGATED firmware-health frame (#411): always-on 1 Hz, NEVER gated by the
 // pit-diag arm (0x7F0). ID sits right after the gated 0x6C0..0x6C9 block but
 // is emitted regardless of arm state -- parity with ECU 0x704 for passive
