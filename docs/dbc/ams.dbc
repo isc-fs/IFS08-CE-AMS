@@ -176,6 +176,10 @@ BO_ 1737 PIT_comms_health: 8 AMS
  SG_ fdcan1_busoff_recovery_count : 0|32@1+ (1,0) [0|0] "count" Vector__XXX
  SG_ acu_tx_fail : 32|32@1+ (1,0) [0|0] "count" Vector__XXX
 
+BO_ 1739 PIT_balance_health: 8 AMS
+ SG_ balance_quiesce_ok : 0|32@1+ (1,0) [0|0] "count" Vector__XXX
+ SG_ balance_quiesce_fail : 32|32@1+ (1,0) [0|0] "count" Vector__XXX
+
 BO_ 2033 PitDiag_ack: 1 AMS
  SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -617,6 +621,7 @@ BA_ "GenMsgCycleTime" BO_ 1734 1000;
 BA_ "GenMsgCycleTime" BO_ 1735 1000;
 BA_ "GenMsgCycleTime" BO_ 1736 1000;
 BA_ "GenMsgCycleTime" BO_ 1737 1000;
+BA_ "GenMsgCycleTime" BO_ 1739 1000;
 BA_ "GenMsgCycleTime" BO_ 256 100;
 BA_ "GenMsgCycleTime" BO_ 1664 1000;
 BA_ "GenMsgCycleTime" BO_ 1665 1000;

@@ -444,6 +444,24 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
+// 0x6CB PIT_balance_health -- balance-quiesce success/failure counts.
+//   bytes 0..3  balance_quiesce_ok    LE u32  (DCC cleared before measuring)
+//   bytes 4..7  balance_quiesce_fail  LE u32  (both WRCFGA attempts failed ->
+//                                             that poll measured under bleed)
+// The RATIO is the diagnostic; a bare fail count says nothing without knowing
+// how many quiesces were attempted.
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_balance_health(std::uint32_t quiesce_ok,
+                                                 std::uint32_t quiesce_fail) noexcept {
+    ifs08::PIT_balance_health_t s{};
+    s.balance_quiesce_ok   = quiesce_ok;
+    s.balance_quiesce_fail = quiesce_fail;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_balance_health(s, b);
+    return detail::to_frame(b);
+}
+
+// ---------------------------------------------------------------------------
 // 0x6CA AMS_fw_health -- UNGATED firmware-health (#411), ECU-0x704 parity.
 // Emitted always-on (NOT part of the pit-diag scan); this adapter just packs
 // the gathered fields. free_heap/min_free_heap are clamped to u16 -- the heap

@@ -86,6 +86,11 @@ extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule];
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
+// Balance-quiesce health: successful DCC clears before a measurement vs polls
+// that measured under bleed because both WRCFGA attempts failed. The RATIO is
+// the diagnostic -- see pit_balance_health.def.
+extern "C" volatile std::uint32_t g_balance_quiesce_count;
+extern "C" volatile std::uint32_t g_balance_quiesce_fail_count;
 
 // Boot diagnostics. Surfaced on the flight pit-diag boot-diag frame
 // (0x6C4) so app-init progress + FDCAN1 start outcome are visible on
@@ -379,6 +384,14 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     send_or_fail_blocking(ams::config::PitDiagCommsHealthId,
                           ams::pit_diag::encode_comms_health(
                               g_fdcan1_busoff_recovery_count, g_acu_tx_fail));
+
+    // Balance-quiesce health (0x6CB). Answers "is the pre-measurement DCC clear
+    // actually landing?" from the bus alone. fail climbing => cell voltages are
+    // being sampled while cells bleed, which corrupts both the balance selector
+    // (it ranks raw cell_mV) and the SoC filter (it corrects on min_cell_mV).
+    send_or_fail_blocking(ams::config::PitDiagBalanceHealthId,
+                          ams::pit_diag::encode_balance_health(
+                              g_balance_quiesce_count, g_balance_quiesce_fail_count));
 
     // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW PU + PD per-cell dump,
     // same 24-frame layout as the 0x680 cell grid, on AdowDiagPuBaseId /

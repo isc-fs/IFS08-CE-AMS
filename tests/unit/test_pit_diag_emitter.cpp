@@ -433,3 +433,25 @@ extern "C" void test_pit_diag_comms_health_fields_independent(void) {
         TEST_ASSERT_EQUAL_UINT8(0u, f[i]);
     }
 }
+
+// --- 0x6CB balance-quiesce health ------------------------------------------
+// Byte layout is the contract the bench decodes; assert it literally rather
+// than round-tripping through the same encoder that produced it.
+extern "C" void test_pit_encode_balance_health_layout(void) {
+    const auto f = ams::pit_diag::encode_balance_health(0x01020304u, 0x0A0B0C0Du);
+    // Both LE u32: ok in 0..3, fail in 4..7.
+    TEST_ASSERT_EQUAL_HEX8(0x04, f[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, f[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x02, f[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x01, f[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x0D, f[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x0C, f[5]);
+    TEST_ASSERT_EQUAL_HEX8(0x0B, f[6]);
+    TEST_ASSERT_EQUAL_HEX8(0x0A, f[7]);
+
+    // A healthy bench reads ok climbing with fail pinned at zero.
+    const auto healthy = ams::pit_diag::encode_balance_health(12345u, 0u);
+    TEST_ASSERT_EQUAL_HEX8(0x39, healthy[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x30, healthy[1]);
+    for (std::uint8_t i = 4; i < 8; ++i) TEST_ASSERT_EQUAL_HEX8(0x00, healthy[i]);
+}
