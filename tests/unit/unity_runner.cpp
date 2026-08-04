@@ -396,6 +396,10 @@ void test_fw_health_encode_clamps_heap(void);
 
 // test_balance_controller.cpp
 void test_balance_uniform_pack_no_discharge(void);
+void test_balance_hysteresis_holds_a_selected_cell(void);
+void test_balance_hysteresis_releases_below_stop(void);
+void test_balance_hysteresis_settles_instead_of_toggling(void);
+void test_balance_incumbent_wins_ties_against_newcomer(void);
 void test_balance_cell_open_wire_blocks_even_operator_on(void);
 void test_balance_ov_uv_block_balancing(void);
 void test_balance_non_cell_faults_stay_overridable(void);
@@ -883,6 +887,10 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_fw_health_encode_clamps_heap);
 
     RUN_TEST(test_balance_uniform_pack_no_discharge);
+    RUN_TEST(test_balance_hysteresis_holds_a_selected_cell);
+    RUN_TEST(test_balance_hysteresis_releases_below_stop);
+    RUN_TEST(test_balance_hysteresis_settles_instead_of_toggling);
+    RUN_TEST(test_balance_incumbent_wins_ties_against_newcomer);
     RUN_TEST(test_balance_cell_open_wire_blocks_even_operator_on);
     RUN_TEST(test_balance_ov_uv_block_balancing);
     RUN_TEST(test_balance_non_cell_faults_stay_overridable);

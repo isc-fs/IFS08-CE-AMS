@@ -89,7 +89,9 @@ struct Mask {
                                        safety::FaultReason fault_reason
                                            = safety::FaultReason::None,
                                        std::uint8_t       module_enable
-                                           = config::AllModulesMask) noexcept {
+                                           = config::AllModulesMask,
+                                       const Mask*        previous
+                                           = nullptr) noexcept {
     Mask out = {};
 
     // Operator master switch (#336). op_cmd is already freshness-resolved by
@@ -211,11 +213,25 @@ struct Mask {
         std::uint8_t n_chosen = 0;
 
         for (std::uint8_t pick = 0; pick < config::BalanceMaxActive; ++pick) {
-            std::uint16_t best_excess = 0;
+            std::uint32_t best_excess = 0;
             int           best_cell   = -1;
             for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
                 const std::uint16_t v = s.cell_mV[m][c];
-                if (v <= floor_mV + config::BalanceDeltaMv) continue;  // matched
+                // HYSTERESIS. A cell that was ALREADY discharging last cycle
+                // holds its place until it comes within BalanceStopDeltaMv of
+                // the floor; a cell that was not has to clear the wider
+                // BalanceDeltaMv to earn a slot. Without this the function is
+                // stateless and re-ranks from scratch every BalanceUpdatePolls,
+                // so anything hovering near the single threshold toggles on and
+                // off and never accumulates useful bleed time.
+                //
+                // `previous` is passed IN rather than cached in here on purpose:
+                // compute_mask stays a pure function of its arguments, which is
+                // what makes the whole policy host-testable without an RTOS.
+                const bool was_on = previous != nullptr && previous->cell[m][c];
+                const std::uint16_t threshold =
+                    was_on ? config::BalanceStopDeltaMv : config::BalanceDeltaMv;
+                if (v <= floor_mV + threshold) continue;               // matched
                 if (out.cell[m][c]) continue;                          // taken
 
                 if (config::BalanceSpreadNoAdjacent) {
@@ -226,7 +242,15 @@ struct Mask {
                     if (adj) continue;
                 }
 
-                const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
+                // Rank by excess, but let an incumbent outrank a newcomer at
+                // equal excess. Without this tie-break the cap could evict a
+                // cell that is actively bleeding in favour of one a millivolt
+                // higher, which is exactly the churn the hysteresis is meant to
+                // stop -- the thresholds alone do not prevent it, because the
+                // eviction happens through the BalanceMaxActive cap rather than
+                // through the threshold test.
+                const std::uint32_t excess =
+                    static_cast<std::uint32_t>(v - floor_mV) * 2u + (was_on ? 1u : 0u);
                 if (excess > best_excess) { best_excess = excess; best_cell = c; }
             }
             if (best_cell < 0) break;                          // nothing eligible

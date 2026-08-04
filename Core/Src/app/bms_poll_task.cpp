@@ -125,6 +125,14 @@ std::uint32_t          s_volt_poll_count       = 0;
 std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
 bool         s_balance_active = false;
 
+// Last mask compute_mask produced, fed back on the next cycle so the selector
+// can apply hysteresis (BalanceStopDeltaMv). Without this the policy is
+// stateless and re-ranks from scratch every BalanceUpdatePolls, so any cell
+// hovering near the threshold toggles instead of accumulating bleed time.
+// Held HERE rather than inside compute_mask so that function stays pure and
+// host-testable.
+ams::balance::Mask s_prev_balance_mask = {};
+
 // Set by quiesce_balancing() when it could not prove discharge was off, so the
 // cell voltages this poll produced were taken under bleed. Consumed and cleared
 // by maybe_run_balance_update(), which skips the update rather than re-rank the
@@ -531,7 +539,8 @@ void maybe_run_balance_update() {
     const auto       fault    = static_cast<safety::FaultReason>(g_fault_reason_telemetry);
     const auto       mask   = balance::compute_mask(
         state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
-        fault, mod_enable);
+        fault, mod_enable, &s_prev_balance_mask);
+    s_prev_balance_mask = mask;
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
