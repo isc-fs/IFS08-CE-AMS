@@ -689,6 +689,26 @@ inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-
 // BMS_LITE balance resistors and the airflow available in the
 // accumulator box.
 inline constexpr std::uint16_t BalanceDeltaMv     = 50;    // mV above min to start balancing
+// Hysteresis STOP threshold: a cell already discharging keeps discharging until
+// it falls within this of the floor, rather than being re-ranked from scratch.
+//
+// Without it compute_mask is stateless and re-picks the top-K every
+// BalanceUpdatePolls (~800 ms), so any cell sitting near BalanceDeltaMv toggles
+// on and off continuously -- it is selected, bleeds a little, drops below the
+// single threshold, is dropped, recovers, and is selected again. The bleed is
+// real but the duty is a fraction of what the operator sees on the mask, and
+// the churn makes the DCC pattern unreadable on the bench.
+//
+// 20 mV against a 50 mV start gives a 30 mV band. That is comfortably wider
+// than the 9-36 mV harness-IR artifact a bled cell shows against its
+// neighbours, so a cell does not drop out simply because it is being measured
+// while its own bleed displaces the shared tap.
+//
+// MUST stay below BalanceDeltaMv -- a stop threshold at or above the start
+// threshold would latch a cell on forever. static_assert below enforces it.
+inline constexpr std::uint16_t BalanceStopDeltaMv = 20;
+static_assert(BalanceStopDeltaMv < BalanceDeltaMv,
+              "stop threshold must be below start, or a selected cell never releases");
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
 // Simultaneous dischargers per module. This is a BOARD DISSIPATION limit, not
 // a policy one -- compute_mask is stateless and re-picks the top-N by excess

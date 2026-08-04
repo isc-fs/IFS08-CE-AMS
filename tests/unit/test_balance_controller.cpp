@@ -644,3 +644,96 @@ extern "C" void test_balance_non_cell_faults_stay_overridable(void) {
             config::BalanceCmd::On, r).cell[0][3]);
     }
 }
+
+// --- hysteresis: continuous balancing --------------------------------------
+// Without a stop threshold compute_mask is stateless and re-ranks from scratch
+// every BalanceUpdatePolls, so a cell hovering near BalanceDeltaMv is selected,
+// bleeds a little, drops under the single threshold, is dropped, recovers, and
+// is selected again -- never accumulating useful bleed time. These tests pin
+// the behaviour that fixes it.
+
+extern "C" void test_balance_hysteresis_holds_a_selected_cell(void) {
+    // A cell in the BAND (between stop and start) must KEEP discharging if it
+    // already was, and must NOT start if it wasn't. That gap is the whole point.
+    auto state = make_uniform_state(3700, 25);
+    const std::uint16_t band_mV = static_cast<std::uint16_t>(
+        3700 + (config::BalanceDeltaMv + config::BalanceStopDeltaMv) / 2);
+    state.cell_mV[0][3] = band_mV;
+
+    // Cold start: below the START threshold, so it is not picked.
+    const auto cold = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto);
+    TEST_ASSERT_FALSE_MESSAGE(cold.cell[0][3],
+        "a cell inside the band must not START balancing");
+
+    // Same reading, but it was already on -> it holds.
+    balance::Mask prev = {};
+    prev.cell[0][3] = true;
+    const auto warm = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto,
+        safety::FaultReason::None, config::AllModulesMask, &prev);
+    TEST_ASSERT_TRUE_MESSAGE(warm.cell[0][3],
+        "a cell inside the band must KEEP balancing -- this is the toggle fix");
+}
+
+extern "C" void test_balance_hysteresis_releases_below_stop(void) {
+    // Hysteresis must not latch forever: once the cell comes within
+    // BalanceStopDeltaMv of the floor it is released even though it was on.
+    auto state = make_uniform_state(3700, 25);
+    state.cell_mV[0][3] = static_cast<std::uint16_t>(3700 + config::BalanceStopDeltaMv);
+
+    balance::Mask prev = {};
+    prev.cell[0][3] = true;
+    const auto out = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto,
+        safety::FaultReason::None, config::AllModulesMask, &prev);
+    TEST_ASSERT_FALSE_MESSAGE(out.cell[0][3],
+        "at/below the stop threshold the cell must release, not latch");
+}
+
+extern "C" void test_balance_hysteresis_settles_instead_of_toggling(void) {
+    // THE regression this exists for. Feed the SAME state repeatedly through
+    // the selector, threading the mask back each time, and require the choice
+    // to be stable from the second cycle on. Before hysteresis a cell sitting
+    // in the band alternated every cycle.
+    auto state = make_uniform_state(3700, 25);
+    state.cell_mV[0][3] = static_cast<std::uint16_t>(3700 + config::BalanceDeltaMv + 5);
+
+    balance::Mask prev = {};
+    bool history[6] = {};
+    for (int i = 0; i < 6; ++i) {
+        prev = balance::compute_mask(
+            state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto,
+            safety::FaultReason::None, config::AllModulesMask, &prev);
+        history[i] = prev.cell[0][3];
+    }
+    for (int i = 0; i < 6; ++i) {
+        TEST_ASSERT_TRUE_MESSAGE(history[i], "selection must be stable, not toggling");
+    }
+}
+
+extern "C" void test_balance_incumbent_wins_ties_against_newcomer(void) {
+    // The cap can evict a bleeding cell in favour of a marginally higher
+    // newcomer -- churn the thresholds alone cannot prevent, because eviction
+    // happens through BalanceMaxActive rather than the threshold test. At EQUAL
+    // excess the incumbent must keep its slot.
+    auto state = make_uniform_state(3700, 25);
+    // Fill the module with exactly cap+1 equal, non-adjacent candidates.
+    constexpr std::uint8_t kCap = config::BalanceMaxActive;
+    std::uint8_t placed[24]; std::uint8_t n = 0;
+    for (std::uint8_t c = 0; c < config::CellsPerModule && n < kCap + 1; c += 2) {
+        state.cell_mV[0][c] = static_cast<std::uint16_t>(3700 + config::BalanceDeltaMv + 40);
+        placed[n++] = c;
+    }
+    if (n < kCap + 1) return;   // geometry cannot host cap+1 non-adjacent cells
+
+    // Mark the LAST one (which the greedy would otherwise drop on a tie) as the
+    // incumbent, and require it to survive.
+    balance::Mask prev = {};
+    prev.cell[0][placed[n - 1]] = true;
+    const auto out = balance::compute_mask(
+        state, fsm::State::Charge, /*temps_trusted=*/true, config::BalanceCmd::Auto,
+        safety::FaultReason::None, config::AllModulesMask, &prev);
+    TEST_ASSERT_TRUE_MESSAGE(out.cell[0][placed[n - 1]],
+        "an incumbent must not be evicted by an equal-excess newcomer");
+}
