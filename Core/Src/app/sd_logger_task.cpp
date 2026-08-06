@@ -6,7 +6,7 @@
 //   1. ensure mounted   -- non-fatal f_mount; no card -> retry next tick
 //   2. ensure file open -- LOGnnnn.TMP + CSV header
 //   3. drain the ring   -- format each LogRecord -> f_write; rotate on
-//                          LogFileMaxBytes OR LogFileMaxMs, sealing .TMP -> .CSV
+//                          LogFileMaxBytes OR LogFileMaxMs, sealing.TMP -> .CSV
 //   4. periodic f_sync  -- bound power-cut loss
 //
 // Any I/O error (card pulled mid-write, etc.) tears down to the unmounted
@@ -34,10 +34,10 @@
 
 extern "C" {
 // FSM state mirror written by MainTask. Read-only here, and only to refuse
-// log extraction while the tractive system is live (#449).
+// log extraction while the tractive system is live.
 extern volatile std::uint8_t g_state_telemetry;
 
-// hsd1 is OWNED here. With MX_SDMMC1_SD_Init decoupled in CubeMX (#407) the
+// hsd1 is OWNED here. With MX_SDMMC1_SD_Init decoupled in CubeMX the
 // handle is no longer defined in main.c, so the logger -- which now owns SD
 // bring-up -- defines it; bsp_driver_sd.c (the FatFs BSP) externs and drives
 // the same handle. If CubeMX's SDMMC1 init call is ever re-enabled, drop this
@@ -46,14 +46,14 @@ SD_HandleTypeDef hsd1;
 extern char SDPath[4];          // FatFs logical drive, set by MX_FATFS_Init
 
 // SDMMC1 low-level bring-up. HAL_SD_Init() calls this from f_mount (via the
-// FatFs BSP); with MX_SDMMC1_SD_Init decoupled (#407) nothing else configures
+// FatFs BSP); with MX_SDMMC1_SD_Init decoupled nothing else configures
 // the peripheral, so the HAL's __weak default would run instead -- and it is
 // empty. That left RCC_AHB3ENR.SDMMC1EN clear and PC8-12/PD2 unconfigured, so
 // the peripheral never shifted CMD0 out (no CMDSENT) and every mount timed out
-// in SDMMC_GetCmdError regardless of the card (#408). Enabling the bus clock +
+// in SDMMC_GetCmdError regardless of the card. Enabling the bus clock +
 // pins here is the missing piece; the kernel clock source (SDMMCSEL=PLL2R) is
 // already set by PeriphCommonClock_Config at boot. Called lazily at mount, so
-// an absent card still cannot stall boot (#407-safe). KEEP the pin map in sync
+// an absent card still cannot stall boot (safe against a missing card). KEEP the pin map in sync
 // with AMS.ioc SDMMC1 (PC8=D0 PC9=D1 PC10=D2 PC11=D3 PC12=CK, PD2=CMD, AF12).
 void HAL_SD_MspInit(SD_HandleTypeDef *hsd) {
     if (hsd->Instance != SDMMC1) return;
@@ -74,7 +74,7 @@ void HAL_SD_MspInit(SD_HandleTypeDef *hsd) {
     g.Pin = GPIO_PIN_2;
     HAL_GPIO_Init(GPIOD, &g);
 
-    // #408: the FatFs diskio reads via HAL_SD_ReadBlocks_DMA and blocks on a
+    // The FatFs diskio reads via HAL_SD_ReadBlocks_DMA and blocks on a
     // queue posted from the Rx-complete callback, which runs in the SDMMC1 ISR.
     // Enable that IRQ or the DMA transfer never completes -> f_mount returns
     // FR_DISK_ERR with hsd1.ErrorCode=0 (it simply never finishes). Priority 5 =
@@ -94,8 +94,8 @@ void HAL_SD_MspDeInit(SD_HandleTypeDef *hsd) {
 
 // SDMMC1 completion ISR -- routes to the HAL, which fires the FatFs BSP Rx/Tx-
 // complete callbacks that post READ_CPLT_MSG/WRITE_CPLT_MSG to the SD_read /
-// SD_write message queue. Not emitted by CubeMX (SDMMC1 init is decoupled, #407),
-// so DMA transfers would otherwise never complete (#408).
+// SD_write message queue. Not emitted by CubeMX (SDMMC1 init is decoupled),
+// so DMA transfers would otherwise never complete.
 void SDMMC1_IRQHandler(void) { HAL_SD_IRQHandler(&hsd1); }
 }
 
@@ -116,7 +116,7 @@ bool          g_file_open  = false;
 std::uint32_t g_file_idx   = 0;
 std::uint32_t g_file_bytes = 0;
 // Running CRC-32 of the active file, folded in as rows are written. Kept so
-// the #406 CRC opcode can answer without re-reading a 4 MiB file off the card
+// the LOGFS CRC opcode can answer without re-reading a 4 MiB file off the card
 // (which would stall this task, and with it the drain, for seconds).
 std::uint32_t g_file_crc   = ams::crc::Crc32Init;
 std::uint32_t g_file_open_ms = 0;   // tick at which the active file was opened
@@ -128,7 +128,7 @@ char          g_name[16];
 
 // Mirror the AMS.ioc SDMMC1 config onto hsd1. The boot-path MX_SDMMC1_SD_Init()
 // is intentionally NOT auto-called (CubeMX Advanced Settings) so an absent
-// card can't brick the node (#407); we set the handle here and let f_mount run
+// card can't brick the node; we set the handle here and let f_mount run
 // the non-fatal BSP_SD_Init lazily. KEEP IN SYNC with AMS.ioc SDMMC1.
 void configure_hsd1() noexcept {
     hsd1.Instance                 = SDMMC1;
@@ -140,7 +140,7 @@ void configure_hsd1() noexcept {
 }
 
 // Stream a whole file and return its CRC-32. Used for files whose running CRC
-// was lost (an orphan .TMP from a run that ended with the power), and as the
+// was lost (an orphan.TMP from a run that ended with the power), and as the
 // CRC opcode's fallback for cards written before sidecars existed.
 //
 // Reuses g_rowbuf as the read buffer -- it is only live inside the drain loop,
@@ -190,14 +190,14 @@ void write_crc_sidecar(std::uint32_t idx, std::uint32_t crc) noexcept {
 
 // Seal an orphaned LOGnnnn.TMP left behind by a previous run.
 //
-// A .TMP is only renamed to .CSV at rotation, and power simply vanishes at
+// A.TMP is only renamed to .CSV at rotation, and power simply vanishes at
 // shutdown -- so every run that ends before LogFileMaxBytes leaves one behind.
 // An orphan is by definition from a run that is over and never coming back, so
-// promoting it to .CSV is always correct.
+// promoting it to.CSV is always correct.
 //
 // This is what makes short runs produce a readable log at all, and it is why
-// the index scan below must consider .TMP as well: it previously looked only
-// at .CSV, so the next boot picked the same index and reopened the orphan with
+// the index scan below must consider.TMP as well: it previously looked only
+// at.CSV, so the next boot picked the same index and reopened the orphan with
 // FA_CREATE_ALWAYS -- truncating the whole previous run.
 bool seal_orphan(std::uint32_t idx) noexcept {
     char active[16];
@@ -220,7 +220,7 @@ bool seal_orphan(std::uint32_t idx) noexcept {
     return true;
 }
 
-// Lowest index with neither a sealed .CSV nor an active .TMP. Orphans found on
+// Lowest index with neither a sealed.CSV nor an active .TMP. Orphans found on
 // the way are sealed. Policy lives in log_rotation.hpp (host-tested); the
 // callbacks here are the only part that touches FatFs.
 //
@@ -243,7 +243,7 @@ std::uint32_t next_free_index() noexcept {
 // MUST use it, not a fresh osKernelGetTickCount() taken here: f_open + the
 // header f_write are hundreds of ms of SD latency, so a tick sampled after them
 // lands ahead of the loop's `now`, and `now - g_file_open_ms` then underflows
-// and seals the file on its first rows every iteration (#495).
+// and seals the file on its first rows every iteration.
 bool open_new_file(std::uint32_t now) noexcept {
     std::snprintf(g_name, sizeof g_name, ams::config::LogActiveNameFmt,
                   static_cast<unsigned long>(g_file_idx));
@@ -263,7 +263,7 @@ bool open_new_file(std::uint32_t now) noexcept {
 }
 
 
-// Close LOGnnnn.TMP and rename to LOGnnnn.CSV so the #406 extractor only ever
+// Close LOGnnnn.TMP and rename to LOGnnnn.CSV so the LOGFS extractor only ever
 // sees finished (sealed) files. Advance to the next index.
 void seal_file() noexcept {
     f_close(&g_fil);
@@ -273,8 +273,8 @@ void seal_file() noexcept {
     std::snprintf(sealed,  sizeof sealed,  ams::config::LogSealedNameFmt,
                   static_cast<unsigned long>(g_file_idx));
     (void)f_rename(g_name, sealed);
-    // Sidecar AFTER the rename, so a .CRC only ever exists next to a sealed
-    // .CSV -- never next to a .TMP that is still growing.
+    // Sidecar AFTER the rename, so a.CRC only ever exists next to a sealed
+    //.CSV -- never next to a .TMP that is still growing.
     write_crc_sidecar(g_file_idx, ams::crc::finalize(g_file_crc));
     g_file_open = false;
     g_file_crc  = ams::crc::Crc32Init;
@@ -287,19 +287,19 @@ void seal_file() noexcept {
 void teardown(std::uint8_t new_state) noexcept {
     if (g_file_open) { (void)f_close(&g_fil); g_file_open = false; }
     if (g_mounted)   { (void)f_mount(nullptr, SDPath, 0); g_mounted = false; }
-    // The abandoned file stays a .TMP and never gets a sidecar, so the partial
+    // The abandoned file stays a.TMP and never gets a sidecar, so the partial
     // CRC must not carry into the next file.
     g_file_crc  = ams::crc::Crc32Init;
     g_log_state = new_state;
 }
 
 // ---------------------------------------------------------------------------
-// LOGFS backend (#406) -- the FatFs half of ams::logfs::Server.
+// LOGFS backend -- the FatFs half of ams::logfs::Server.
 //
 // Every method here runs on THIS thread; see logfs_server.hpp for why the
 // server is not given its own task. Only sealed LOGnnnn.CSV files are visible:
-// the active .TMP is still growing (its length would be a lie by the time the
-// host finished reading it) and .CRC sidecars are an implementation detail.
+// the active.TMP is still growing (its length would be a lie by the time the
+// host finished reading it) and.CRC sidecars are an implementation detail.
 // ---------------------------------------------------------------------------
 class FatFsLogBackend {
 public:
@@ -338,7 +338,7 @@ public:
         }
     }
 
-    // crc_out is the SEALED CRC from the .CRC sidecar, or 0 meaning "not
+    // crc_out is the SEALED CRC from the.CRC sidecar, or 0 meaning "not
     // available" (a log written before sidecars existed). It is NEVER computed
     // by streaming here: OPEN must stay O(1), or a 4 MiB file would blow both
     // the host timeout and BL_ISOTP_TIMEOUT_MS. A host wanting the CRC of a
@@ -346,9 +346,9 @@ public:
     //
     // The sidecar is read BEFORE rd_ is opened, deliberately. _FS_LOCK counts
     // files AND directories and SdLoggerTask permanently holds one slot with
-    // the active .TMP, so reading it afterwards would need a third slot -- the
+    // the active.TMP, so reading it afterwards would need a third slot -- the
     // exact FR_TOO_MANY_OPEN_FILES that made the CRC opcode fall back to
-    // streaming every time (#452).
+    // streaming every time.
     bool open(std::uint16_t index, std::uint32_t& size_out,
               std::uint32_t& crc_out) noexcept {
         close_file();
@@ -392,7 +392,7 @@ public:
 
     void close(std::uint16_t) noexcept { close_file(); }
 
-    // Seal the ACTIVE log (#448/#452) so the run that just happened becomes
+    // Seal the ACTIVE log so the run that just happened becomes
     // listable without waiting for rotation. Safe to call seal_file() directly:
     // the LOGFS server is serviced ON this thread, between drains, so nothing
     // else is touching g_fil.
@@ -407,7 +407,7 @@ public:
     }
 
 private:
-    // "LOGnnnn.CSV" -> nnnn. Rejects .TMP (still growing) and .CRC (sidecar).
+    // "LOGnnnn.CSV" -> nnnn. Rejects.TMP (still growing) and .CRC (sidecar).
     static bool parse_sealed_name(const char* n, std::uint16_t& idx) noexcept {
         if (std::strlen(n) != 11u) return false;
         if (std::strncmp(n, "LOG", 3) != 0) return false;
@@ -489,7 +489,7 @@ osSemaphoreId_t g_diag_sem = nullptr;
 // "say nothing" -- e.g. a CMD-typed frame, which belongs to the bootloader's
 // namespace and which the application must not answer even to refuse.
 void serve_diag_request() noexcept {
-    // Vehicle-state gate (#449): extraction is permitted only with the car
+    // Vehicle-state gate: extraction is permitted only with the car
     // stopped and the TS off. g_state_telemetry is MainTask's FSM mirror.
     const auto vehicle_state = static_cast<ams::fsm::State>(g_state_telemetry);
 
@@ -620,7 +620,7 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
 
         // (3b) Time-based rotation. Without this a file is only sealed on the
         // size cap (~13 min of rows), so an ordinary bench session ends leaving
-        // a .TMP that no tool treats as a finished log. Checked outside the
+        // a.TMP that no tool treats as a finished log. Checked outside the
         // drain loop so it still fires during a lull in the ring.
         if (g_file_open &&
             ams::log_rotation::should_rotate(

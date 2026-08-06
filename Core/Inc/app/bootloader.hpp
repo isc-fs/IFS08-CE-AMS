@@ -16,7 +16,7 @@
 //   4. Calls NVIC_SystemReset -- never returns
 //
 // Trigger surface (v1.2.0+): a single dedicated CAN frame on FDCAN1
-// (the accumulator bus). Pre-v1.2.0 it was on FDCAN2, but after #73
+// (the accumulator bus). It was previously on FDCAN2;
 // retired BmsRxTask the only listener on FDCAN2 was the bootloader-
 // reboot frame -- moving it to FDCAN1 lets MingoCAN talk to the
 // AMS over the same bus it already uses for VCU telemetry. See

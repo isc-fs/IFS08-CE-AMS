@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// Diag request dispatch (#406 / #439) -- the routing step between the ISO-TP
+// Diag request dispatch -- the routing step between the ISO-TP
 // transport and the LOGFS handlers.
 //
 // Pulled out of sd_logger_task.cpp so it can be tested. What lives here is the
@@ -28,7 +28,7 @@ namespace ams::diag {
 
 // May log extraction run in this vehicle state?
 //
-// Operational rule (#449): extraction is permitted ONLY with the car stopped
+// Operational rule: extraction is permitted ONLY with the car stopped
 // and the tractive system OFF -- never in Run with TS live. Two reasons, and
 // the second is the sharp one:
 //
@@ -47,7 +47,7 @@ namespace ams::diag {
 // state name is incidental.
 //
 // Error is not a grudging exception, it is the case the feature exists for.
-// #448's whole purpose is "grab the log from the run that just faulted", and a
+// Its whole purpose is "grab the log from the run that just faulted", and a
 // faulted car sits in Error. ErrorLatch is sticky across resets, so a
 // power-cycled post-fault car boots back INTO Error -- refusing it would have
 // made the primary use case reachable only by clearing the latch first.
@@ -88,7 +88,7 @@ public:
             // than one that interrupts a session nobody is driving.
             logfs_.release();
             session_.connect(peer, now_ms);
-            // Body is [major, minor] of the APP diag protocol (#452): gives the
+            // Body is [major, minor] of the APP diag protocol: gives the
             // host version negotiation without another round trip. Distinct
             // from the bootloader's protocol version -- this describes the
             // APP_CTRL contract only.
@@ -111,7 +111,7 @@ public:
             return build_nack(out, cap, req.opcode, NackBadSession);
         }
         if (LogfsServer::owns(req.opcode)) {
-            // Vehicle-state gate (#449). Checked AFTER the session so a host
+            // Vehicle-state gate. Checked AFTER the session so a host
             // that has connected gets a specific reason rather than a generic
             // refusal, and BEFORE reaching the card so a live car never starts
             // a multi-minute transfer. CONNECT/DISCONNECT stay permitted in any

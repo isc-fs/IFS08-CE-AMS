@@ -26,7 +26,7 @@ namespace ams {
 //       if (!lock.acquired()) {
 //           return;  // log / count / FORCE_ERROR per ARCHITECTURE.md §8
 //       }
-//       // ... read or write BmsState ...
+//       //... read or write BmsState ...
 //   }
 class ScopedMutex {
 public:

@@ -9,7 +9,7 @@
 // stm32h7xx_hal_spi.c/.h and #define HAL_SPI_MODULE_ENABLED). Until
 // that lands the whole wrapper compiles as an empty TU so the rest
 // of the firmware keeps building. The header stays usable in unit
-// tests and code review; flipping the .ioc switch activates the body.
+// tests and code review; flipping the.ioc switch activates the body.
 #ifdef HAL_SPI_MODULE_ENABLED
 
 #include <cstring>
@@ -20,8 +20,8 @@ namespace {
 
 // HAL_SPI_TransmitReceive timeout. The longest single transaction we
 // send is the read-register-group reply (4 cmd + 8 * LtcChainLength
-// data = 84 bytes at <=1 MHz SCK -> ~700 us on the wire). 10 ms is
-// two orders of magnitude of headroom and still leaves the calling
+// data = 84 bytes at 515.625 kHz SCK -> ~1.3 ms on the wire). 10 ms is
+// ~8x headroom and still leaves the calling
 // task responsive.
 constexpr std::uint32_t SpiTimeoutMs = 10;
 
@@ -155,7 +155,7 @@ bool Bus::read_register_group(const std::uint8_t cmd_frame_4[4],
         return false;
     }
 
-    // Single CS-low, single HAL call (#213). The previous version
+    // Single CS-low, single HAL call. The previous version
     // issued HAL_SPI_Transmit(4) followed by HAL_SPI_TransmitReceive(80)
     // inside one CS pulse; the few-us gap between the two HAL calls
     // (peripheral mode change TX-only -> full-duplex) breaks bit-sync

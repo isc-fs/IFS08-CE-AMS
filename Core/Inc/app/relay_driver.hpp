@@ -7,9 +7,9 @@
 //   PB5 RELAY_AIR_P         (positive AIR)
 //   PB7 RELAY_PRECHARGE     (precharge contactor)
 //   PB4 AMS_OK              (SDC enable; HIGH = AMS healthy, drive LOW
-//                            to open the shutdown circuit -- #299/#301)
+//                            to open the shutdown circuit)
 //
-// (Pre-#117 the contactors lived on GPIOD as PD3/4/5; the daughterboard
+// (The contactors previously lived on GPIOD as PD3/4/5; the daughterboard
 // re-route moved them to GPIOB -- see relay_driver.cpp for the history.)
 // All pins are active-high (drive HIGH to energise / assert).
 // CubeMX-generated MX_GPIO_Init drives them to PIN_RESET (open / SDC
@@ -48,7 +48,7 @@ public:
     // (SDC). Active-high -- HIGH = "AMS healthy, not blocking the SDC";
     // LOW opens the SDC. Driven exclusively by SafetyTask, which asserts
     // it only once the boot grace has passed and no ERROR is latched,
-    // and clears it the instant a fault latches (#299). Not an AIR/
+    // and clears it the instant a fault latches. Not an AIR/
     // contactor, but it shares the same SDC-output ownership, so it
     // lives here next to open_all().
     static void set_ams_ok(bool enable) noexcept;

@@ -2,7 +2,7 @@
 //
 // Plain-data CAN frame used across the FreeRTOS message queues
 // (acu_rx_queue, acu_tx_queue -- see docs/ARCHITECTURE.md §4).
-// `bms_rx_queue` was retired in v1.2.0 (#73) when the BMS data path
+// `bms_rx_queue` was retired in v1.2.0 when the BMS data path
 // moved off FDCAN2 onto LTC6811-1 isoSPI.
 //
 // Kept deliberately POD so it copies cheaply and can sit in an
@@ -22,7 +22,7 @@
 
 namespace ams {
 
-// Two buses on the carrier. Post-v1.2.0 (#73, #75) the app only reads
+// Two buses on the carrier. Post-v1.2.0 the app only reads
 // and writes Acu (FDCAN1); the second value remains as a "wrong bus"
 // sentinel for dispatch-rejection tests and any future second-bus
 // consumer. The numeric values match the wire transport byte in

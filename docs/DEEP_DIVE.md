@@ -383,10 +383,10 @@ flowchart LR
   MCU[STM32H733<br/>SPI1 PA5/6/7 + PB9 CS<br/>MasterSSIdleness 07 CYCLE] -- "SPI master" --> Bridge[LTC6820<br/>SPI ↔ isoSPI]
   Bridge -- "isoSPI transformer-coupled" --> M0
   subgraph M0[Module 0]
-    L0a[LTC_1 · cells 0..9]
+    L0a[LTC_1 · cells 0..8]
     M0a[ADG731 NTC mux]
     L0a --- M0a
-    L0b[LTC_2 · cells 10..18]
+    L0b[LTC_2 · cells 9..18]
     M0b[ADG731]
     L0b --- M0b
     L0a --- L0b
@@ -414,7 +414,7 @@ if PollTDue:
 
 ### Chain shape
 
-- 5 modules × 2 LTCs = **10 ICs** (`LtcChainLength`). Upper LTC: 10 cells, lower: 9 → **19 cells / module · 95 total**.
+- 5 modules × 2 LTCs = **10 ICs** (`LtcChainLength`). Upper LTC: 9 cells, lower: 10 → **19 cells / module · 95 total**.
 - NTCs: 20 per LTC × 10 = **200 slots**. ADG731 ch 1..10, 17..26 populated (11..16, 27..31 unpopulated).
 - `AllModulesMask = 0x1F` (5 modules), `BmsModuleCount = 5`.
 - **Per-IC PEC counter** — saturating `u8` per chain slot, surfaced via pit-diag `0x6C7` (ICs 0..7) and `0x6C8` (ICs 8..9 + reserved). A byte-0 spike on `0x6C7` = module-0 top LTC misbehaving.

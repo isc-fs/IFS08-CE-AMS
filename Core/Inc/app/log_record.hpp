@@ -9,7 +9,7 @@
 // formatting (HAL-free, RTOS-free) -> lives in the host-testable core.
 //
 // On-card format is CSV (build_header / format_row). The MingoCAN log-pull
-// service (#406) treats files as opaque bytes + filename + CRC, so this
+// service treats files as opaque bytes + filename + CRC, so this
 // column layout is the AMS team's to evolve without touching the protocol.
 
 #pragma once
