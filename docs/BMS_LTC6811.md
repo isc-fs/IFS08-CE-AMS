@@ -37,18 +37,18 @@ flowchart LR
     end
 
     subgraph M0[Module 0 — BMS_LITE]
-        LTC0a[LTC_1 6811-1<br/>cells 0..9]
+        LTC0a[LTC_1 6811-1<br/>cells 0..8]
         MUX0a[ADG731 #0a<br/>NTC 1..20]
         LTC0a --- MUX0a
-        LTC0b[LTC_2 6811-1<br/>cells 10..18]
+        LTC0b[LTC_2 6811-1<br/>cells 9..18]
         MUX0b[ADG731 #0b<br/>NTC 21..30]
         LTC0b --- MUX0b
         LTC0a --- LTC0b
     end
 
     subgraph M1[Module 1]
-        LTC1a[LTC_1<br/>cells 0..9]
-        LTC1b[LTC_2<br/>cells 10..18]
+        LTC1a[LTC_1<br/>cells 0..8]
+        LTC1b[LTC_2<br/>cells 9..18]
         LTC1a --- LTC1b
     end
 
@@ -74,8 +74,8 @@ throughout the firmware:
 
 | Chain slot | Module | Role |
 |---:|:---:|---|
-| 0 | 0 | LTC_1 (upper, 10 cells) |
-| 1 | 0 | LTC_2 (lower, 9 cells) |
+| 0 | 0 | LTC_1 (upper, 9 cells) |
+| 1 | 0 | LTC_2 (lower, 10 cells) |
 | 2 | 1 | LTC_1 |
 | 3 | 1 | LTC_2 |
 | 4 | 2 | LTC_1 |
@@ -93,7 +93,7 @@ change has to land in `ams_config.hpp` first.
 ## 2. Cell mapping
 
 Each module is 19 series cells. The BMS_LITE wiring splits them
-across its two LTCs as **10 cells on LTC_1, 9 cells on LTC_2**.
+across its two LTCs as **9 cells on LTC_1, 10 cells on LTC_2**.
 Within each LTC the cells map onto register-group slots in the
 obvious order; unused slots are read but discarded.
 

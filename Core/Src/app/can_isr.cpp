@@ -5,7 +5,7 @@
 // HAL_FDCAN_RxFifo0Callback is weak in the HAL; our strong override
 // below is the one the IRQ handler reaches. The app is FDCAN1-only:
 // only FDCAN1 (the accumulator/vehicle bus) feeds an application
-// queue (post-v1.2.0, #73). FDCAN2 has been removed from the CubeMX
+// queue. FDCAN2 has been removed from the CubeMX
 // config entirely -- the app never used it, and the bootloader
 // inits its own peripherals after the reset -- so this callback
 // only ever fires for &hfdcan1.
@@ -54,8 +54,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan,
         // (see HAL_FDCAN_GetRxMessage: DataLength = (raw & MASK_DLC) >> 16U).
         // The previous `>> 16` here was treating DataLength as still
         // bit-shifted, which zeroed the result for every RX frame --
-        // BL trigger + VCU 0x100 silently dropped on dlc<N checks (#241).
-        // Same family of bug as the TX-side dlc<<16 mistake fixed in #234.
+        // BL trigger + VCU 0x100 silently dropped on dlc<N checks.
+        // Same family of bug as the TX-side dlc<<16 mistake.
         frame.dlc          = (uint8_t)(rxh.DataLength & 0x0F);
         frame.extended     = (rxh.IdType == FDCAN_EXTENDED_ID) ? 1u : 0u;
         frame.fd           = (rxh.FDFormat == FDCAN_FD_CAN)   ? 1u : 0u;

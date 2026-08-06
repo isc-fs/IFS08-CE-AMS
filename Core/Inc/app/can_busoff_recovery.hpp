@@ -14,7 +14,7 @@
 // software Stop->Start re-arms it. AcuCanTask polls for this and recovers.
 //
 // This mirrors the bootloader's Bootloader_FdcanBusOffRecover rate-limit
-// (../stm32-can-bootloader, issues #125 C1 / #174 NG-9): act on the
+// (../stm32-can-bootloader): act on the
 // transition INTO Bus_Off, then at most once per retry window while it
 // persists. Without the rate-limit, a Stop/Start every poll would
 // continually restart the M_CAN's automatic recovery (it rejoins after
@@ -36,10 +36,10 @@ struct BusOffState {
 
 // Decide whether to issue a Stop/Start recovery on this poll.
 //
-//   st        : per-bus latch, updated in place
-//   bus_off   : live PSR.BO read (HAL_FDCAN_GetProtocolStatus -> .BusOff != 0)
-//   now_ms    : current tick (osKernelGetTickCount)
-//   retry_ms  : minimum spacing between attempts while Bus_Off persists
+//   st: per-bus latch, updated in place
+//   bus_off: live PSR.BO read (HAL_FDCAN_GetProtocolStatus ->.BusOff != 0)
+//   now_ms: current tick (osKernelGetTickCount)
+//   retry_ms: minimum spacing between attempts while Bus_Off persists
 //
 // Returns true exactly on:
 //   * the FIRST poll that observes Bus_Off (the healthy->off edge), and

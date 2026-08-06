@@ -1,0 +1,28 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x6CB PIT_balance_health -- mirrors ams::pit_diag::encode_balance_health().
+ *
+ * Exists to answer one question from the bus: IS THE BALANCE QUIESCE WORKING?
+ *
+ * Before every voltage measurement BmsPollTask clears the DCC bits and waits
+ * BalanceQuiesceMs, so cells are not bleeding while they are measured. If that
+ * WRCFGA fails the poll measures anyway (stale cell data starves the safety
+ * predicates, which is worse than a noisy read) -- but those voltages carry the
+ * bleed displacement, and the balance selector must not rank them.
+ *
+ * DCP=0 on the ADCV does NOT cover that case: per LTC6811 datasheet Table 53 it
+ * suppresses discharge only on the cell being measured and its immediate
+ * neighbours, so roughly half the selected cells keep bleeding through the
+ * conversion. The quiesce is the only full stop, which is why its success rate
+ * is worth publishing.
+ *
+ * Both counters together give the RATIO, which is the diagnostic -- a raw fail
+ * count means nothing without knowing how many quiesces were attempted.
+ * ok climbing with fail flat  -> quiesce healthy; look elsewhere for corruption.
+ * fail climbing               -> measurements are being taken under bleed.
+ */
+
+CAN_MSG(PIT_balance_health, 0x6CB, 8, "AMS", 1000)
+    FIELD_LE (balance_quiesce_ok,   uint32_t, 0, 32, 1, 0, "count")
+    FIELD_LE (balance_quiesce_fail, uint32_t, 4, 32, 1, 0, "count")
+CAN_MSG_END(PIT_balance_health)

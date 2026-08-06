@@ -29,6 +29,7 @@
 #include "acu_currents.def"
 #include "acu_tmax_module_a.def"
 #include "acu_tmax_module_b.def"
+#include "acu_soc.def"
 
 #include "pit_fsm_status.def"
 #include "pit_timing.def"
@@ -40,6 +41,7 @@
 #include "pit_pec_per_ic_a.def"
 #include "pit_pec_per_ic_b.def"
 #include "pit_comms_health.def"
+#include "pit_balance_health.def"
 #include "pit_ack.def"
 
 /* RX frames AMS consumes (sender = VCU / Pit_Tool). Carried here so

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// LOGFS command handlers (#406 / #439) -- LIST / OPEN / READ / CRC / CLOSE.
+// LOGFS command handlers -- LIST / OPEN / READ / CRC / CLOSE.
 //
 // Read-only by design: v1 serves sealed LOGnnnn.CSV files and cannot delete or
 // modify anything on the card. An extraction tool that can also erase evidence
@@ -18,7 +18,7 @@
 //     priority inheritance. Contending for the volume across threads invites
 //     unbounded priority inversion; keeping one owner sidesteps it.
 //  2. `_FS_LOCK 2` caps simultaneously-open files at two. The logger holds the
-//     active .TMP, so a diag read is the second and last slot -- zero headroom
+//     active.TMP, so a diag read is the second and last slot -- zero headroom
 //     for a concurrent third open.
 //  3. A diag thread costs another stack plus a ~550-byte FIL, and SdLoggerTask
 //     already owns the volume (it defines hsd1, mounts, writes, rotates).
@@ -225,7 +225,7 @@ private:
         open_handle_ = next_handle();
 
         // crc32 == 0 means "not available, ask LOGFS_CRC" -- NOT a literal zero
-        // CRC (#452). Sealing writes a sidecar, so it is populated for anything
+        // CRC. Sealing writes a sidecar, so it is populated for anything
         // this firmware wrote; older cards have none and OPEN must not stall to
         // stream 4 MiB computing one.
         std::uint8_t body[10];

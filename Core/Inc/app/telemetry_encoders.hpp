@@ -73,8 +73,8 @@ namespace detail {
 // ---------------------------------------------------------------------------
 // 0x4A2  "AMS temps + diagnostics" -- layout in
 // Core/Inc/can/messages/ams_temps.def. The int8 temp clip + the cockpit
-// byte (#246) are value transforms that stay here at the adapter; the
-// .def owns only the byte placement.
+// byte are value transforms that stay here at the adapter; the
+//.def owns only the byte placement.
 //
 // Cockpit byte (byte 5): bit7 sentinel, bits3:2 mode_locked, bit1 TSMS,
 // bit0 DASH_CHG -- assembled by the caller in safety_task.cpp.

@@ -58,7 +58,7 @@ void ams_app_init_task_run(void *argument)
     ams::ErrorLatch::init();
     g_app_init_progress = 1u;   // post-ErrorLatch::init
 
-    // Firmware-health boot capture (#411): latch the RCC reset cause and the
+    // Firmware-health boot capture: latch the RCC reset cause and the
     // sticky last-fault sentinel (BKP3) into RAM for the 0x6CA health frame,
     // then clear the RCC flags + BKP3 so a clean next boot reports PowerOn /
     // None. Runs after ErrorLatch::init -- backup-domain access is enabled.
@@ -72,13 +72,13 @@ void ams_app_init_task_run(void *argument)
     // survives a WARM reset -- the 0x002 trigger -> NVIC_SystemReset, an
     // IWDG timeout -- so a warm-reset-preserved stale latch is what this
     // clears; it also lets the bench recover from a transient LTC
-    // chain-discovery glitch (Pi Pico emulator, #224) without a reset.
+    // chain-discovery glitch (Pi Pico emulator) without a reset.
     //
     // NOTE: the backup domain only persists across a POWER-OFF / brown-
     // out when the carrier has a VBAT source (coin cell / supercap). The
     // MLC bench carrier has none, so a power-cycle wipes BKP_DR1 there
-    // regardless of this flag; flight-HW VBAT is unconfirmed -- see #324
-    // for the sticky-error-across-power-cycle gap this exposed.
+    // regardless of this flag; flight-HW VBAT is unconfirmed, which
+    // leaves a sticky-error-across-power-cycle gap.
     //
     // NEVER compiled into flight HW: clearing the latch on boot defeats
     // the sticky-error contract -- a latched pre-charge / SDC / cell
@@ -90,7 +90,7 @@ void ams_app_init_task_run(void *argument)
     // FDCAN1 (accumulator + boot-trigger bus). FDCAN2 is left
     // initialised but unstarted -- the bootloader claims it after the
     // BL_BOOT_REQ_MAGIC reset, and the app no longer listens on it
-    // (BmsRxTask was retired in #73; the boot-trigger frame moved to
+    // (BmsRxTask was retired; the boot-trigger frame moved to
     // FDCAN1, handled inside AcuCanTask).
     //
     // GlobalFilter: accept every unmatched standard frame into FIFO0;
@@ -115,7 +115,7 @@ void ams_app_init_task_run(void *argument)
     g_app_init_progress   = (g_fdcan1_start_result == HAL_OK) ? 6u : 5u;
 
     // ----------------------------------------------------------------
-    // LTC6811-1 chain bring-up + length discovery (#68 + #69).
+    // LTC6811-1 chain bring-up + length discovery.
     //
     // 1. Wake every IC in the daisy-chain with a CS pulse train.
     // 2. Issue a low-impact read (RDCFGA -- never triggers an ADC,
@@ -134,7 +134,7 @@ void ams_app_init_task_run(void *argument)
     // (IFS08_HIL feat/pico-ltc-emulator) to be wired and running on
     // MLC2 J8; without it discovery fails, the latch sticks, and the
     // bench comes up in Error -- which is the correct behaviour now that
-    // the BMS-data stub is gone (see #205).
+    // the BMS-data stub is gone.
     auto& ltc_bus = ams::ltc6820::Bus::default_instance();
     ltc_bus.configure(&hspi1,
                       ams::ltc6820::CsPin{ LTC6820_CS_GPIO_Port, LTC6820_CS_Pin });

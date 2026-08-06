@@ -8,13 +8,13 @@
 //  1. WHICH INDEX a fresh run takes. This used to consider only LOGnnnn.CSV,
 //     so a run that ended before the size cap left LOGnnnn.TMP behind, the next
 //     boot picked the SAME index, and open_new_file's FA_CREATE_ALWAYS
-//     truncated the whole previous run. An orphan .TMP must make an index
+//     truncated the whole previous run. An orphan.TMP must make an index
 //     taken, and should be sealed rather than skipped -- it is from a run that
-//     is over and never coming back, so promoting it to .CSV is always right.
+//     is over and never coming back, so promoting it to.CSV is always right.
 //
 //  2. WHEN to rotate. Sealing only on the size cap means ~13 min of rows before
 //     a file is ever finished, so ordinary sessions ended with nothing but a
-//     .TMP -- which no tool (including the #406 extractor) treats as a log.
+//.TMP -- which no tool (including the LOGFS extractor) treats as a log.
 //
 // Pure logic: the filesystem is reached only through caller-supplied callbacks.
 
@@ -43,7 +43,7 @@ inline constexpr std::uint32_t MaxIndex = 10000u;
 
 // Underflow-safe age of the active file. `open` is the tick the file was
 // opened, `now` the current tick. If `open` is briefly AHEAD of `now` -- the
-// #495 bug, where `open` was sampled AFTER the hundreds-of-ms SD open while
+// A past bug sampled `open` AFTER the hundreds-of-ms SD open while
 // `now` was sampled at the top of the loop -- the naive `now - open` unsigned
 // subtraction wraps to ~4.29e9 ms, sails past LogFileMaxMs, and seals the file
 // on its first rows every iteration (hundreds of 1-2 row files per run). Clamp
@@ -56,7 +56,7 @@ inline constexpr std::uint32_t MaxIndex = 10000u;
 
 // Pick the index for a new file.
 //
-//   exists(idx, sealed) -> true if LOGidx.CSV (sealed=true) / .TMP (false) is
+//   exists(idx, sealed) -> true if LOGidx.CSV (sealed=true) /.TMP (false) is
 //                          present on the card
 //   seal(idx)           -> rename LOGidx.TMP to LOGidx.CSV; result advisory
 //

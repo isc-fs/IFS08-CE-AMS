@@ -5,7 +5,7 @@
 // register-group decoder without dragging in FreeRTOS / STM32 HAL.
 //
 // The SPI-HAL wrapper (LTC6820 master + actual transactions) belongs
-// to a separate module (#68, lands on a later branch).
+// to a separate module (lands on a later branch).
 //
 // References
 // ----------
@@ -70,11 +70,11 @@ inline constexpr std::uint16_t CmdSTCOMM  = 0x0723;
 enum class AdcMode : std::uint8_t { Slow422Hz = 0, Fast27kHz = 1, Norm7kHz = 2, Filt26Hz = 3 };
 
 // Cell channel selection for ADCV.
-//   000 = all cells, 001 = cell 1+7, 010 = cell 2+8, ...
+//   000 = all cells, 001 = cell 1+7, 010 = cell 2+8,...
 enum class CellSel  : std::uint8_t { All = 0 };
 
 // AUX channel selection for ADAX.
-//   000 = all GPIOs + REF2, 001 = GPIO1, 010 = GPIO2, ..., 110 = REF2
+//   000 = all GPIOs + REF2, 001 = GPIO1, 010 = GPIO2,..., 110 = REF2
 enum class AuxSel   : std::uint8_t { All = 0, Gpio1 = 1, Gpio2 = 2, Gpio3 = 3,
                                      Gpio4 = 4, Gpio5 = 5, Ref2  = 6 };
 
@@ -231,7 +231,7 @@ void build_write_frame(std::uint16_t                       cmd,
                                                     std::uint8_t        max_chain) noexcept;
 
 // ---------------------------------------------------------------------------
-// WRCFGA payload builder (#74).
+// WRCFGA payload builder.
 //
 // CFGAR register layout (LTC6811 datasheet Table 39):
 //   byte 0  GPIO5..GPIO1 pull-down disables | REFON | SWTRD | ADCOPT
@@ -243,7 +243,7 @@ void build_write_frame(std::uint16_t                       cmd,
 //
 // We disable the LTC's own UV/OV detection (kept in software via the
 // safety predicates), enable REFON (faster ADC startup), and leave
-// GPIO1..5 as inputs so the ADAX path keeps working (#71). The DCTO
+// GPIO1..5 as inputs so the ADAX path keeps working. The DCTO
 // timer is left at 0 -- each cycle we re-send WRCFGA explicitly so
 // discharge can't latch beyond one balancing window.
 //

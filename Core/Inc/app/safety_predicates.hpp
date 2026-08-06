@@ -27,7 +27,7 @@ struct Inputs {
     // The VCU heartbeat is required only once committed to Car mode
     // (mode_locked == Car). In Charger mode -- and the pre-lock Start /
     // Undecided window -- the VCU is expected to be absent (the car
-    // isn't running), so its staleness must NOT be a fault (#302).
+    // isn't running), so its staleness must NOT be a fault.
     bool                vcu_required;
     // Mirror of vcu_required for the charge side: the charger heartbeat
     // (0x101) is required only once committed to Charger mode. In Car mode
@@ -38,7 +38,7 @@ struct Inputs {
 };
 
 // Which predicate branch latched ERROR. Surfaced on pit-diag 0x6C0[6]
-// so the HIL bench can pinpoint the fault without a debugger (#276).
+// so the HIL bench can pinpoint the fault without a debugger.
 // Values are stable wire contract -- append only, never renumber.
 enum class FaultReason : std::uint8_t {
     None               = 0,
@@ -61,7 +61,7 @@ enum class FaultReason : std::uint8_t {
     // mid-charge -> Error + open the AIRs. Only fires in Charger mode.
     ChargerStale       = 14,
     // TSMS (PF9) dropped while committed to Charger mode. In Car mode a TSMS
-    // drop is a non-latching de-energise to Start (#327); in Charger mode the
+    // drop is a non-latching de-energise to Start; in Charger mode the
     // scrutineering rule forbids re-activating the charge output after the SDC
     // opens, so it LATCHES Error instead (re-energising needs a full reset).
     // FSM-driven (state_machine.hpp), attributed by fsm_error_reason() below.
@@ -102,7 +102,7 @@ struct FaultResult {
 // `last_*_tick` between the SafetyTask `now` sample and the snapshot
 // read. If `last` is *ahead* of `now` (it just reported), the naive
 // `now - last` underflows to ~4e9 and spuriously trips staleness --
-// this was the #276 boot-grace-boundary ERROR latch. Clamp to 0 in
+// this caused a boot-grace-boundary ERROR latch. Clamp to 0 in
 // that case. A never-reported service still has `last == 0`, so
 // `age == now` and the intended "no data after grace => stale"
 // behaviour is preserved.
@@ -112,7 +112,7 @@ struct FaultResult {
 }
 
 // First module whose per-module aggregate is below / above a limit, for
-// the 0x6C0[7] fault-detail byte (#279). Returns NoOffendingModule
+// the 0x6C0[7] fault-detail byte. Returns NoOffendingModule
 // (0xFF) if NONE match -- which, when the summary min/max already
 // crossed the threshold, means min_cell_mV / max_* disagrees with the
 // per-module aggregates: the fingerprint of a torn lock-free snapshot
@@ -203,7 +203,7 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
         return { FaultReason::CellOpenWire, in.bms.cell_open_mask };
     }
 
-    // Cell V / T ranges. Gated on first_full_poll_done (#279): until
+    // Cell V / T ranges. Gated on first_full_poll_done: until
     // every module has reported PEC-clean at least once, cell_mV /
     // cell_tempC may hold boot sentinels or a partially-populated mix
     // that must not latch a false under-voltage at the grace edge. A
@@ -248,7 +248,7 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
     // running), and in the pre-lock Undecided window the AIRs are still
     // open. Gating on vcu_required is what makes Charger mode reachable:
     // the lock needs the VCU stale > VcuFreshMs (1000 ms), but an
-    // un-gated VcuStale (200 ms) would always latch ERROR first (#302).
+    // un-gated VcuStale (200 ms) would always latch ERROR first.
     if (in.vcu_required &&
         tick_age(in.now_tick, in.vehicle.last_dc_bus_tick) > config::VcuStaleMs) {
         return { FaultReason::VcuStale, 0 };
@@ -274,7 +274,7 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
 }
 
 // Whether the AMS should assert AMS_OK (PB4), its leg of the shutdown
-// circuit (#299). Active-high: HIGH = "AMS healthy, not blocking the
+// circuit. Active-high: HIGH = "AMS healthy, not blocking the
 // SDC". Asserted ONLY when (a) the boot grace has passed -- during grace
 // the data-presence predicates are suppressed, so we must NOT enable the
 // SDC against possibly-unverified inputs -- and (b) no ERROR is latched.
@@ -286,7 +286,7 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
 }
 
 // The cell voltage / temperature RANGE reasons -- the slow-by-nature
-// faults that get debounced (#279). A cell cannot leave its valid
+// faults that get debounced. A cell cannot leave its valid
 // window for a single 10 ms tick and return, so a transient one is a
 // glitch (torn snapshot read / unsettled poll), not a real condition.
 [[nodiscard]] inline bool is_cell_range_reason(FaultReason r) noexcept {
@@ -297,7 +297,7 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
 }
 
 // Debounce for the cell V/T range predicates. Pure + host-testable so
-// the latch timing is unit-covered, not just live on the bench (#279).
+// the latch timing is unit-covered, not just live on the bench.
 // Call once per SafetyTask evaluation with the predicate's reason;
 // returns true only once a cell-range reason has persisted for
 // `confirm_ticks` consecutive calls. Any non-cell reason (including

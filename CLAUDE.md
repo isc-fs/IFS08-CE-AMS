@@ -45,6 +45,36 @@ adds `-DAMS_HIL_CLEAR_ERROR_LATCH=ON` (never in a flight image).
   directory. Stage files explicitly.
 - Commit messages: imperative mood, first line < 72 chars.
 
+## Comment style
+
+Comments explain the code **as it is now**, to someone who has never seen this
+repo. History lives in `git log`, PRs and `docs/` — not in the source.
+
+**Do not write:**
+
+- Issue or PR numbers (`(#279)`, `see #423`). A reader cannot look those up
+  offline, and they almost never carry information the sentence needs.
+- Dates (`BENCH-VERIFIED 2026-07-22`) or versions (`live since v2.1.0`). Keep
+  the *fact* — "bench-verified on the real pack" — and drop the timestamp.
+- Change narrative: `was 2`, `30 -> 25`, `Until this landed`, `The previous
+  version`, `fixed in`. If the old behaviour matters, describe the current rule
+  and why; otherwise `git blame` has it.
+
+**Do write:**
+
+- Physical and numerical reasoning: `47R || 47R = 23.5 ohm -> 165 mA at 3.85 V`
+- Safety contracts: *"TELEMETRY ONLY -- no safety predicate reads this"*
+- Non-obvious invariants and conventions: the 9/10 LTC cell split,
+  `+ current = discharge`, single-writer ownership
+- Datasheet pointers a reader can actually follow: *"LTC6811 Table 53"*
+- Honest gaps: what is measured, what is assumed, what is untested
+
+Exceptions where a number IS the information: CAN message IDs, register
+addresses, `COMMISSION` markers, and `docs/` pages whose job is project history.
+
+Rule of thumb: if a comment answers *when* something changed or *who* asked for
+it, cut it. If it answers *what this does* or *why it must be this way*, keep it.
+
 ## Hard constraints
 
 - **No references to SWD / JTAG / OpenOCD / ST-Link / GDB / CubeProgrammer**

@@ -16,42 +16,30 @@ namespace ams::config {
 // and docs/COMMISSIONING.md §1 for the procedure to finalise these.
 //
 // COMMISSION: these are placeholder defaults. Finalise per cell
-// datasheet + FS rules before v1.0.0.
+// datasheet + FS rules before the car runs.
 // ---------------------------------------------------------------------------
 
 inline constexpr std::uint16_t CellUnderVoltageMv =  2800;  // under-voltage   -- COMMISSION
 inline constexpr std::uint16_t CellOverVoltageMv =  4200;  // over-voltage    -- COMMISSION
 
-// Cell OPEN-WIRE detection (LTC6811 ADOW). Historically the AMS relied on
-// software cell-mV plausibility for a broken sense wire (docs/BMS_LTC6811.md);
-// this arms the datasheet open-wire check instead, which catches an open that
-// still reads in-range. Runs the two-pass ADOW conversion in BmsPollTask and
-// faults FaultReason::CellOpenWire in ANY state.
+// Cell OPEN-WIRE detection via the LTC6811 ADOW command. Runs a two-pass
+// (pull-up / pull-down) conversion in BmsPollTask and faults CellOpenWire in
+// ANY state. Detector: open_wire.hpp. Command encoding: ltc6811.hpp.
 //
-// Disabled by #510 because enabling it on the bench did NOT fault on a real
-// open. ROOT CAUSE FOUND (2026-07-26, bench): adow_cmd() had PUP on bit5 with
-// base 0x0248, i.e. PUP and a fixed opcode bit swapped. The PUP=1 pass was
-// correct by coincidence (0x0368) but PUP=0 emitted 0x0348, which the LTC does
-// not accept -- no second conversion ran and RDCV re-returned the pull-up
-// result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, so the
-// PU-PD delta was identically 0 and the open was undetectable. See ltc6811.hpp.
+// This is the ONLY predicate that can see a broken cell tap. An open node
+// floats, so one of the two cells sharing it rails high and the other low with
+// their SUM conserved -- exactly the signature the tap-artifact guard in
+// recompute_summaries_ averages back into range. Cell over/under-voltage
+// therefore cannot fire on an open tap: measured on the bench, a cell reading
+// 2364 mV reached the FSM as 3823 mV.
 //
-// RE-ENABLED now that the encoding is fixed and validated end-to-end on a live
-// chain (the sign-off #510 asked for), twice:
-//   * induced open on M2 c2/c3  -> -4210 mV on the cell above the open
-//   * real M5 reseat fault c7/c8 -> -3979 mV, found by the firmware unprompted
-// Both ~10x the 400 mV threshold, with a healthy pack staying inside
-// -130..+50 mV across all 5 modules and PEC clean -- no false positives.
+// Margin on a live pack: a real open reads about -4000 mV against the 400 mV
+// threshold, roughly 10x. A healthy pack stays inside -130..+50 mV.
 //
-// This predicate is the ONLY one that can see an open tap: the shared node
-// floats, so the tap-artifact guard in recompute_summaries_ averages the pair
-// back into range and CellUnderVoltage/CellOverVoltage can never fire on it
-// (measured: a cell reading 2364 mV was presented to the FSM as 3823 mV).
-//
-// KNOWN GAP: only INTERIOR conductors are hardware-validated. The endpoint
-// rules -- C(0) via CELL_PU(1)==0 and C(N) via CELL_PD(N)==0 -- use exact-zero
-// comparisons and are still bench-untested; an endpoint open that reads a few
-// mV instead of a hard 0 would be missed. Tracked as a follow-up.
+// GAP: only INTERIOR conductors are hardware-validated. The endpoint rules
+// (C(0) via CELL_PU(1)==0, C(N) via CELL_PD(N)==0) test for EXACT zero and have
+// never run on hardware -- an endpoint open reading a few mV instead of 0 would
+// be missed. That is ~2 of every 10 conductors per IC.
 inline constexpr bool          CellOpenWireCheck   = true;
 inline constexpr std::uint16_t CellOpenWireDeltaMv = 400;   // datasheet open threshold
 // ADOW retries within a single voltage poll (mirrors VoltPollRetries). Both ADOW
@@ -101,7 +89,31 @@ inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- C
 // unaffected. Flip to true once the mux fix ships to flight and temps are
 // bench-validated end-to-end.
 inline constexpr bool          TempFaultsTrusted = false;
-inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COMMISSION
+// Pack over-current trip. |filtered_mA| above this latches CurrentOverLimit,
+// which opens the AIRs and drops AMS_OK.
+//
+// 185 A is the 6P continuous rating of the cells: 95S6P of VTC6 at 30 A
+// continuous each, so a series element sustains 6 x 30 = 180 A. The sensor is a
+// Bourns SSA-2-250A, so the limit sits inside what the front end can actually
+// measure. 60 A was roughly C/3 -- well under what the pack is rated for and far
+// under a launch, so it would have opened the contactors under full load.
+//
+// There is NO debounce on this check; the smoothing comes entirely from the
+// filter feeding it. filtered_mA is a first-order IIR with CurrentFilterShift=4
+// at CurrentPeriodMs=50, i.e. tau ~ 800 ms, so the trip time is
+// tau*ln(I/(I-limit)):
+//
+//     200 A -> 2.1 s     250 A -> 1.1 s     300 A -> 0.8 s     400 A -> 0.5 s
+//
+// A brief inrush therefore rides through while a sustained overload still opens
+// the SDC in about a second. Note the corollary: currents between the cell
+// rating and this limit never trip at all, by design -- protection against a
+// slow overload is the cell temperature path, not this.
+//
+// COMMISSION: derived from the cell datasheet, NOT measured against the car's
+// real draw or validated against the contactor and fuse ratings. Confirm the
+// inverter peak and the SDC element ratings before trusting it.
+inline constexpr std::int32_t  CurrentMaxMa   = 185000; // 6P continuous -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
@@ -131,7 +143,7 @@ inline constexpr std::uint32_t ChargerStaleMs =  1000; // charger 0x101 stale (C
 // the moment of transition and never re-evaluated.
 inline constexpr std::uint32_t VcuFreshMs     = 1000;
 
-// Precharge deadline (#302 follow-up). If the bus doesn't reach the
+// Precharge deadline. If the bus doesn't reach the
 // precharge target within this window the FSM latches Error and opens
 // every contactor, bounding how long the precharge contactor + resistor
 // can be held closed. This protects the precharge resistor (rated for
@@ -160,7 +172,7 @@ inline constexpr std::uint32_t SafetyPeriodMs    =  10;
 // ~100 ms. The immediate-safety predicates (FORCE_ERROR, SDC open)
 // remain active during the grace; only data-presence predicates are
 // suppressed. Must be >= the longest service warm-up:
-//   - BmsPollTask first voltage poll: BmsPollVoltMs (250 ms)
+//   - BmsPollTask first voltage poll: BmsPollVoltMs (200 ms)
 //   - CurrentSensorTask first ADC sample: CurrentPeriodMs (50 ms)
 //   - AcuCanTask first VCU 0x100:     uncontrolled, but typically
 //                                     present from the vehicle bus
@@ -168,13 +180,13 @@ inline constexpr std::uint32_t SafetyPeriodMs    =  10;
 // startup; tune down if a faster boot becomes critical.
 inline constexpr std::uint32_t SafetyBootGraceMs = 2000;
 
-// Cell V/T range debounce (#279). The cell-voltage / temperature range
+// Cell V/T range debounce. The cell-voltage / temperature range
 // predicates must persist for this many consecutive SafetyTask
 // evaluations (× SafetyPeriodMs = 10 ms) before they latch the sticky
 // ERROR. A single sub-threshold sample -- a torn lock-free snapshot
 // read, or an unsettled first poll / emulator-default value at boot --
 // must not permanently fault the chip. Sized to span MORE than one
-// BmsPollVoltMs (250 ms = 25 ticks) cycle: a transient that clears on
+// BmsPollVoltMs (200 ms = 20 ticks) cycle: a transient that clears on
 // the next voltage poll never reaches the count, while a sustained
 // real under/over condition does. Cell V/T are slow-by-nature faults
 // (a cell cannot leave its valid window for one tick and return), so
@@ -231,7 +243,7 @@ inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor sn
 // missing/failed card or a full ring degrades to "no log", NEVER a fault and
 // never a blocking call on the 10 ms loop. The boot-path SDMMC init is
 // decoupled (CubeMX: MX_SDMMC1_SD_Init not auto-called) so an absent card
-// can't brick the node -- see AMS #407. Logger: Core/Src/app/sd_logger_task.cpp.
+// can't brick the node. Logger: Core/Src/app/sd_logger_task.cpp.
 // ---------------------------------------------------------------------------
 
 // SafetyTask captures a record this often. 250 ms = 4 Hz, matched to the
@@ -243,7 +255,7 @@ inline constexpr std::uint32_t LogSamplePeriodMs = 250;
 // Lock-free ring depth (LogRecords). Each record now carries the FULL
 // 95-cell + 200-temp matrices (~620 B), so the ring is ~10 KB of BSS at
 // depth 16. MUST be a power of two. 16 @ 4 Hz ~= 4 s of buffer; the
-// shared-SD-mutex-with-yielding (#406 pull) lets the logger drain between
+// shared-SD-mutex-with-yielding lets the logger drain between
 // the extractor's reads, so the ring rarely saturates. Bump if RAM allows.
 inline constexpr std::uint32_t LogRingCapacity   = 16;
 
@@ -253,28 +265,28 @@ inline constexpr std::uint32_t LogDrainPeriodMs  = 50;
 inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
 
 // Seal (rotate) the active file once it reaches this size. Bounded, rotated
-// files make #406 listing / CRC / resume / "only new logs" tractable.
+// files make LOGFS listing / CRC / resume / "only new logs" tractable.
 // Size cap per file. A real 314-column row is ~1.35 kB (76 B of scalars +
 // 95 cells + 200 temps), so at 4 Hz the card takes ~5.3 KiB/s and 4 MiB is
 // ~13 MINUTES of logging -- not the ~4 min this comment used to claim.
 inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~13 min/file at full per-cell rows)
 
-// Time cap per file. Without this, a file is only sealed to .CSV on the size
-// cap, so any run shorter than ~13 min leaves a .TMP that no tool treats as a
-// finished log (the #406 extractor lists sealed files only). Rotating on time
-// as well means an ordinary bench or test session produces real .CSV files
-// while it runs, instead of one perpetual .TMP.
+// Time cap per file. Without this, a file is only sealed to.CSV on the size
+// cap, so any run shorter than ~13 min leaves a.TMP that no tool treats as a
+// finished log (the LOGFS extractor lists sealed files only). Rotating on time
+// as well means an ordinary bench or test session produces real.CSV files
+// while it runs, instead of one perpetual.TMP.
 //
 // 5 min ~= 1.6 MB per file: short enough that little is at risk if power is
 // cut mid-file, long enough not to litter the card.
 inline constexpr std::uint32_t LogFileMaxMs      = 5u * 60u * 1000u;    // 5 min
 
-// 8.3 names (LFN off in ffconf.h; no RTC wall-clock -- #406/#407). The active
+// 8.3 names (LFN off in ffconf.h; no RTC wall-clock). The active
 // file is written as ".TMP" and renamed to ".CSV" on seal, so the extractor
 // only ever sees finished logs. Index is a rotation counter, not a timestamp.
 inline constexpr char          LogActiveNameFmt[] = "LOG%04lu.TMP";
 inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
-// CRC-32 sidecar written beside a sealed CSV (#406): 8 ASCII hex digits.
+// CRC-32 sidecar written beside a sealed CSV: 8 ASCII hex digits.
 // Kept out of the CSV itself so the log stays directly spreadsheet-openable.
 inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 
@@ -287,11 +299,105 @@ inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 // the isoSPI daisy-chain (see LtcsPerModule / LtcChainLength
 // below). Module 0 == chain slots 0,1 ; module 4 == chain slots 8,9.
 // The legacy CAN-poll constants (CANID, stride, response-offset
-// ranges) were retired in v1.2.0 along with the FDCAN2 BMS path --
-// see commit history of #72 if archaeology is needed.
+// ranges) were retired along with the FDCAN2 BMS path.
 inline constexpr std::uint8_t  BmsModuleCount      = 5;
 inline constexpr std::uint8_t  CellsPerModule      = 19;
 inline constexpr std::uint8_t  TempsPerModule      = 40;  // 20 per LTC * 2 LTCs
+
+// ---------------------------------------------------------------------------
+// Pack energy + state-of-charge (soc_estimator.hpp). TELEMETRY ONLY -- no
+// safety predicate reads any of this.
+// ---------------------------------------------------------------------------
+// Usable capacity of ONE SERIES ELEMENT, which is what Coulomb counting
+// integrates against: the pack is 95S6P of Sony/Murata VTC6 (3.0 Ah nominal),
+// so each of the 95 series positions is a 6-parallel group of 6 x 3.0 = 18.0 Ah.
+// Every series element carries the full pack current by definition, so pack SoC
+// and element SoC are the same number -- no scaling by series count.
+//
+// Sourced from the TFM pack model (raulmoranguerra/TFM_RMG,
+// BMS_DL/sim/params.py: CELL_CAPACITY_AH = 3.0, N_PARALLEL = 6, 95S6P) and
+// independently corroborated by this firmware's own "C/101 balancer" phrasing,
+// which back-solves to ~18 Ah at the 179 mA balance current.
+//
+// COMMISSION: nominal datasheet capacity, NOT measured on this pack. Real usable
+// capacity falls with age and is temperature-dependent; a 10 % error here is a
+// 10 % proportional error in every Coulomb-counted SoC. Replace with a measured
+// full-discharge figure once one exists.
+inline constexpr std::uint32_t PackCapacityMah     = 18000;  // 6P x 3.0 Ah -- COMMISSION
+
+// OCV anchoring gate. Terminal voltage only equals open-circuit voltage at rest;
+// under load it carries I*R_int (~20 mOhm/cell fitted, so 10 A moves a cell
+// ~200 mV -- worth ~20 SoC points on the flat part of the curve). Both
+// conditions must hold before an anchor is taken.
+//
+// 500 mA: comfortably above sensor noise and the balancing bleed (~179 mA/cell)
+// while still small enough that the residual I*R error is ~10 mV, i.e. ~1 SoC
+// point mid-curve.
+inline constexpr std::uint32_t SocRestCurrentMa    = 500;
+// 5 min: the ohmic part of the polarisation recovers in microseconds, but the
+// concentration gradient relaxes over minutes. Anchoring too early reads low.
+// COMMISSION: not characterised on this cell -- if anchors land consistently
+// below a known-good reference, this is the first number to raise.
+inline constexpr std::uint32_t SocRestSettleMs     = 300000;  // 5 min -- COMMISSION
+
+// Longest gap the integrator will accept in one step. Beyond this the sample is
+// dropped rather than extrapolated: a gap that long means the task was starved
+// or the counter was just anchored, and inventing charge across it is worse than
+// losing that interval. 10x CurrentPeriodMs (50 ms).
+inline constexpr std::uint32_t SocMaxIntegrationGapMs = 500;
+
+// ---------------------------------------------------------------------------
+// SoC Kalman filter -- equivalent-circuit measurement model.
+// ---------------------------------------------------------------------------
+// Coulomb counting alone only re-anchors after SocRestSettleMs at rest, which
+// during a race session may simply never happen -- leaving pure integrator drift
+// for the whole run. The EKF corrects CONTINUOUSLY from the voltage residual,
+// and the Kalman gain does the weighting for free: it leans on voltage where the
+// OCV curve is steep (near full/empty) and on Coulomb counting across the flat
+// plateau, because the gain is proportional to dOCV/dSoC.
+//
+// Cell model, taken verbatim from the fitted VTC6 parameters in the TFM pack
+// simulator (raulmoranguerra/TFM_RMG, BMS_DL/sim/params.py + pack_model.py):
+//
+//     R_int(T, SoC) = R_NOM * f_SoC(SoC) * f_T(T)
+//     f_T(T)        = max(1 + ALPHA_R * (T - 25 degC), 0.4)     <- LINEAR, not exp
+//
+// Same characterisation that produced the network's training data, so firmware
+// and dataset stay on one model.
+inline constexpr std::uint32_t RIntNomMicroOhm    = 20060;   // R_NOM 0.020060 ohm, per CELL
+inline constexpr std::int32_t  RIntAlphaMicroPerK = -19926;  // ALPHA_R -0.019926 /K
+inline constexpr std::int16_t  RIntTempRefC       = 25;      // T_REF 298.15 K
+inline constexpr std::uint8_t  CellsInParallel    = 6;       // 95S6P -- element R = cell R / 6
+
+// f_SoC(SoC) piecewise-linear resistance shape (F_SOC_BP / F_SOC_VAL), x1000.
+// Non-monotonic by nature: internal resistance rises at both extremes.
+inline constexpr std::uint8_t  RIntSocPoints          = 7;
+inline constexpr std::uint16_t RIntSocBpPermille[RIntSocPoints] =
+    {   0,  100,  200,  500,  800,  900, 1000 };
+inline constexpr std::uint16_t RIntSocValMilli[RIntSocPoints] =
+    {1033, 1043, 1030,  986, 1051, 1006, 1009 };
+
+// --- Filter tuning. All COMMISSION: derived from first principles below, none
+// --- fitted against a measured SoC reference on this pack.
+//
+// P0 -- initial variance. sigma = 0.2 (20 % SoC), i.e. "the first voltage
+// reading is a hint, not a fix". Lets the filter converge quickly from a cold
+// start without a rest period, which is the whole point over plain CC.
+inline constexpr double SocEkfInitVar        = 0.04;
+// Q -- process noise per second. Coulomb counting is very good over short
+// horizons; this is the slow leak that stops P collapsing to zero and the filter
+// going deaf to voltage. sigma grows ~0.6 % SoC over an hour.
+inline constexpr double SocEkfProcessVarPerS = 1.0e-8;
+// R at zero current -- dominated by OCV CURVE FIT error, not ADC noise. The LTC
+// measures to ~1 mV but the fitted curve is worth ~10 mV, so sigma = 10 mV.
+inline constexpr double SocEkfMeasVarBase    = 1.0e-4;
+// R growth with current, scaled by I^2 because the error is PROPORTIONAL to
+// current: an uncertain R_int (say 20 % of 20 mOhm/6 per element) becomes
+// ~0.67 mOhm x I volts of unmodelled drop. At 100 A that is ~67 mV, so
+// var ~ 4.5e-3 -> k = 4.5e-3 / 100^2. This is what makes the filter
+// automatically distrust voltage under load instead of chasing I*R as if it
+// were charge.
+inline constexpr double SocEkfMeasVarPerA2   = 4.5e-7;
 
 // Accumulator bus (FDCAN1).
 //
@@ -299,14 +405,14 @@ inline constexpr std::uint8_t  TempsPerModule      = 40;  // 20 per LTC * 2 LTCs
 // AcuRxChargerId (0x18FF50E7, ext) were the legacy Start->{Precharge,
 // Charge} triggers. Both replaced by physical GPIOs (TSMS_Pin /
 // DASH_CHG_Pin). With those gone, the firmware is standard-frame-only
-// on FDCAN1 -- the HW global filter rejects extended at the gate (#231
-// follow-up); see app_init_task.cpp::HAL_FDCAN_ConfigGlobalFilter.
+// on FDCAN1 -- the HW global filter rejects extended at the gate -- see
+// app_init_task.cpp::HAL_FDCAN_ConfigGlobalFilter.
 //
 // ACU RX (FDCAN1): VCU 0x100 DC-bus heartbeat (LE uint16 V). The
 // car/charger mode lock at Start->Precharge consumes its freshness.
 inline constexpr std::uint32_t AcuRxDcBusId     = 0x100;   // standard; VCU DC bus heartbeat
 
-// Operator charge-mode request (#305). The charger has NO comms with the
+// Operator charge-mode request. The charger has NO comms with the
 // AMS, so an external operator tool asserts this frame to declare "we are
 // on the charger". Charger mode requires BOTH a fresh request AND VCU
 // absence (see the mode lock in safety_task.cpp). That removes the
@@ -319,7 +425,7 @@ inline constexpr std::uint8_t  ChargeModeReqDlc     = 4u;
 inline constexpr std::uint8_t  ChargeModeReqMagic[4] = { 0x43u, 0x48u, 0x52u, 0x47u };  // "CHRG"
 inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this recent at the mode lock
 
-// Operator balance-control override (#336, extended to a 3-state master
+// Operator balance-control override (a 3-state master
 // switch). The ChargerDisplayWario pit tool commands cell balancing on
 // 0x103, magic-gated like 0x101:
 //   "BALO" -> OFF   force balancing off
@@ -408,7 +514,7 @@ inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
 
 // ---------------------------------------------------------------------------
-// Pit-side diagnostic stream (#247). Runtime-toggleable full-grid telemetry
+// Pit-side diagnostic stream. Runtime-toggleable full-grid telemetry
 // for pit-stop debugging when the accumulator is plugged into can0 (car
 // stationary in the pit, or accumulator on the charger). Off by default.
 //
@@ -448,8 +554,14 @@ inline constexpr std::uint32_t PitDiagPostMortemId       = 0x6C5u;  // stack ove
 inline constexpr std::uint32_t PitDiagFwIdId             = 0x6C6u;  // semver + git hash[0..3] + BL node id
 inline constexpr std::uint32_t PitDiagPecPerIcAId        = 0x6C7u;  // per-IC PEC count: ICs 0..7 (saturating u8)
 inline constexpr std::uint32_t PitDiagPecPerIcBId        = 0x6C8u;  // per-IC PEC count: ICs 8..9 + reserved
-inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail (#331)
-// UNGATED firmware-health frame (#411): always-on 1 Hz, NEVER gated by the
+inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bus-Off recovery count + ECU-TX fail
+// Balance-quiesce health: how often the pre-measurement DCC clear succeeded vs
+// failed. Published because DCP=0 does not cover a failed quiesce (LTC6811
+// Table 53 suppresses discharge only on the measured cell and its neighbours),
+// so a failing quiesce means cell voltages are being sampled under bleed -- and
+// the balance selector ranks exactly those numbers.
+inline constexpr std::uint32_t PitDiagBalanceHealthId    = 0x6CBu;
+// UNGATED firmware-health frame: always-on 1 Hz, NEVER gated by the
 // pit-diag arm (0x7F0). ID sits right after the gated 0x6C0..0x6C9 block but
 // is emitted regardless of arm state -- parity with ECU 0x704 for passive
 // liveness ("is the AMS app alive?" without transmitting an arm frame).
@@ -470,7 +582,7 @@ inline constexpr std::int16_t  DcdcTempStubValue     = -32768;
 // Precharge target: DC bus must reach this fraction of pack voltage.
 inline constexpr float         PrechargeRatio   = 0.95f;
 
-// DC-bus collapse detector (#330). In Run (Car mode) the bus equals the
+// DC-bus collapse detector. In Run (Car mode) the bus equals the
 // pack voltage; if the AIRs open externally -- e.g. a cockpit SDC shutdown
 // the AMS can't sense -- the VCU-reported dc_bus_V collapses. When it
 // falls below BusCollapsePercent of the pack (cell-sum) for
@@ -499,7 +611,7 @@ inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~20
 //   OUT_N = PF8 = ADC3_INN3   (negative input, hardware-paired to INP3)
 //
 // In STM32H7 differential mode the conversion encodes V(INP) - V(INN)
-// over the range -Vref .. +Vref onto codes 0 .. 4095, with the
+// over the range -Vref.. +Vref onto codes 0 .. 4095, with the
 // zero-difference point at mid-scale (code ~= 2048). The sensor's
 // common-mode (1.44 V) cancels in the subtraction, so only the bipolar
 // +/- 5 mV/A differential remains:
@@ -540,7 +652,7 @@ inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~20
 // COMMISSION: CurrentZeroCount and CurrentMvPerAmpe1 (pack), and
 // DcdcCurrentZeroMv / DcdcCurrentMvPerAmpe1 (DCDC), MUST be calibrated
 // per docs/COMMISSIONING.md §2. The pack values below are the HIL-bench
-// commissioned figures (#348, against feat/current-sensor-diff): a DAC
+// commissioned figures: a DAC
 // injection verified at exactly 5 mV/A measured the firmware reading a
 // stable 0.924x (7.6 % low) with a +0.6 A zero. Folding that effective
 // gain into the (COMMISSION) sensitivity gives CurrentMvPerAmpe1 = 46
@@ -548,15 +660,15 @@ inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~20
 // 2050 (raw at 0 A). The nominal ideal would be 50 / 2048; the converter
 // math is unchanged -- this just absorbs the measured ADC/VREF gain.
 //
-// Flight-carrier re-cal (2026-06-20): on the assembled-car AMS the zero
+// Flight-carrier re-cal: on the assembled-car AMS the zero
 // measured 2054 (HIL carrier was 2050) -- the offset tracks VREF+, so it
 // is board-specific. The 46 gain read back EXACT against an aux-PSU known
 // current, so only the zero moved. Re-measure per carrier.
 inline constexpr std::uint16_t AdcVrefMv          = 3300;
 inline constexpr std::uint16_t AdcMaxCount        = 4095;
 // Pack channel (differential ADC3_INP3/INN3 = PF7/PF8). HIL-commissioned.
-inline constexpr std::int32_t  CurrentZeroCount   = 2054;  // diff zero @ 0 A (flight carrier; HIL #348 was 2050)  COMMISSION
-inline constexpr std::int32_t  CurrentMvPerAmpe1  = 46;    // COMMISSION (eff 5.4 mV/A x10; HIL #348 gain trim)
+inline constexpr std::int32_t  CurrentZeroCount   = 2054;  // diff zero @ 0 A (flight carrier; HIL bench read 2050)  COMMISSION
+inline constexpr std::int32_t  CurrentMvPerAmpe1  = 46;    // COMMISSION (eff 5.4 mV/A x10, HIL gain trim)
 // DCDC channel (single-ended ADC3_INP11 = PC1; Allegro ACS758 @ 3.3 V).
 inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1650; // ACS758 offset = Vcc/2 @ 3.3 V  COMMISSION
 inline constexpr std::int32_t  DcdcCurrentMvPerAmpe1 = 264;  // COMMISSION (26.4 mV/A x10 ratiometric @ 3.3 V)
@@ -584,16 +696,36 @@ inline constexpr std::uint8_t  CurrentDisconnectConfirm = 3; // consecutive out-
 // IIR low-pass filter coefficient is encoded as a shift so the filter
 // is `filtered = filtered - (filtered >> shift) + (raw >> shift)`.
 
-// Cell-balancing parameters (#74). Passive balancing driven from
+// Cell-balancing parameters. Passive balancing driven from
 // the Charge state only: pick the cells with the largest excess
 // over the pack minimum, cap the simultaneous count per module so
 // dissipation per board stays bounded, and inhibit entirely when
 // the warmest NTC says the pack is already hot.
 //
-// COMMISSION before v1.0.0 against the dissipation budget of the
+// COMMISSION against the dissipation budget of the
 // BMS_LITE balance resistors and the airflow available in the
 // accumulator box.
 inline constexpr std::uint16_t BalanceDeltaMv     = 50;    // mV above min to start balancing
+// Hysteresis STOP threshold: a cell already discharging keeps discharging until
+// it falls within this of the floor, rather than being re-ranked from scratch.
+//
+// Without it compute_mask is stateless and re-picks the top-K every
+// BalanceUpdatePolls (~800 ms), so any cell sitting near BalanceDeltaMv toggles
+// on and off continuously -- it is selected, bleeds a little, drops below the
+// single threshold, is dropped, recovers, and is selected again. The bleed is
+// real but the duty is a fraction of what the operator sees on the mask, and
+// the churn makes the DCC pattern unreadable on the bench.
+//
+// 20 mV against a 50 mV start gives a 30 mV band. That is comfortably wider
+// than the 9-36 mV harness-IR artifact a bled cell shows against its
+// neighbours, so a cell does not drop out simply because it is being measured
+// while its own bleed displaces the shared tap.
+//
+// MUST stay below BalanceDeltaMv -- a stop threshold at or above the start
+// threshold would latch a cell on forever. static_assert below enforces it.
+inline constexpr std::uint16_t BalanceStopDeltaMv = 20;
+static_assert(BalanceStopDeltaMv < BalanceDeltaMv,
+              "stop threshold must be below start, or a selected cell never releases");
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
 // Simultaneous dischargers per module. This is a BOARD DISSIPATION limit, not
 // a policy one -- compute_mask is stateless and re-picks the top-N by excess
@@ -621,7 +753,8 @@ inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balanc
 // dischargers is 6.0 W per module and 30 W across the pack however good the
 // resistors are.
 //
-// COMMISSION: still not measured. Watch cell/board temperature on a bench run
+// COMMISSION: BOARD temperature in the sealed accumulator is still not
+// measured (the ~71 C below is a single pad on an open bench). Watch it
 // at this setting before trusting it in a sealed box, and note that the
 // BalanceTempMax lockout that would catch an overheating board reads the same
 // unvalidated NTC path (see BalanceTempsTrusted).
@@ -635,8 +768,8 @@ inline constexpr std::uint8_t  BalanceMaxActive   = 8;     // cells per module d
 //
 // May reduce the active count below BalanceMaxActive when imbalanced cells
 // cluster -- that is the intended, safe outcome (less heat, skipped cells bleed
-// on later cycles). The index->board-position map is BENCH-VERIFIED (2026-07-22,
-// IR on the real pack -- see physically_adjacent).
+// on later cycles). The index->board-position map is bench-verified by IR on
+// the real pack -- see physically_adjacent.
 inline constexpr bool          BalanceSpreadNoAdjacent = true;
 
 // Whether the cell-temperature path is trusted ENOUGH TO BALANCE ON.
@@ -673,7 +806,7 @@ inline constexpr bool          BalanceSpreadNoAdjacent = true;
 // mux path is validated end-to-end and TempFaultsTrusted itself goes true --
 // at which point this flag becomes redundant and should be deleted.
 inline constexpr bool          BalanceTempsTrusted = true;   // COMMISSION -- see residual risk above
-inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollVoltMs = 250 ms
+inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 800 ms at BmsPollVoltMs = 200
 
 // Settle time after clearing the DCC bits and before starting a cell-voltage
 // conversion, so no bleed current is flowing while the cells are measured.
@@ -701,7 +834,7 @@ inline constexpr std::uint32_t BalanceUpdatePolls = 4;     // = 1 Hz at BmsPollV
 inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
 
 // FDCAN1 TX FIFO slots kept free for the flight telemetry matrix while a LOGFS
-// reply is being shipped (#449).
+// reply is being shipped.
 //
 // A pull is a MULTI-MINUTE operation. pump_diag_tx() used to fill the 16-deep
 // FIFO to zero free slots, and it runs before the telemetry scheduler in the
@@ -740,7 +873,7 @@ inline constexpr std::uint32_t AdaxSettleMs     = 1;
 
 // ---------------------------------------------------------------------------
 // Backup-register usage. RTC_BKP_DR0 is owned by the bootloader (it
-// reads BL_BOOT_REQ_MAGIC there on every boot, see issue #54 / the
+// reads BL_BOOT_REQ_MAGIC there on every boot -- see the
 // stm32-can-bootloader memmap). Application uses RTC_BKP_DR1 for the
 // ERROR latch so the two never share a word.
 // See docs/ARCHITECTURE.md §1 invariant 5.
@@ -758,7 +891,7 @@ inline constexpr std::uint32_t BlBootReqMagic  = 0xB00710ADu;
 
 // CAN frame the app listens for to trigger a deliberate reboot into
 // the bootloader. Standard 11-bit ID, very high arbitration priority.
-// On FDCAN1 (accumulator bus) since v1.2.0 (#73) -- BmsRxTask was
+// On FDCAN1 (accumulator bus) -- BmsRxTask was
 // retired with the FDCAN2 BMS path, and AcuCanTask is the only RX
 // consumer now. The bootloader itself still drives FDCAN2 after
 // reset, but the in-band trigger lives on the same bus MingoCAN
@@ -778,7 +911,7 @@ inline constexpr std::uint8_t  BlBootReqDlc        = 4;
 // as the boot magic and error latch).
 //
 // Slot 0: BL boot-request magic. Slot 1: AMS ErrorLatch. Slot 2:
-// jump reason. Slot 3: last-fault sentinel (#411). Slot 4+ reserved.
+// jump reason. Slot 3: last-fault sentinel. Slot 4+ reserved.
 inline constexpr std::uint32_t BkpJumpReasonReg = 2;
 
 enum class JumpReason : std::uint32_t {
@@ -788,7 +921,7 @@ enum class JumpReason : std::uint32_t {
     ManualRequest  = 0x4D414E55u,  // 'MANU' -- operator-issued, no fault
 };
 
-// --- Firmware-health frame (0x6CA, #411) -----------------------------------
+// --- Firmware-health frame (0x6CA) ------------------------------------------
 // Slot 3 holds the last-fault sentinel: the HardFault handler stamps a
 // LastFault code here, the 0x6CA health frame surfaces it on byte [7], and a
 // clean boot clears it. Same backup-domain persistence as slots 0-2 (survives
@@ -813,9 +946,7 @@ enum class LastFault : std::uint8_t {
 // flash time that the app it's writing matches the BL it's talking
 // to. Changing this requires re-building both halves.
 //
-// 2026-05-18: originally 0x01 (MLC1 single-node bring-up; factory NVM),
-// confirmed by IFS08_HIL#30 turning A-002/A-003 green.
-// #403: the shared-bus role map (can-flasher provision) is ECU=1,
+// The shared-bus role map (provisioned by can-flasher) is ECU=1,
 // AMS=2, uDV=3 -- 0x01 is the ECU's slot, so on a shared bus the AMS
 // collided with the ECU. The AMS moves to 0x02. The flight board's BL
 // MUST be re-provisioned to node 2 (-DBL_NODE_ID=2 and/or NVM provision)
@@ -832,7 +963,7 @@ inline constexpr std::uint32_t AppFlashBase    = 0x08020000u;
 inline constexpr std::uint32_t AmsTelemStatusId = 0x4A0u;  // state + cell-V extremes
 inline constexpr std::uint32_t AmsTelemPackId   = 0x4A1u;  // pack V + current
 inline constexpr std::uint32_t AmsTelemTempsId  = 0x4A2u;  // temp extremes + dc bus + heartbeat
-inline constexpr std::uint32_t AmsTelemDiagId   = 0x4A3u;  // diagnostic probes (#123); pure-fn encoder
+inline constexpr std::uint32_t AmsTelemDiagId   = 0x4A3u;  // diagnostic probes; pure-fn encoder
 inline constexpr std::uint32_t AmsRelayStatusId = 0x4A4u;  // contactor + AMS_OK GPIO read-backs (always-on)
 
 // ---------------------------------------------------------------------------
@@ -841,15 +972,15 @@ inline constexpr std::uint32_t AmsRelayStatusId = 0x4A4u;  // contactor + AMS_OK
 // docs/BMS_LTC6811.md for the wire protocol and slot mapping.
 // ---------------------------------------------------------------------------
 inline constexpr std::uint8_t  LtcsPerModule       = 2;
-inline constexpr std::uint8_t  CellsPerLtcUpper    =  9;  // LTC_1 (first in chain) -- 9 cells -> module 0..8 (#423)
-inline constexpr std::uint8_t  CellsPerLtcLower    = 10;  // LTC_2 (second in chain) -- 10 cells -> module 9..18 (#423)
+inline constexpr std::uint8_t  CellsPerLtcUpper    =  9;  // LTC_1 (first in chain) -- 9 cells -> module 0..8
+inline constexpr std::uint8_t  CellsPerLtcLower    = 10;  // LTC_2 (second in chain) -- 10 cells -> module 9..18
 inline constexpr std::uint8_t  LtcChainLength      = 10;  // BmsModuleCount * LtcsPerModule
 inline constexpr std::uint8_t  TempsPerLtc         = 20;  // ADG731 channels populated
 inline constexpr std::uint8_t  TempMuxChannelsUsed = 20;  // of 32 on ADG731
 
 // ADG731 channel index (0..31) for each of the 20 temperature
 // indices we sweep. Extracted from pcbs/BMS_LITE/LTC_1.kicad_sch
-// (#71 schematic walk): NTC_1..NTC_10 sit on S1..S10, NTC_11..NTC_20
+// (from the schematic): NTC_1..NTC_10 sit on S1..S10, NTC_11..NTC_20
 // sit on S17..S26, with S11..S16 and S27..S31 unpopulated. The
 // 0-indexed channel passed to pack_adg731_select is one less than
 // the schematic's "S<n>" pin number. LTC_2's mux (U5) mirrors this
@@ -861,7 +992,7 @@ inline constexpr std::uint8_t Adg731ChannelMap[TempsPerLtc] = {
     16, 17, 18, 19, 20, 21, 22, 23, 24, 25,   // S17..S26 -> NTC_11..NTC_20
 };
 
-// NTC + voltage-divider parameters (COMMISSION before v1.0.0).
+// NTC + voltage-divider parameters (COMMISSION).
 //
 // Each NTC is wired between the ADG731 'S' input and the LTC ground
 // reference, with a pull-up resistor between V_REF (LTC6811 VREF2 ~
@@ -935,7 +1066,7 @@ inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
 // 1 x 250 ms + the ~100 ms sweep + a 10 ms safety tick ~= 360 ms, comfortably
 // inside 500 ms. TRADE-OFF: this drops the single-anomalous-read debounce, so a
 // one-off mux glitch that reads >= NtcOpenMv could nuisance-latch ERROR. That
-// is mitigated -- but not eliminated -- by the #482 mux first-select warm-up and
+// is mitigated -- but not eliminated -- by the mux first-select warm-up and
 // the NtcOpenMv (2800 mV) / plausibility gate that reject the known transients.
 // COMMISSION: watch for spurious TempSensorDisconnected trips on the HIL bench;
 // if a genuine glitch source appears, raise BmsPollTempMs headroom + reinstate a
@@ -967,7 +1098,7 @@ inline constexpr std::uint8_t TempDisconnectPolls     = 1;
 // healthy for the pack to arm. Validate on the bench before flight.
 //
 // Slot 0 is safe to require: the ADG731 first-select drop that used to make
-// temp 1 read open on the first sweep is absorbed by the #482 mux warm-up (the
+// temp 1 read open on the first sweep is absorbed by the mux warm-up (the
 // throwaway select to unpopulated S32 in BmsPollTask) -- without that warm-up,
 // requiring slot 0 would false-fault every module at boot.
 inline constexpr std::uint8_t RequiredTempSlots[]   = {

@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: proprietary
 //
-// Drives the LTC6811-1 daisy-chain to acquire cell voltages and, in a
-// follow-up branch (#71), cell temperatures via the per-LTC ADG731
-// 32:1 mux. Replaces the legacy FDCAN2 poll emitter; the wire-format
-// layer lives in ltc6811.hpp / ltc6820.hpp.
+// Drives the LTC6811-1 daisy-chain to acquire cell voltages and, via the
+// per-LTC ADG731 32:1 mux, cell temperatures. The wire-format layer lives in
+// ltc6811.hpp / ltc6820.hpp.
 //
-// Cadence (unchanged from the legacy task):
-//   * PollVDue every BmsPollVoltMs (250 ms) -> ADCV + RDCVA/B/C/D
-//   * PollTDue every BmsPollTempMs (500 ms) -> 20-channel mux sweep
-//                                                (stub here, lands in #71)
+// Cadence:
+//   * PollVDue every BmsPollVoltMs (200 ms) -> ADCV + RDCVA/B/C/D
+//   * PollTDue every BmsPollTempMs (250 ms) -> 20-channel mux sweep
 //
 // Mechanism: two osTimers raise event-flag bits, this task wakes on
 // osEventFlagsWait. Single producer over the SPI bus, so no mutex
@@ -35,12 +33,18 @@
 #include <cstdint>
 #include <cstring>
 
-// FSM state mirror, written by MainTask on every transition (the FSM
-// step body lives inside MainTask since refactor/19 phase 3). Reading
+// FSM state mirror, written by MainTask on every transition. Reading
 // a single byte from another task is safe without a lock; we only
 // need a coherent snapshot at the call point, which volatile + 8-bit
 // read guarantees on Cortex-M7.
 extern "C" volatile std::uint8_t g_state_telemetry;
+
+// Latched fault reason, written by MainTask at the transition into ERROR (same
+// single-writer / 8-bit-read contract as g_state_telemetry above; acu_can_task
+// consumes it the same way). BalanceController needs it because a latched
+// CELL-DATA fault means the cell voltages it ranks are untrustworthy -- see
+// balance::is_cell_data_fault.
+extern "C" volatile std::uint8_t g_fault_reason_telemetry;
 
 namespace {
 
@@ -54,17 +58,16 @@ osTimerId_t s_temp_timer = nullptr;
 volatile std::uint32_t g_ltc_spi_err_count = 0;
 
 // Round-trip timing for the voltage poll, both last-cycle and worst-
-// case-since-boot. Lets the HIL operator verify the issue's "complete
-// within 50 ms" acceptance criterion without a scope. Promoted to
-// extern "C" external linkage so the pit-diag stream (#247) can
-// surface them via AcuCanTask.
+// case-since-boot. Lets the HIL operator confirm the poll completes well
+// inside its 200 ms budget without a scope. extern "C" so the pit-diag
+// stream can surface them via AcuCanTask.
 }  // close anonymous namespace temporarily for the extern "C" decls
 
 extern "C" volatile std::uint32_t g_bms_volt_poll_ms  = 0;
 extern "C" volatile std::uint32_t g_bms_volt_poll_max = 0;
 
-// DCC mask snapshot from the last balance cycle, exposed for pit-diag
-// (#247). bit c of g_balance_dcc_bits[m] == 1 iff cell c of module m
+// DCC mask snapshot from the last balance cycle, exposed for pit-diag.
+// bit c of g_balance_dcc_bits[m] == 1 iff cell c of module m
 // was selected for discharge this cycle. 19 cells per module fit in
 // the low 19 bits of each uint32; bits 19..31 are always 0.
 extern "C" volatile std::uint32_t g_balance_dcc_bits[5] = {0, 0, 0, 0, 0};
@@ -78,11 +81,19 @@ extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
 // pit-diag stream can surface it.
 extern "C" volatile std::uint32_t g_ltc_chain_recover_count = 0;
 
-// Times the voltage poll cleared the DCC bits before measuring (#balance
-// measurement integrity). Climbs at the poll rate whenever balancing is
+// Times the voltage poll cleared the DCC bits before measuring. Climbs
+// at the poll rate whenever balancing is
 // actually discharging, and stays flat when it is not -- so the bench can
 // confirm from CAN alone that the quiesce is running.
 extern "C" volatile std::uint32_t g_balance_quiesce_count = 0;
+
+// Times the quiesce could NOT be proven (both WRCFGA attempts failed) and the
+// poll therefore measured with balancing still live. Those cell voltages carry
+// the 9-36 mV bleed displacement, so the balance selector skips that cycle --
+// the safety predicates still consume them, which is the right split. Climbing
+// alongside g_ltc_spi_err_count means isoSPI trouble is corrupting the balancing
+// input; climbing on its own would be a chain that only fails on writes.
+extern "C" volatile std::uint32_t g_balance_quiesce_fail_count = 0;
 
 // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW pull-up / pull-down per-cell
 // readings (flat 95 = 5 modules x 19 cells), dumped over pit-diag so the ADOW
@@ -103,23 +114,37 @@ volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
 
 // Last CFGA payload actually written to the chain, and whether it asserted any
-// DCC bit. The mask is only recomputed every BalanceUpdatePolls (1 Hz) but
+// DCC bit. The mask is only recomputed every BalanceUpdatePolls (800 ms) but
 // PERSISTS on the chain between writes, so quiescing for a measurement has to
-// put it back afterwards -- otherwise clearing it every 250 ms poll would
+// put it back afterwards -- otherwise clearing it every 200 ms poll would
 // destroy three quarters of the balancing duty.
 std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
 bool         s_balance_active = false;
+
+// Last mask compute_mask produced, fed back on the next cycle so the selector
+// can apply hysteresis (BalanceStopDeltaMv). Without this the policy is
+// stateless and re-ranks from scratch every BalanceUpdatePolls, so any cell
+// hovering near the threshold toggles instead of accumulating bleed time.
+// Held HERE rather than inside compute_mask so that function stays pure and
+// host-testable.
+ams::balance::Mask s_prev_balance_mask = {};
+
+// Set by quiesce_balancing() when it could not prove discharge was off, so the
+// cell voltages this poll produced were taken under bleed. Consumed and cleared
+// by maybe_run_balance_update(), which skips the update rather than re-rank the
+// pack on displaced readings. Single-writer (BmsPollTask), same thread, so a
+// plain bool is sufficient -- no volatile needed.
+bool         g_balance_quiesce_fail = false;
 
 // ---------------------------------------------------------------------------
 // Chain-sleep recovery.
 //
 // The LTC6811 drops into T_SLEEP (~2 s) after its last VALID command, and a
 // sleeping IC ignores every normal command -- only the CS-low wake pulse
-// train (Bus::wakeup) brings it back. Until this landed, wakeup() was issued
-// exactly once at boot (app_init_task) and never again, so the chain survived
-// only on uninterrupted poll traffic: any interruption longer than T_SLEEP
-// (e.g. inverter switching noise corrupting commands through a torque event)
-// put the chain to sleep permanently, with no code path able to recover it.
+// train (Bus::wakeup) brings it back. A single wakeup at boot is not enough:
+// any interruption longer than T_SLEEP (e.g. inverter switching noise
+// corrupting commands through a torque event) would put the chain to sleep
+// permanently with no way back.
 //
 // So: count consecutive failed polls, and once the chain looks gone, re-wake
 // + reconfigure before each subsequent attempt. Retrying every poll (rather
@@ -195,7 +220,7 @@ VoltAttempt attempt_voltage_poll() {
     auto& bus = ltc6820::Bus::default_instance();
 
     // 1. ADCV broadcast. Discharge-permit = false during normal data
-    //    acquisition (#74 flips it for balancing windows). Cells = All.
+    //    acquisition (flipped for balancing windows). Cells = All.
     const auto adcv = ltc6811::pack_command(
         ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::AdcMode),
                           /*discharge_permit=*/false,
@@ -209,7 +234,7 @@ VoltAttempt attempt_voltage_poll() {
     //    ~2.3 ms; we round to 3 ms (config::AdcvSettleMs).
     osDelay(config::AdcvSettleMs);
 
-    // 3. Warm-up cmd before RDCVA (#214). After the multi-ms idle between
+    // 3. Warm-up cmd before RDCVA. After the multi-ms idle between
     //    ADCV+settle and the first RDCV, MOSI drifts toward its idle-high
     //    level long enough that slaves which re-sync on CS edges (e.g. the Pi
     //    Pico LTC6820 emulator on the HIL bench) sample a stray HIGH as bit 7
@@ -275,12 +300,33 @@ bool quiesce_balancing() noexcept {
         for (std::size_t k = 0; k < 6; ++k) zeros[i][k] = off[k];
     }
 
-    if (!ltc6820::Bus::default_instance().write_chain_command(
-            ltc6811::CmdWRCFGA, zeros)) {
-        // Could not prove discharge is off. Measure anyway -- stale cell data
-        // starves the safety predicates, which is worse than a noisy read --
-        // but do not claim a restore is owed, and count the error.
-        ++g_ltc_spi_err_count;
+    // RETRY once before giving up. WRCFGA is idempotent (it writes an absolute
+    // DCC mask, not a delta) and costs ~1.3 ms at 515 kHz, so a second attempt is
+    // cheap next to the alternative: measuring the whole pack under full bleed.
+    //
+    // DCP=0 on the ADCV does NOT rescue that case. Per LTC6811 datasheet Table 53
+    // it suppresses discharge only on the cell being measured AND its immediate
+    // neighbours -- during the CELL1/7 window S1/S2 are off but S3/S4/S5 stay ON.
+    // So roughly half the selected cells keep pulling ~165 mA through the shared
+    // tap harness for the whole conversion, which is exactly the 9-36 mV
+    // displacement (bled cell low, both neighbours high) that BalanceQuiesceMs
+    // exists to eliminate. The quiesce is the ONLY full stop; treat it that way.
+    bool quiesced = false;
+    for (std::uint8_t attempt = 0; attempt < 2u && !quiesced; ++attempt) {
+        quiesced = ltc6820::Bus::default_instance().write_chain_command(
+            ltc6811::CmdWRCFGA, zeros);
+        if (!quiesced) ++g_ltc_spi_err_count;
+    }
+
+    if (!quiesced) {
+        // Still could not prove discharge is off. Measure anyway -- stale cell
+        // data starves the safety predicates, which is worse than a noisy read --
+        // but flag the poll so the BALANCE SELECTOR ignores it. The safety path
+        // wants the reading regardless; the balancing policy must not act on
+        // voltages it knows were taken under bleed, or it chases its own artifact
+        // at the same order of magnitude as BalanceDeltaMv (50 mV).
+        g_balance_quiesce_fail = true;
+        ++g_balance_quiesce_fail_count;
         return false;
     }
     ++g_balance_quiesce_count;
@@ -303,7 +349,7 @@ void restore_balancing() noexcept {
 // One ADOW conversion pass (open-wire). Mirrors attempt_voltage_poll's ADCV ->
 // RDCV shape but issues ADOW with the given PUP, TWICE, so the pull-up/down
 // current settles before the read (datasheet "Open Wire Check"; the cell-domain
-// twin of the #482 mux first-select warm-up). Fills `reply` (4*GroupBytes) with
+// twin of the mux first-select warm-up). Fills `reply` (4*GroupBytes) with
 // RDCVA..D. Returns false on any bus error. UNVALIDATED ON HARDWARE (bench down)
 // -- the ADOW encoding + timing need a real-chain check (see open_wire.hpp).
 bool adow_pass(ams::ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexcept {
@@ -322,7 +368,7 @@ bool adow_pass(ams::ltc6820::Bus& bus, bool pull_up, std::uint8_t* reply) noexce
         osDelay(config::AdcvSettleMs);
     }
 
-    // RDCV warm-up (#214): no-op RDCFGA burns the stale-MOSI sample so the
+    // RDCV warm-up: no-op RDCFGA burns the stale-MOSI sample so the
     // back-to-back RDCV* reads keep bit-sync.
     const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
     std::uint8_t warmup[8 * config::LtcChainLength];
@@ -440,7 +486,7 @@ void run_voltage_poll() {
 }
 
 // ---------------------------------------------------------------------------
-// Cell balancing (#74). Once every BalanceUpdatePolls voltage cycles
+// Cell balancing. Once every BalanceUpdatePolls voltage cycles
 // we snapshot BmsState, ask BalanceController what to discharge, pack
 // DCC bits into 10 WRCFGA payloads, and broadcast them. Outside of
 // fsm::State::Charge the controller returns an all-zero mask so the
@@ -452,10 +498,22 @@ void maybe_run_balance_update() {
     if (++s_volt_poll_count < config::BalanceUpdatePolls) return;
     s_volt_poll_count = 0;
 
+    // The quiesce could not be proven on this cycle, so the snapshot we would
+    // rank was measured with cells still bleeding: the bled cell reads ~9-36 mV
+    // LOW and both its neighbours read high, against a 50 mV BalanceDeltaMv.
+    // Re-picking on that inverts the very comparison the selector exists to
+    // make. Hold the previous mask (already on the chain, and the policy is
+    // stateless so the next clean cycle re-derives it) and wait one window --
+    // 800 ms at BalanceUpdatePolls=4, immaterial on a multi-hour C/101 balancer.
+    if (g_balance_quiesce_fail) {
+        g_balance_quiesce_fail = false;
+        return;
+    }
+
     const auto       state    = BmsService::instance().snapshot();
     const fsm::State fsm_curr =
         static_cast<fsm::State>(g_state_telemetry);
-    // Operator balance master switch (#336): OFF / ON / AUTO on 0x103, with
+    // Operator balance master switch: OFF / ON / AUTO on 0x103, with
     // the freshness dead-man resolved here (stale / never-seen -> Off).
     const auto       veh    = VehicleService::instance().snapshot();
     const auto       op_cmd = VehicleService::effective_balance_cmd(
@@ -470,9 +528,14 @@ void maybe_run_balance_update() {
     // WarioCharger 0x103 toggle was accepted and then produced an all-zero mask
     // forever. See the residual-risk note on BalanceTempsTrusted -- the
     // BalanceTempMax lockout inside compute_mask still applies.
+    // A latched CELL-DATA fault (open wire / OV / UV) stops balancing for BOTH
+    // Auto and the operator On override -- the voltages compute_mask ranks are
+    // not trustworthy once one of those has fired.
+    const auto       fault    = static_cast<safety::FaultReason>(g_fault_reason_telemetry);
     const auto       mask   = balance::compute_mask(
         state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
-        mod_enable);
+        fault, mod_enable, &s_prev_balance_mask);
+    s_prev_balance_mask = mask;
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;
@@ -500,11 +563,11 @@ void maybe_run_balance_update() {
             per_ic[2u * m + 1u][k] = lower[k];
         }
 
-        // Publish the per-module DCC selection so pit-diag (#247) can
-        // surface "which cell is being balanced right now" without
-        // a debugger probe. dcc_upper covers cells 0..9, dcc_lower covers 10..18 of
-        // the module -- shift the lower half by CellsPerLtcUpper so a
-        // single uint32 mirrors the cell index layout.
+        // Publish the per-module DCC selection so pit-diag can surface
+        // "which cell is being balanced right now" without a debugger probe.
+        // dcc_upper covers cells 0..8, dcc_lower covers 9..18 of the module --
+        // shift the lower half by CellsPerLtcUpper so a single uint32 mirrors
+        // the cell index layout.
         g_balance_dcc_bits[m] =
             static_cast<std::uint32_t>(dcc_upper) |
             (static_cast<std::uint32_t>(dcc_lower) << config::CellsPerLtcUpper);
@@ -534,7 +597,7 @@ void maybe_run_balance_update() {
 }
 
 // ---------------------------------------------------------------------------
-// Temperature poll. Lands fully in #71 (ADG731 mux sweep + ADAX +
+// Temperature poll. (ADG731 mux sweep + ADAX +
 // RDAUXA per channel). Stubbed here so the periodic timer fires and
 // the rest of the task structure is in place; right now it just
 // pumps the chain (idle wakeup) so the LTCs don't drop into T_SLEEP
@@ -561,7 +624,7 @@ void maybe_run_balance_update() {
 // mux failures that don't show up every cycle. Reset on next boot by
 // writing 0 to sticky_mask.
 //
-// extern "C" so the pit-diag stream (#247) can surface last_mask via
+// extern "C" so the pit-diag stream can surface last_mask via
 // AcuCanTask. These MUST live outside the anonymous namespace: an
 // extern "C" object declared inside an unnamed namespace still gets
 // internal linkage, so the symbol would not be exported and
@@ -593,7 +656,7 @@ void run_temperature_poll() {
     // ADG731 ignores the bits it can't address (only ch < 32 used).
     std::uint8_t per_ic_payload[config::LtcChainLength][6];
 
-    // Warm-up mux select (the mux-domain twin of the #214 RDCV warm-up). Runs
+    // Warm-up mux select (the mux-domain twin of the RDCV warm-up). Runs
     // ONLY at the start of a sweep (s_temp_ch == 0), never on a resume after a
     // yield. The FIRST WRCOMM/STCOMM after the voltage poll's cell-read burst can
     // be dropped -- slaves re-sync on CS edges after the multi-ms idle -- so the
@@ -698,7 +761,7 @@ extern "C" void ams_bms_poll_task_run(void *argument) {
         const std::uint32_t evt = osEventFlagsWait(
             bms_eventsHandle, All, osFlagsWaitAny, osWaitForever);
 
-        // BmsPollTask woke to service an isoSPI poll -> housekeeping liveness (#411).
+        // BmsPollTask woke to service an isoSPI poll -> housekeeping liveness.
         ams::fw_health::poke(ams::fw_health::Housekeeping);
 
         if ((evt & osFlagsError) != 0u) {

@@ -59,6 +59,7 @@ add_executable(ams_unit_tests
     test_open_wire.cpp
     test_safety_predicates.cpp
     test_sil_scenarios.cpp
+    test_soc_estimator.cpp
     test_state_machine.cpp
     test_telemetry_encoders.cpp
     test_pit_diag_emitter.cpp

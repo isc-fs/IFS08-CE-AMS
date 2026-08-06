@@ -184,9 +184,20 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 
 - 50 ms — `0x135` currents
 - 100 ms — `0x020`, `0x12C`, `0x131..0x134`
-- 250 ms — `0x136..0x137`
+- 250 ms — `0x136..0x137`, `0x130`
 
-`0x130` (SOC) deferred — no SOC estimator in firmware yet.
+`0x130` (SOC) — pack state of charge, 1 byte, `0..100 %`. **`0xFF` is the
+"no trustworthy estimate" sentinel, not a reading**: it appears before the
+first OCV anchor and whenever the pack current sensor faults or goes stale,
+since Coulomb counting cannot be trusted across an unmeasured interval.
+Consumers must render `0xFF` as *unknown* rather than clamping it to 100 %.
+
+Produced by `CurrentSensorTask` via `soc_estimator.hpp`: Coulomb counting
+against `PackCapacityMah` (18 Ah = 6P x 3.0 Ah VTC6), re-anchored on the
+fitted VTC6 OCV curve whenever the pack has rested below `SocRestCurrentMa`
+for `SocRestSettleMs`. The anchor is taken off the **minimum** cell, since
+usable pack charge is set by the weakest one. TELEMETRY ONLY — no safety
+predicate reads it.
 
 ### `0x020` — ok_precharge
 
@@ -374,6 +385,7 @@ survive a predicate trip.
 | `0x6C6` | 1 firmware ID | `[0]` fw major, `[1]` minor, `[2]` patch, `[3..6]` `git_hash[0..3]` (first 4 of 8 bytes), `[7]` `bl_node_id` (`firmware_info.reserved[0]`). | 1 Hz |
 | `0x6C7` | 1 per-IC PEC count (ICs 0..7) | 8 bytes, one saturating uint8 per chain index. Maps chain index → module: IC `2m`=upper / `2m+1`=lower of module `m`. (#258) | 1 Hz |
 | `0x6C8` | 1 per-IC PEC count (ICs 8..9 + reserved) | `[0]` IC 8, `[1]` IC 9, `[2..7]` reserved 0 | 1 Hz |
+| `0x6CB` | 1 balance-quiesce health | `[0..3]` `g_balance_quiesce_count` LE u32 (DCC successfully cleared before a measurement), `[4..7]` `g_balance_quiesce_fail_count` LE u32 (both WRCFGA attempts failed -> that poll measured with cells still bleeding). **The RATIO is the diagnostic** -- a bare fail count means nothing without the attempt count. `fail` climbing means cell voltages are being sampled under bleed, which corrupts both the balance selector (it ranks raw `cell_mV`) and the SoC filter (it corrects on `min_cell_mV`). Note DCP=0 on the ADCV does NOT cover a failed quiesce: per LTC6811 Table 53 it suppresses discharge only on the measured cell and its immediate neighbours. | 1 Hz |
 | `0x6C9` | 1 FDCAN1 comms health | `[0..3]` `fdcan1_busoff_recovery_count` LE u32 (Bus-Off Stop/Start recoveries this session; `0` = never went Bus-Off), `[4..7]` `g_acu_tx_fail` LE u32 (ECU-TX-matrix enqueue failures). Lets the CAN-only bench confirm a Bus-Off recovery fired. (#331) | 1 Hz |
 
 `0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / Transition guard; a TSMS drop is non-latching in **Car** mode since #327, so it is *not* an Error there), `13`=TempSensorDisconnected, `14`=ChargerStale (charger `0x101` heartbeat stale > `ChargerStaleMs` while committed to Charger mode — the WarioCharger was disconnected mid-charge), `15`=ChargerTsmsOpen (TSMS dropped while committed to **Charger** mode — unlike Car mode this latches Error so the charge output cannot be re-activated after the SDC opens, per scrutineering; re-energising needs a full reset). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
@@ -385,7 +397,7 @@ unit tests in
 Dispatch + flag ownership in
 [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
 
-Bus cost: 59 frames/scan (24 cell-V + 25 cell-T + 10 status `0x6C0..0x6C9`)
+Bus cost: 60 frames/scan (24 cell-V + 25 cell-T + 11 status `0x6C0..0x6C9`, `0x6CB`)
 × ~12 bytes-on-wire ≈ 5.7 kbit, ~11.4 ms at 500 kbps ≈ 1.1 % bus load (1 Hz)
 when enabled.
 

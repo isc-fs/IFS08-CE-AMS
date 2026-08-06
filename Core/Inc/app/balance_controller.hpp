@@ -3,27 +3,35 @@
 // Passive cell-balancing controller. Pure logic; no HAL, no FreeRTOS,
 // so the host unit-test build exercises the policy directly.
 //
-// Gated by the operator master switch (op_cmd, #336). Each call independently
+// Gated by the operator master switch (op_cmd). Each call independently
 // decides which cells should be discharged this balancing window based on a
 // BmsState snapshot. The actual LTC6811 WRCFGA packing happens in
 // ltc6811::pack_cfga_payload and the chain TX happens in BmsPollTask -- this
 // header owns only the policy.
 //
-// Rules (config::Balance*):
-//   0. op_cmd == Off (incl. the dead-man fallback)  -> mask all zero
-//   1. op_cmd == Auto AND fsm_state != Charge        -> mask all zero
-//      (op_cmd == On runs in ANY state -- operator override of Charge-only)
-//   2. temps not trusted                             -> mask all zero
-//   3. max_tempC > BalanceTempMax                    -> mask all zero
-//   4. cell voltage > floor + delta (floor = 2nd-lowest cell)  -> candidate
-//   5. per module, keep at most BalanceMaxActive candidates with
-//      the largest excess over the pack minimum (round-robin across
-//      windows is overkill at 1 Hz cadence -- top-k is good enough)
+// Gates, in order. Any one of them yields an all-zero mask:
+//   1. op_cmd == Off (including the dead-man fallback)
+//   2. op_cmd == Auto and the FSM is not in Charge
+//      (op_cmd == On runs in ANY state -- the operator's Charge-only override)
+//   3. a latched CELL-DATA fault -- see is_cell_data_fault
+//   4. cell temperatures not trusted, or too few valid channels to judge
+//   5. max_tempC above BalanceTempMax
+//
+// Selection, per module, once the gates pass:
+//   * floor = the SECOND-lowest cell in the pack, not the lowest
+//   * a cell already discharging stays a candidate while it is more than
+//     BalanceStopDeltaMv above the floor; one that is not must exceed the
+//     wider BalanceDeltaMv to become one (hysteresis -- without it the
+//     selection toggles, because this function is re-evaluated from scratch
+//     every BalanceUpdatePolls)
+//   * greedily take the highest excess, never two physically adjacent cells,
+//     up to BalanceMaxActive
 
 #pragma once
 
 #include "ams_config.hpp"
 #include "bms_service.hpp"
+#include "safety_predicates.hpp"   // safety::FaultReason (cell-data fault gate)
 #include "state_machine.hpp"
 
 #include <array>
@@ -51,7 +59,7 @@ struct Mask {
 // board regions (a wide X gap on the layout), so there is no cross-half
 // adjacency -- index 8 and 9 are far apart, not neighbours.
 //
-// BENCH-VERIFIED 2026-07-22 on the real pack: forcing local indices 0..7 lit
+// Bench-verified on the real pack: forcing local indices 0..7 lit
 // exactly 8 CONTIGUOUS 2512 pads on one LTC row with the other row cold (IR),
 // confirming consecutive firmware index == physically consecutive resistor and
 // that the two LTC halves are separate board rows. So the derivation below
@@ -64,15 +72,36 @@ struct Mask {
     return d == 1u;
 }
 
+// Does this latched fault mean the CELL VOLTAGES compute_mask ranks are
+// untrustworthy? Only these -- a fault elsewhere in the system (current sensor,
+// VCU/charger link, contactor path) leaves cell data intact and must stay
+// operator-overridable so a pack can still be rebalanced in the pit.
+//
+// CellOpenWire: the tap is open, so BOTH cells sharing that node are wrong (one
+//   rails high, one low, pair sum conserved) -- and the high one is exactly what
+//   the greedy selects first.
+// CellOverVoltage / CellUnderVoltage: either a real excursion (balancing must
+//   not be part of the response) or the artifact that produced it, and we cannot
+//   tell which from here.
+[[nodiscard]] inline bool is_cell_data_fault(safety::FaultReason r) noexcept {
+    return r == safety::FaultReason::CellOpenWire     ||
+           r == safety::FaultReason::CellOverVoltage  ||
+           r == safety::FaultReason::CellUnderVoltage;
+}
+
 [[nodiscard]] inline Mask compute_mask(const BmsState&    s,
                                        fsm::State         fsm_state,
                                        bool               temps_trusted,
                                        config::BalanceCmd op_cmd,
+                                       safety::FaultReason fault_reason
+                                           = safety::FaultReason::None,
                                        std::uint8_t       module_enable
-                                           = config::AllModulesMask) noexcept {
+                                           = config::AllModulesMask,
+                                       const Mask*        previous
+                                           = nullptr) noexcept {
     Mask out = {};
 
-    // Operator master switch (#336). op_cmd is already freshness-resolved by
+    // Operator master switch. op_cmd is already freshness-resolved by
     // VehicleService::effective_balance_cmd (the dead-man is folded in, so a
     // stale / absent WarioCharger link arrives here as Off):
     //   Off  -> never balance.
@@ -83,6 +112,27 @@ struct Mask {
     if (op_cmd == config::BalanceCmd::Off)     return out;
     if (op_cmd == config::BalanceCmd::Auto &&
         fsm_state != fsm::State::Charge)       return out;
+
+    // CELL-DATA gate, and it binds On as well as Auto. The selector below reads
+    // RAW s.cell_mV -- the tap-artifact guard's corrected pair average lives in a
+    // LOCAL agg_v[] inside recompute_summaries_ and never reaches this function.
+    // So a split tap (one half reading 4600 mV, the other 3000) is masked for the
+    // OV predicate but still presents 4600 mV here, and the greedy picks it first
+    // on every cycle, forever, while BalanceSpreadNoAdjacent locks out its
+    // genuinely-imbalanced neighbour.
+    //
+    // ADOW (config::CellOpenWireCheck) latches exactly this in
+    // under 500 ms in ANY state -- but Auto only stops because the AIRs open and
+    // we leave Charge, and On skips the state gate entirely. Refuse instead: a
+    // latched cell-data fault means the voltages this function ranks are not
+    // trustworthy, and heating the pack on numbers we have already faulted on is
+    // never right. This finishes implementing the principle stated above (the
+    // operator overrides the ENABLE decision, never the guards).
+    //
+    // Deliberately narrow: ONLY the reasons that say "the cell voltages are
+    // wrong". A contactor/IMD/current fault leaves the cell data perfectly good,
+    // so those stay overridable and the pit keeps its manual-rebalance path.
+    if (is_cell_data_fault(fault_reason))      return out;
 
     // Temperature-trust gate. Passive balancing dumps heat into the cells and
     // the max_tempC lockout below is its ONLY thermal protection. When the
@@ -170,11 +220,25 @@ struct Mask {
         std::uint8_t n_chosen = 0;
 
         for (std::uint8_t pick = 0; pick < config::BalanceMaxActive; ++pick) {
-            std::uint16_t best_excess = 0;
+            std::uint32_t best_excess = 0;
             int           best_cell   = -1;
             for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
                 const std::uint16_t v = s.cell_mV[m][c];
-                if (v <= floor_mV + config::BalanceDeltaMv) continue;  // matched
+                // HYSTERESIS. A cell that was ALREADY discharging last cycle
+                // holds its place until it comes within BalanceStopDeltaMv of
+                // the floor; a cell that was not has to clear the wider
+                // BalanceDeltaMv to earn a slot. Without this the function is
+                // stateless and re-ranks from scratch every BalanceUpdatePolls,
+                // so anything hovering near the single threshold toggles on and
+                // off and never accumulates useful bleed time.
+                //
+                // `previous` is passed IN rather than cached in here on purpose:
+                // compute_mask stays a pure function of its arguments, which is
+                // what makes the whole policy host-testable without an RTOS.
+                const bool was_on = previous != nullptr && previous->cell[m][c];
+                const std::uint16_t threshold =
+                    was_on ? config::BalanceStopDeltaMv : config::BalanceDeltaMv;
+                if (v <= floor_mV + threshold) continue;               // matched
                 if (out.cell[m][c]) continue;                          // taken
 
                 if (config::BalanceSpreadNoAdjacent) {
@@ -185,7 +249,15 @@ struct Mask {
                     if (adj) continue;
                 }
 
-                const std::uint16_t excess = static_cast<std::uint16_t>(v - floor_mV);
+                // Rank by excess, but let an incumbent outrank a newcomer at
+                // equal excess. Without this tie-break the cap could evict a
+                // cell that is actively bleeding in favour of one a millivolt
+                // higher, which is exactly the churn the hysteresis is meant to
+                // stop -- the thresholds alone do not prevent it, because the
+                // eviction happens through the BalanceMaxActive cap rather than
+                // through the threshold test.
+                const std::uint32_t excess =
+                    static_cast<std::uint32_t>(v - floor_mV) * 2u + (was_on ? 1u : 0u);
                 if (excess > best_excess) { best_excess = excess; best_cell = c; }
             }
             if (best_cell < 0) break;                          // nothing eligible

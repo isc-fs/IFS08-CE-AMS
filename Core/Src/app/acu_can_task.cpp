@@ -59,16 +59,18 @@ extern "C" osMessageQueueId_t acu_rx_queueHandle;
 // ok_precharge (= 1 iff state in {Run=3, Charge=4}).
 extern "C" volatile std::uint8_t g_state_telemetry;
 
-// Pit-diag (#247) needs read-only visibility into a handful of locals
+// Pit-diag needs read-only visibility into a handful of locals
 // owned by other TUs. SafetyTask writes g_mode_locked_telemetry on the
 // same cadence it writes g_state_telemetry. BmsPollTask writes
 // g_bms_volt_poll_ms / _max, and run_temperature_poll exposes the
 // last sweep failure mask. Per-LTC PEC counters live in bms_service.cpp.
 extern "C" volatile std::uint8_t  g_mode_locked_telemetry;
-// Latched-fault diagnostics from SafetyTask, surfaced on 0x6C0[6]/[7]
-// (#276). reason matches ams::safety::FaultReason; detail is the
+// Latched-fault diagnostics from SafetyTask, surfaced on 0x6C0[6]/[7].
+// reason matches ams::safety::FaultReason; detail is the
 // per-branch detail byte (module index / mask).
 extern "C" volatile std::uint8_t  g_fault_reason_telemetry;
+// Pack SoC %, or ams::soc::Unknown (0xFF). Written by CurrentSensorTask.
+extern "C" volatile std::uint8_t  g_soc_percent;
 extern "C" volatile std::uint8_t  g_fault_detail_telemetry;
 extern "C" volatile std::uint32_t g_bms_volt_poll_ms;
 extern "C" volatile std::uint32_t g_bms_volt_poll_max;
@@ -84,6 +86,11 @@ extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule];
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
+// Balance-quiesce health: successful DCC clears before a measurement vs polls
+// that measured under bleed because both WRCFGA attempts failed. The RATIO is
+// the diagnostic -- see pit_balance_health.def.
+extern "C" volatile std::uint32_t g_balance_quiesce_count;
+extern "C" volatile std::uint32_t g_balance_quiesce_fail_count;
 
 // Boot diagnostics. Surfaced on the flight pit-diag boot-diag frame
 // (0x6C4) so app-init progress + FDCAN1 start outcome are visible on
@@ -128,7 +135,7 @@ volatile std::uint32_t g_fdcan1_busoff_recovery_count = 0;
 // robustness fix (mirrors IFS08-CE-ECU and the bootloader).
 //
 // Mirrors the bootloader's Bootloader_FdcanBusOffRecover
-// (../stm32-can-bootloader, #125 C1 / #174 NG-9). GetProtocolStatus is a
+// (../stm32-can-bootloader). GetProtocolStatus is a
 // cheap PSR read, safe every loop pass; the Stop/Start only runs on an
 // actual fault and is rate-limited by ams::can_recovery (see the header).
 // Stop/Start touches neither the message-RAM RX filter nor the FDCAN_IE
@@ -151,7 +158,7 @@ void poll_fdcan1_busoff_recovery(ams::can_recovery::BusOffState& st,
     // Start clears INIT and the node rejoins after 128*11 recessive bits.
     (void)HAL_FDCAN_Stop(&hfdcan1);
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
-        // CRUCIAL (#174 NG-9): a Stop/Start timeout latches
+        // CRUCIAL: a Stop/Start timeout latches
         // hfdcan1.State = HAL_FDCAN_STATE_ERROR, after which EVERY later
         // HAL_FDCAN_Stop/Start silently no-ops (they gate on State) --
         // the retry would spin forever and the bus would wedge
@@ -165,9 +172,9 @@ void poll_fdcan1_busoff_recovery(ams::can_recovery::BusOffState& st,
     ++g_fdcan1_busoff_recovery_count;
 }
 
-// Pit-diag runtime flag (#247). Toggled by RX dispatch on the
+// Pit-diag runtime flag. Toggled by RX dispatch on the
 // PitDiagCmdRxId frame; consumed by the TX scheduler below. Lives in
-// .bss so power-up always starts with diag OFF -- the engineer must
+//.bss so power-up always starts with diag OFF -- the engineer must
 // explicitly enable it via cansend after every reboot.
 bool s_pit_diag_enabled = false;
 
@@ -180,7 +187,7 @@ bool send_acu(std::uint32_t id, std::uint8_t dlc,
     // STM32H7 HAL takes DataLength as the raw byte count (FDCAN_DLC_BYTES_N
      // macros are unshifted; HAL applies the bit-16 register shift internally).
      // The pre-shift this site used to do produced DLC=0 on the wire for every
-     // ECU TX matrix frame -- see #234. Note: STM32G4's HAL pre-shifts the
+     // ECU TX matrix frame. Note: STM32G4's HAL pre-shifts the
      // macros, which is why this regression was easy to port-import.
      tx.DataLength          = dlc;
     tx.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
@@ -206,7 +213,7 @@ inline void send_or_fail(std::uint32_t id,
     }
 }
 
-// Diag-stream variant of send_or_fail (#257). The pit-diag burst pushes
+// Diag-stream variant of send_or_fail. The pit-diag burst pushes
 // 58 frames into a 16-deep TX FIFO inside a single task iteration. Without
 // flow control, frames 17+ NACK silently and the engineer sees only the
 // front 16 IDs on the wire. Yield-while-full keeps the burst end-to-end
@@ -263,8 +270,14 @@ void tx_temp_module_a(const ams::BmsState& b) noexcept {
 void tx_temp_module_b(const ams::BmsState& b) noexcept {
     send_or_fail(ams::config::AcuTxTempMaxModuleBId, ams::acu_tx::encode_tmax_module_b(b));
 }
+// 0x130 SoC %, or 0xFF when there is no trustworthy estimate. Read straight
+// from the byte CurrentSensorTask publishes -- TELEMETRY ONLY, nothing in the
+// safety path is involved.
+void tx_soc() noexcept {
+    send_or_fail(ams::config::AcuTxSocId, ams::acu_tx::encode_soc(g_soc_percent));
+}
 
-// ---- Pit-diag stream (#247) -----------------------------------------------
+// ---- Pit-diag stream -----------------------------------------------
 
 void tx_pit_diag_ack(bool enabled) noexcept {
     const std::uint8_t payload = enabled ? 0x01u : 0x00u;
@@ -285,7 +298,7 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     // 24 cell + 25 temp + 10 status = 59 frames per scan.
     // FDCAN1 TX FIFO depth is 16 (main.c TxFifoQueueElmtsNbr). Without
     // flow control, frames 17+ get NACKed silently and only the front
-    // of the burst reaches the wire (#257). Use the blocking variant
+    // of the burst reaches the wire. Use the blocking variant
     // throughout so the entire scan lands; yield-while-full keeps
     // BmsPollTask + the 50/100/250 ms ECU TX matrix scheduled around
     // us. Worst-case scan duration: ~6 ms at 500 kbps -- still well
@@ -357,7 +370,7 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               ams_git_hash(),
                               ams_bl_node_id()));
 
-    // Per-IC PEC counts (#258). Adds 2 frames to the scan, brings the
+    // Per-IC PEC counts. Adds 2 frames to the scan, brings the
     // total to 58. Localises a chain failure to a specific IC --
     // 0x6C0[4..5] sum tells "chain unhealthy", these tell "which one".
     send_or_fail_blocking(ams::config::PitDiagPecPerIcAId,
@@ -365,12 +378,20 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     send_or_fail_blocking(ams::config::PitDiagPecPerIcBId,
                           ams::pit_diag::encode_pec_err_count_b(g_ltc_pec_err_count));
 
-    // FDCAN1 comms health (#331). The 59th frame: Bus-Off recovery count +
+    // FDCAN1 comms health. The 59th frame: Bus-Off recovery count +
     // ECU-TX enqueue failures. Lets the CAN-only HIL bench confirm a
     // Bus-Off recovery fired (count > 0 after an outage) without a debugger.
     send_or_fail_blocking(ams::config::PitDiagCommsHealthId,
                           ams::pit_diag::encode_comms_health(
                               g_fdcan1_busoff_recovery_count, g_acu_tx_fail));
+
+    // Balance-quiesce health (0x6CB). Answers "is the pre-measurement DCC clear
+    // actually landing?" from the bus alone. fail climbing => cell voltages are
+    // being sampled while cells bleed, which corrupts both the balance selector
+    // (it ranks raw cell_mV) and the SoC filter (it corrects on min_cell_mV).
+    send_or_fail_blocking(ams::config::PitDiagBalanceHealthId,
+                          ams::pit_diag::encode_balance_health(
+                              g_balance_quiesce_count, g_balance_quiesce_fail_count));
 
     // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW PU + PD per-cell dump,
     // same 24-frame layout as the 0x680 cell grid, on AdowDiagPuBaseId /
@@ -385,7 +406,7 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     }
 }
 
-// Ungated firmware-health frame (#411). 1 Hz, emitted REGARDLESS of the
+// Ungated firmware-health frame. 1 Hz, emitted REGARDLESS of the
 // pit-diag arm, so a passive `pit-diag listen` sees AMS liveness (heap, task
 // liveness, reset cause, uptime, last fault -- ECU 0x704 parity) with the
 // stream off. Non-blocking send: a full TX FIFO just bumps g_acu_tx_fail
@@ -402,14 +423,14 @@ void tx_fw_health() noexcept {
 }
 
 // ---------------------------------------------------------------------------
-// LOGFS diag transport (#406 / #439).
+// LOGFS diag transport.
 //
 // Bootloader addressing: host -> node on 0x000 + NodeID, node -> host on
 // 0x010 + NodeID. Nothing needs a new hardware filter -- the global filter
 // already accepts every standard frame into FIFO0.
 //
 // Note the request ID equals the boot-trigger ID (0x002) once the AMS moves to
-// node 2 (#403). That is safe and stays safe: matches_trigger demands DLC 4
+// node 2. That is safe and stays safe: matches_trigger demands DLC 4
 // AND the exact B0 07 AD 11 payload, while an ISO-TP frame is always DLC 8 --
 // and 0xB0 could never be a valid ISO-TP PCI byte anyway (only 0x0-0x3 are).
 // The trigger check runs first, so a LOGFS frame passes through it untouched.
@@ -434,7 +455,7 @@ void pump_diag_tx() noexcept {
     // Leave DiagTxReservedSlots free so the flight telemetry matrix, which is
     // scheduled AFTER this in the same loop pass and ships non-blocking, always
     // finds room. Filling to zero silently blacked out telemetry for the whole
-    // multi-minute pull (#449).
+    // multi-minute pull.
     while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) >
            ams::config::DiagTxReservedSlots) {
         if (!s_diag_tx.next(f)) { s_diag_tx_active = false; return; }
@@ -486,7 +507,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
     std::uint32_t last_mid_tx   = now0;
     std::uint32_t last_slow_tx  = now0;
     std::uint32_t last_pit_scan = now0;
-    std::uint32_t last_fw_health_tx = now0;   // ungated 1 Hz health (#411)
+    std::uint32_t last_fw_health_tx = now0;   // ungated 1 Hz health
 
     // FDCAN1 Bus-Off recovery latch (single bus, single owner: this task).
     ams::can_recovery::BusOffState busoff_state{};
@@ -526,7 +547,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
                 }
                 tx_pit_diag_ack(s_pit_diag_enabled);
             } else {
-                // Boot-trigger frame moved to FDCAN1 in v1.2.0 (#73). Has
+                // Boot-trigger frame moved to FDCAN1 in v1.2.0. Has
                 // to come BEFORE VehicleService so we still react to the
                 // reboot request even if the trigger ID accidentally
                 // collides with a future VCU frame. request_reboot() never
@@ -536,7 +557,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
                     ams::Bootloader::request_reboot(
                         ams::config::JumpReason::CanTrigger);
                 }
-                // LOGFS (#406) rides the same ID the trigger uses once the AMS
+                // LOGFS rides the same ID the trigger uses once the AMS
                 // is node 2, which is why this must come AFTER the check above.
                 if (frame.id == DiagRxId &&
                     frame.bus == static_cast<std::uint8_t>(ams::CanBus::Acu)) {
@@ -556,7 +577,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         }
         pump_diag_tx();
 
-        // AcuCanTask serviced its RX queue this pass -> CAN-RX liveness (#411).
+        // AcuCanTask serviced its RX queue this pass -> CAN-RX liveness.
         ams::fw_health::poke(ams::fw_health::CanRx);
 
         // ---- Snapshot service state once per loop iteration ----
@@ -574,7 +595,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         // ---- TX scheduler ----
         if (now2 - last_fast_tx >= ams::config::EcuFastTxMs) {
             tx_currents(cur);
-            ams::fw_health::poke(ams::fw_health::CanTx);   // TX path alive (#411)
+            ams::fw_health::poke(ams::fw_health::CanTx);   // TX path alive
             last_fast_tx = now2;
         }
         if (now2 - last_mid_tx >= ams::config::EcuMidTxMs) {
@@ -589,6 +610,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         if (now2 - last_slow_tx >= ams::config::EcuSlowTxMs) {
             tx_temp_module_a(bms);
             tx_temp_module_b(bms);
+            tx_soc();
             last_slow_tx = now2;
         }
         if (s_pit_diag_enabled &&
@@ -597,7 +619,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
             last_pit_scan = now2;
         }
 
-        // ---- Ungated firmware-health (#411): 1 Hz, no arm gate ----
+        // ---- Ungated firmware-health: 1 Hz, no arm gate ----
         if (now2 - last_fw_health_tx >= ams::config::FwHealthPeriodMs) {
             tx_fw_health();
             last_fw_health_tx = now2;

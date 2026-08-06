@@ -18,7 +18,7 @@
 //     latched")
 //   - any loss of the backup-domain rail.
 //
-// IMPORTANT (no VBAT -- #324): this carrier has no VBAT source, so the
+// IMPORTANT (no VBAT): this carrier has no VBAT source, so the
 // backup domain is powered only from VDD. A full LV power-cycle (or a
 // brown-out that collapses VDD) therefore CLEARS this flag. That is
 // accepted by design: a latch must outlive a warm reset (so a fault
