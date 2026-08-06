@@ -12,7 +12,7 @@
 //
 // Version / git_hash / build_timestamp fields are populated from CMake
 // at configure time via AMS_FW_VERSION_*, AMS_GIT_HASH_*, and
-// AMS_BUILD_TIMESTAMP defines (#118). If CMake isn't doing the
+// AMS_BUILD_TIMESTAMP defines. If CMake isn't doing the
 // configuration (e.g. unit-test host build that includes this TU), the
 // fallbacks below produce a zero-filled identification block.
 
@@ -68,7 +68,7 @@ const bl_fwinfo_t __firmware_info
      // the loader rejects JUMP with NO_VALID_APP and the unit silently
      // refuses to boot after a successful flash. Keep the literal hex in
      // sync verbatim; we can't #include the BL header from here because
-     // the BL repo is not a submodule of this firmware tree (see #118 for
+     // the BL repo is not a submodule of this firmware tree (see the build docs for
      // the long-term fix that pulls the struct + magic from CMake).
      .magic            = 0xF14F1B00U,
     .record_version   = 0x00010000U,        // record schema 1.0
@@ -92,7 +92,7 @@ const bl_fwinfo_t __firmware_info
     .reserved         = { ams::config::AmsNodeId, 0 },
 };
 
-// Pit-diag (#247) accessors. Lets AcuCanTask surface firmware identity
+// Pit-diag accessors. Lets AcuCanTask surface firmware identity
 // on the wire without re-declaring the bl_fwinfo_t shape in a header
 // (avoids a maintenance hazard if the BL contract evolves -- only this
 // TU needs to track it). Each getter returns a single self-contained

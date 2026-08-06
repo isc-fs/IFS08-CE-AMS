@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: proprietary */
 #pragma once
 
-// Firmware-health state behind the ungated 0x6CA frame (#411): a task-liveness
+// Firmware-health state behind the ungated 0x6CA frame: a task-liveness
 // bitfield, the RCC reset cause, and a sticky last-fault sentinel. The pure
 // decision logic (map_reset_cause) is host-tested; the hardware glue (RCC
 // flags, RTC backup registers, the liveness atomic) lives in fw_health.cpp.

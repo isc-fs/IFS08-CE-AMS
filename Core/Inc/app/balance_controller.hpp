@@ -3,22 +3,29 @@
 // Passive cell-balancing controller. Pure logic; no HAL, no FreeRTOS,
 // so the host unit-test build exercises the policy directly.
 //
-// Gated by the operator master switch (op_cmd, #336). Each call independently
+// Gated by the operator master switch (op_cmd). Each call independently
 // decides which cells should be discharged this balancing window based on a
 // BmsState snapshot. The actual LTC6811 WRCFGA packing happens in
 // ltc6811::pack_cfga_payload and the chain TX happens in BmsPollTask -- this
 // header owns only the policy.
 //
-// Rules (config::Balance*):
-//   0. op_cmd == Off (incl. the dead-man fallback)  -> mask all zero
-//   1. op_cmd == Auto AND fsm_state != Charge        -> mask all zero
-//      (op_cmd == On runs in ANY state -- operator override of Charge-only)
-//   2. temps not trusted                             -> mask all zero
-//   3. max_tempC > BalanceTempMax                    -> mask all zero
-//   4. cell voltage > floor + delta (floor = 2nd-lowest cell)  -> candidate
-//   5. per module, keep at most BalanceMaxActive candidates with
-//      the largest excess over the pack minimum (round-robin across
-//      windows is overkill at 1 Hz cadence -- top-k is good enough)
+// Gates, in order. Any one of them yields an all-zero mask:
+//   1. op_cmd == Off (including the dead-man fallback)
+//   2. op_cmd == Auto and the FSM is not in Charge
+//      (op_cmd == On runs in ANY state -- the operator's Charge-only override)
+//   3. a latched CELL-DATA fault -- see is_cell_data_fault
+//   4. cell temperatures not trusted, or too few valid channels to judge
+//   5. max_tempC above BalanceTempMax
+//
+// Selection, per module, once the gates pass:
+//   * floor = the SECOND-lowest cell in the pack, not the lowest
+//   * a cell already discharging stays a candidate while it is more than
+//     BalanceStopDeltaMv above the floor; one that is not must exceed the
+//     wider BalanceDeltaMv to become one (hysteresis -- without it the
+//     selection toggles, because this function is re-evaluated from scratch
+//     every BalanceUpdatePolls)
+//   * greedily take the highest excess, never two physically adjacent cells,
+//     up to BalanceMaxActive
 
 #pragma once
 
@@ -52,7 +59,7 @@ struct Mask {
 // board regions (a wide X gap on the layout), so there is no cross-half
 // adjacency -- index 8 and 9 are far apart, not neighbours.
 //
-// BENCH-VERIFIED 2026-07-22 on the real pack: forcing local indices 0..7 lit
+// Bench-verified on the real pack: forcing local indices 0..7 lit
 // exactly 8 CONTIGUOUS 2512 pads on one LTC row with the other row cold (IR),
 // confirming consecutive firmware index == physically consecutive resistor and
 // that the two LTC halves are separate board rows. So the derivation below
@@ -94,7 +101,7 @@ struct Mask {
                                            = nullptr) noexcept {
     Mask out = {};
 
-    // Operator master switch (#336). op_cmd is already freshness-resolved by
+    // Operator master switch. op_cmd is already freshness-resolved by
     // VehicleService::effective_balance_cmd (the dead-man is folded in, so a
     // stale / absent WarioCharger link arrives here as Off):
     //   Off  -> never balance.
@@ -114,7 +121,7 @@ struct Mask {
     // on every cycle, forever, while BalanceSpreadNoAdjacent locks out its
     // genuinely-imbalanced neighbour.
     //
-    // ADOW (config::CellOpenWireCheck, live since v2.1.0) latches exactly this in
+    // ADOW (config::CellOpenWireCheck) latches exactly this in
     // under 500 ms in ANY state -- but Auto only stops because the AIRs open and
     // we leave Charge, and On skips the state gate entirely. Refuse instead: a
     // latched cell-data fault means the voltages this function ranks are not

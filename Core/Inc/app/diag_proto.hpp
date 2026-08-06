@@ -5,7 +5,7 @@
 // This is the layer above ams::isotp: the transport moves opaque bytes, this
 // file says what those bytes MEAN. A reassembled message is
 //
-//     [0] msg_type   (CMD / ACK / NACK / APP_CTRL ...)
+//     [0] msg_type   (CMD / ACK / NACK / APP_CTRL...)
 //     [1] opcode     (or, in an ACK/NACK, the opcode being answered)
 //     [2..] payload
 //
@@ -61,7 +61,7 @@ enum class MsgType : std::uint8_t {
 // existing session handling works unchanged; they are still scoped to APP_CTRL.
 // ---------------------------------------------------------------------------
 // Version of the APP_CTRL diag contract, returned in the CONNECT ACK body as
-// [major, minor] (#452). Distinct from the bootloader's protocol version: this
+// [major, minor]. Distinct from the bootloader's protocol version: this
 // describes the application's opcode/payload shapes only. Bump MAJOR on any
 // incompatible wire change, MINOR on a backward-compatible addition.
 inline constexpr std::uint8_t DiagProtoVersionMajor = 1u;
@@ -70,7 +70,7 @@ inline constexpr std::uint8_t DiagProtoVersionMinor = 0u;
 inline constexpr std::uint8_t OpConnect    = 0x01u;
 inline constexpr std::uint8_t OpDisconnect = 0x02u;
 
-// LOGFS group (#406 / #439).
+// LOGFS group.
 inline constexpr std::uint8_t OpLogfsList  = 0x21u;
 inline constexpr std::uint8_t OpLogfsOpen  = 0x22u;
 inline constexpr std::uint8_t OpLogfsRead  = 0x23u;
@@ -78,11 +78,10 @@ inline constexpr std::uint8_t OpLogfsCrc   = 0x24u;
 inline constexpr std::uint8_t OpLogfsClose = 0x25u;
 // 0x26 LOGFS_DELETE intentionally NOT implemented -- v1 is read-only.
 
-// Seal the ACTIVE log so the run that just happened becomes retrievable
-// (#448/#452). Without it the operator's only route to "give me the log from
-// the run that just faulted" was to wait for rotation or power-cycle the node,
-// and the power-cycle route used to DESTROY the file (fixed in #442, but the
-// wait remained). Flush -> close -> rename to .CSV -> write the CRC sidecar;
+// Seal the ACTIVE log so the run that just happened becomes retrievable.
+// Without it the only route to "give me the log from the run that just
+// faulted" is to wait for rotation or power-cycle the node.
+// Flush -> close -> rename to .CSV -> write the CRC sidecar;
 // the ACK carries the sealed index so the host can go straight to OPEN.
 inline constexpr std::uint8_t OpLogfsFinalize = 0x27u;
 
@@ -92,24 +91,24 @@ inline constexpr std::uint8_t OpLogfsFinalize = 0x27u;
 // Values <= 0x10 are the bootloader's (bl_proto.h) and are reused verbatim so
 // the vocabulary stays coherent. LOGFS-specific codes take FREE slots -- note
 // 0x08 is BL_NACK_BUSY and could NOT be used for BAD_HANDLE as originally
-// proposed in #439; BAD_HANDLE moved to 0x11.
+// proposed earlier; BAD_HANDLE moved to 0x11.
 // ---------------------------------------------------------------------------
 inline constexpr std::uint8_t NackOutOfBounds  = 0x02u;  // BL: OUT_OF_BOUNDS
-inline constexpr std::uint8_t NackFileNotFound = 0x04u;  // free slot (as #439)
+inline constexpr std::uint8_t NackFileNotFound = 0x04u;  // free slot
 inline constexpr std::uint8_t NackBadSession   = 0x06u;  // BL: BAD_SESSION
 inline constexpr std::uint8_t NackBusy         = 0x08u;  // BL: BUSY
-inline constexpr std::uint8_t NackBadHandle    = 0x11u;  // was 0x08 in #439 -- collided
+inline constexpr std::uint8_t NackBadHandle    = 0x11u;  // was 0x08 -- collided
 inline constexpr std::uint8_t NackNoSdCard     = 0x12u;
 inline constexpr std::uint8_t NackFsError      = 0x13u;
 inline constexpr std::uint8_t NackReadError    = 0x14u;
 // Refused because the vehicle is not in a state where log extraction is
-// permitted -- the tractive system must be OFF and the car stopped (#449).
+// permitted -- the tractive system must be OFF and the car stopped.
 // Distinct from BAD_SESSION: the host is talking correctly, the CAR is wrong.
 inline constexpr std::uint8_t NackVehicleState = 0x15u;
 inline constexpr std::uint8_t NackUnsupported  = 0xFEu;  // BL: UNSUPPORTED
 
 // ---------------------------------------------------------------------------
-// LOGFS wire shapes (little-endian on the wire, per #439).
+// LOGFS wire shapes (little-endian on the wire).
 // ---------------------------------------------------------------------------
 
 // A directory entry is FIXED 22 bytes so the host can parse a LIST reply by
@@ -206,7 +205,7 @@ struct Request {
 }
 
 // ---------------------------------------------------------------------------
-// Session -- CONNECT ... DISCONNECT, so a stray LOGFS command can't stream the
+// Session -- CONNECT... DISCONNECT, so a stray LOGFS command can't stream the
 // card to whoever happens to be on the bus. Also self-closes if the host walks
 // away mid-transfer, releasing any open file handle.
 // ---------------------------------------------------------------------------

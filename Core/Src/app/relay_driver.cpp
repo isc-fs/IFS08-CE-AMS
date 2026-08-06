@@ -27,13 +27,11 @@ void Relays::open_all() noexcept {
     // INVARIANT: all three relay outputs MUST share the same GPIO
     // port for the atomic mask-write to be valid. main.h defines them
     // as PB5/PB6/PB7 per AMS.ioc; using RELAY_AIR_N_GPIO_Port as the
-    // canonical port reference means a future .ioc port relocation
-    // updates this call transparently. Pre-#117 / #128 history: this
-    // function previously hardcoded GPIOB (and before that, GPIOD on
-    // the legacy daughterboard) -- when PR #117 moved the relays
-    // GPIOD->GPIOB the literal here wasn't updated, leaving the
-    // fault-path silently writing to unconfigured PD pins. Caught
-    // in #128. The macro reference below makes that class of
+    // canonical port reference means a future .ioc port relocation updates
+    // this call transparently. This once hardcoded GPIOB (and before that
+    // GPIOD, on the legacy daughterboard); when the relays were re-routed the
+    // literal here was not updated, leaving the fault path silently writing to
+    // unconfigured PD pins. Referencing the macro makes that class of
     // regression impossible.
     //
     // If a future board variant splits the relays across ports, this
@@ -69,7 +67,7 @@ void Relays::open_precharge() noexcept {
 void Relays::set_ams_ok(bool enable) noexcept {
     // Active-high SDC enable. HAL_GPIO_WritePin -> BSRR, so the write is
     // atomic and interrupt-safe. enable==false drives AMS_OK LOW, which
-    // opens the AMS's leg of the shutdown circuit (#299).
+    // opens the AMS's leg of the shutdown circuit.
     HAL_GPIO_WritePin(AMS_OK_GPIO_Port, AMS_OK_Pin,
                       enable ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }

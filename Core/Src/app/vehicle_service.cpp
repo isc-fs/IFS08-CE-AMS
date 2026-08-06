@@ -31,7 +31,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         return true;
     }
 
-    // Operator charge-mode request (#305). Magic-gated so bus noise / a
+    // Operator charge-mode request. Magic-gated so bus noise / a
     // stray frame can't flip the AMS into a HV charge mode. Only a frame
     // whose payload matches ChargeModeReqMagic advances the freshness
     // tick that SafetyTask reads at the Start->Precharge mode lock.
@@ -44,7 +44,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         return true;
     }
 
-    // Operator balance-control override (#336): 3-state master switch on 0x103.
+    // Operator balance-control override: 3-state master switch on 0x103.
     // "BALO" -> Off, "BALN" -> On, "BALX" -> Auto. An unrecognised payload is
     // ignored (bus-noise safe) and leaves the prior command + tick in place.
     if (f.id == config::BalanceOverrideReqId) {
@@ -82,7 +82,7 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
 bool VehicleService::charge_requested(std::uint32_t now_tick,
                                       std::uint32_t last_req_tick) noexcept {
     if (last_req_tick == 0u) return false;
-    // Future-tick safe (the #276 lesson): a request stamped slightly
+    // Future-tick safe: a request stamped slightly
     // ahead of `now` counts as just-seen, never as ancient.
     const std::uint32_t age =
         (now_tick >= last_req_tick) ? (now_tick - last_req_tick) : 0u;
@@ -94,7 +94,7 @@ config::BalanceCmd VehicleService::effective_balance_cmd(
     std::uint32_t      last_override_tick,
     config::BalanceCmd last_cmd) noexcept {
     if (last_override_tick == 0u) return config::BalanceCmd::Off;  // never seen
-    // Future-tick safe (the #276 lesson): a command stamped slightly ahead of
+    // Future-tick safe: a command stamped slightly ahead of
     // now counts as just-seen, never as ancient.
     const std::uint32_t age =
         (now_tick >= last_override_tick) ? (now_tick - last_override_tick) : 0u;
@@ -108,7 +108,7 @@ std::uint8_t VehicleService::effective_balance_modules_mask(
     std::uint8_t  last_mask) noexcept {
     // Never seen -> all modules enabled (behave as global-only).
     if (last_modules_tick == 0u) return config::BalanceModulesDefaultMask;
-    // Future-tick safe (the #276 lesson).
+    // Future-tick safe.
     const std::uint32_t age =
         (now_tick >= last_modules_tick) ? (now_tick - last_modules_tick) : 0u;
     // Dead-man: a stale link re-enables every module -- the 0x103 dead-man is

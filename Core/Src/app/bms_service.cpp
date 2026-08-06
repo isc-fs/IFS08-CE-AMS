@@ -53,8 +53,8 @@ BmsService::BmsService() {
     }
     state_.valid_temp_channels = 0;
 
-    // Default cell_mV to a nominal-healthy sentinel for the SAME reason
-    // (#279): before the first poll, or for a module that the boot
+    // Default cell_mV to a nominal-healthy sentinel for the same reason:
+    // before the first poll, or for a module that the boot
     // free-pass window briefly marks "online" before it has actually
     // reported, the zero-initialised cells would otherwise read 0 mV
     // and trip CellUnderVoltage. 3700 mV sits comfortably inside
@@ -283,7 +283,7 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
         // index: even slots are LTC_1 (FIRST in chain, 9 cells -> module
         // cells 0..8); odd slots are LTC_2 (SECOND, 10 cells -> module
         // 9..18). The 10-cell LTC's tenth cell is RDCVD slot 0 (its C10);
-        // the 9-cell LTC's RDCVD group is discarded (#423 -- these were
+        // the 9-cell LTC's RDCVD group is discarded (these were
         // swapped, which zeroed module cell 9 and dropped the real cell 18).
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
@@ -313,7 +313,7 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
     // responded". A bit drops automatically once `now_tick_ms -
     // last_rx_tick[m] > BmsStaleMs`. Previously the mask was sticky-set
     // and never cleared, which made "chain went silent" indistinguishable
-    // from "all cells are out of range" on the telemetry side (#249).
+    // from "all cells are out of range" on the telemetry side.
     bool any_module_fresh = false;
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         const std::uint16_t pair =
@@ -339,7 +339,7 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
     state_.module_online_mask = fresh_mask;
 
     // Arm the cell V/T range predicates only once EVERY module has
-    // genuinely reported at least once (#279). last_rx_tick[m] is set
+    // genuinely reported at least once. last_rx_tick[m] is set
     // (above) solely on a both-LTCs-PEC-clean poll, so a non-zero tick
     // for every module means every cell has been written with real
     // data. Until then, cells may hold the boot sentinel (3700 mV) or a
@@ -437,7 +437,7 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
         const std::uint8_t module   = static_cast<std::uint8_t>(ic / config::LtcsPerModule);
         const bool         is_upper = (ic % config::LtcsPerModule) == 0u;
         // Per-LTC cell count: 9 on the upper (RDCVD discarded), 10 on the lower
-        // (RDCVD C10 = the 10th cell). NEVER a uniform count -- see #423.
+        // (RDCVD C10 = the 10th cell). NEVER a uniform count.
         const std::uint8_t n_cells  =
             is_upper ? config::CellsPerLtcUpper : config::CellsPerLtcLower;
 
@@ -473,7 +473,7 @@ bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
             // k-1 and k (IC-local, 0-indexed), so an open there corrupts both of
             // them; the endpoints C(0) and C(N) border only one cell each. Offset
             // by the IC's base so upper-LTC cells land on module cells 0..8 and
-            // lower-LTC cells on 9..18 (#423).
+            // lower-LTC cells on 9..18.
             const std::uint8_t base = is_upper ? 0u : config::CellsPerLtcUpper;
             for (std::uint8_t k = 0; k <= n_cells; ++k) {
                 if ((conductors & (1u << k)) == 0u) continue;

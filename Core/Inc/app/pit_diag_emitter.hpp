@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
 // Pure-logic encoders for the runtime-toggleable pit-side diagnostic
-// stream (#247). Header-only so the host unit-test build exercises the
+// stream. Header-only so the host unit-test build exercises the
 // byte layouts without HAL / FreeRTOS.
 //
 // Frames are dispatched by AcuCanTask when the runtime flag is set;
@@ -27,7 +27,7 @@ using Frame = std::array<std::uint8_t, 8>;
 // generated ifs08::encode_PIT_* -- the byte layout lives once in
 // Core/Inc/can/messages/pit_*.def. The parameterised cell/temp grid
 // frames (encode_cell_frame / encode_temp_frame) stay hand-rolled until
-// the DSL grows a multiplexed-array representation (#365). Value
+// the DSL grows a multiplexed-array representation. Value
 // transforms (saturation, bit assembly) stay here at the adapter; the
 // hardcoded-byte tests in test_pit_diag_emitter.cpp are the parity gate.
 namespace detail {
@@ -152,7 +152,7 @@ namespace detail {
 //
 //   byte 0  fsm_state  (same encoding as 0x4A0[0]: 0..5)
 //   byte 1  mode_locked (Undecided=0 / Car=1 / Charger=2)
-//   byte 2  cockpit inputs: bit2=balance_override (#336, balancing
+//   byte 2  cockpit inputs: bit2=balance_override (balancing
 //                           paused by a fresh 0x103 "BALO"),
 //                           bit1=TSMS readback, bit0=DASH_CHG readback
 //   byte 3  ams_ok_gpio (0/1)
@@ -160,7 +160,7 @@ namespace detail {
 //                              ICs combined exceed 65 535)
 //   byte 6  fault_reason  the predicate branch that latched ERROR
 //                         (ams::safety::FaultReason; 12=FSM-driven
-//                         Error path; 0=not latched) (#276)
+//                         Error path; 0=not latched)
 //   byte 7  fault_detail  BmsStale: module index; BmsModuleOffline:
 //                         live module_online_mask; else 0
 // ---------------------------------------------------------------------------
@@ -376,7 +376,7 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Per-IC PEC error counts (#258). 0x6C0[4..5] already carries the sum,
+// Per-IC PEC error counts. 0x6C0[4..5] already carries the sum,
 // which is enough to say "the chain is unhealthy" but not "which IC is
 // the problem". The 10 ICs (LtcChainLength) split across two frames as
 // saturating uint8 -- "error count > 255" already means catastrophic
@@ -420,7 +420,7 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// FDCAN1 comms health (0x6C9, #331). Surfaces the FDCAN1 TX-path counters
+// FDCAN1 comms health (0x6C9). Surfaces the FDCAN1 TX-path counters
 // that were previously RAM-only so the CAN-only HIL bench can CONFIRM a
 // Bus-Off recovery fired (count > 0 after an outage) and see TX-enqueue
 // pressure -- the AMS analogue of the bootloader's bl_health
@@ -462,7 +462,7 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// 0x6CA AMS_fw_health -- UNGATED firmware-health (#411), ECU-0x704 parity.
+// 0x6CA AMS_fw_health -- UNGATED firmware-health, ECU-0x704 parity.
 // Emitted always-on (NOT part of the pit-diag scan); this adapter just packs
 // the gathered fields. free_heap/min_free_heap are clamped to u16 -- the heap
 // is 64 KB so they always fit today, but the clamp stops a future larger heap

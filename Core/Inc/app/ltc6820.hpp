@@ -13,7 +13,7 @@
 // Wire-format / payload construction is in ltc6811.hpp -- this module
 // only owns the bus.
 //
-// Required CubeMX config (AMS.ioc) -- not yet committed, see #68:
+// Required CubeMX config (AMS.ioc):
 //   IP:        SPI1 master, full-duplex
 //   Pins:      PA5 = SPI1_SCK   AF5
 //              PA6 = SPI1_MISO  AF5

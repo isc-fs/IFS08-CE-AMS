@@ -38,7 +38,7 @@ private:
     // ~100 ms even if the FSM tries to be clever.
     bool error_latched_ = false;
 
-    // Cell V/T range debounce (#279). Requires a cell-range fault to
+    // Cell V/T range debounce. Requires a cell-range fault to
     // persist for config::CellFaultConfirmTicks consecutive evaluations
     // before it latches; pure + unit-tested in safety_predicates.hpp.
     safety::CellFaultDebounce cell_debounce_{};

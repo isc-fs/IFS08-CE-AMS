@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// CRC-32 (ISO-HDLC, a.k.a. zlib/PKZIP) for log-file integrity (#406 / #439).
+// CRC-32 (ISO-HDLC, a.k.a. zlib/PKZIP) for log-file integrity.
 //
 // WHY SOFTWARE, on a chip that has a CRC peripheral
 // -------------------------------------------------

@@ -52,7 +52,7 @@ struct Inputs {
     // TSMS alone.
     bool                dash_chg_edge;
     Mode                mode_locked;      // set by SafetyTask at Start->Precharge
-    // The safety supervisor's ALREADY-DEBOUNCED fault decision (#279).
+    // The safety supervisor's ALREADY-DEBOUNCED fault decision.
     // SafetyTask is the single fault authority: it runs the predicate
     // set, debounces the cell V/T range checks, and passes the result
     // here. The FSM must NOT re-evaluate the predicate itself -- doing
@@ -62,7 +62,7 @@ struct Inputs {
     // any-state-to-Error branch below is a kept backstop.
     bool                predicate_fault;
     // SafetyTask's DEBOUNCED "the DC bus collapsed while we think we're in
-    // Run" decision (#330). The cockpit SDC shutdown opens the AIRs without
+    // Run" decision. The cockpit SDC shutdown opens the AIRs without
     // the AMS sensing it; the VCU still reports dc_bus_V, so a sustained
     // collapse means the AIRs opened externally. Run consumes this to fall
     // back to Start (non-latching) rather than reclosing AIR+ onto a
@@ -94,7 +94,7 @@ struct Output {
     return bus_mV * 100u >= pack_mV * 95u;
 }
 
-// DC-bus collapse detector (#330). True when the VCU-measured bus has
+// DC-bus collapse detector. True when the VCU-measured bus has
 // fallen well below the pack voltage -- i.e. the AIRs opened externally
 // (a cockpit SDC shutdown the AMS can't sense) while the FSM still thinks
 // it's in Run. Same mV comparison as precharge_target_reached, against
@@ -118,7 +118,7 @@ struct Output {
     }
 
     // Any fault from the predicate set forces ERROR + opens AIRs.
-    // Sourced from SafetyTask's already-debounced decision (#279) --
+    // Sourced from SafetyTask's already-debounced decision --
     // the FSM does not re-run the predicate (that bypassed the cell
     // V/T debounce). Backstop: in normal operation SafetyTask handles
     // the fault before ever calling step(), so this is false here.
@@ -141,7 +141,7 @@ struct Output {
     // predicate set, never by TSMS), and a TSMS drop just returns us to
     // Start -- the driver re-arms with a DASH_CHG press, which re-runs
     // precharge. Genuine pack faults still latch via predicate_fault
-    // above; this branch is reached only on a no-fault tick. (#327)
+    // above; this branch is reached only on a no-fault tick.
     if (in.current != State::Start && in.current != State::Error &&
         !in.tsms) {
         // Charger mode is the exception to the non-latching rule above. The
@@ -193,7 +193,7 @@ struct Output {
     }
 
     case State::Precharge: {
-        // Bounded precharge (#302 follow-up). If the bus doesn't reach
+        // Bounded precharge. If the bus doesn't reach
         // the target within PrechargeMaxMs, latch Error and open every
         // contactor. This caps how long the precharge contactor +
         // resistor are held closed -- protecting the resistor (transient
@@ -210,7 +210,7 @@ struct Output {
                      events::safety::OpenAirN | events::safety::OpenAirP |
                      events::safety::OpenPrecharge };
         }
-        // Precharge-complete criterion is mode-specific (#305):
+        // Precharge-complete criterion is mode-specific:
         //  - Car: confirm the inverter DC-link reached the target via
         //    dc_bus_V (VCU-measured) before closing AIR+.
         //  - Charger: the inverter isn't in the charge loop and dc_bus_V
@@ -245,7 +245,7 @@ struct Output {
         // failed contactor swap (bus slumps the moment the precharge
         // contactor opens) lands in Error rather than energising the
         // tractive system on a degraded bus. Car-only: it relies on the
-        // VCU-measured dc_bus_V, absent during a charge (#305), so
+        // VCU-measured dc_bus_V, absent during a charge, so
         // Charger commits to Charge directly.
         if (in.mode_locked == Mode::Car &&
             !precharge_target_reached(in.bms, in.vehicle)) {
@@ -270,7 +270,7 @@ struct Output {
     }
 
     case State::Run: {
-        // AIRs opened externally (#330). The cockpit SDC shutdown opens the
+        // AIRs opened externally. The cockpit SDC shutdown opens the
         // AIRs without the AMS sensing it; the VCU keeps reporting dc_bus_V,
         // so a sustained collapse (SafetyTask-debounced -> in.bus_collapsed)
         // means the contactors are physically open while we still think
@@ -284,16 +284,16 @@ struct Output {
         }
         // Otherwise sustained while TSMS (the held master switch) is on. A
         // TSMS drop is handled by the non-latching TSMS guard above (-> Start,
-        // no Error, #327), so by the time we're here TSMS is held. DASH_CHG
+        // no Error), so by the time we're here TSMS is held. DASH_CHG
         // is NOT checked here: it is a momentary press, low most of the time
-        // -- checking its level would fault Run instantly (#305).
+        // -- checking its level would fault Run instantly.
         return { State::Run, 0u };
     }
 
     case State::Charge: {
         // Same as Run -- TSMS-held is guaranteed by the guard above; a
-        // TSMS drop de-energises to Start without latching (#327). DASH_CHG
-        // is a momentary press, not checked here (#305).
+        // TSMS drop de-energises to Start without latching. DASH_CHG
+        // is a momentary press, not checked here.
         return { State::Charge, 0u };
     }
 

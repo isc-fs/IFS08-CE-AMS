@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: proprietary
 //
-// Aggregates per-module cell voltages and (in #71) temperatures from
+// Aggregates per-module cell voltages and temperatures from
 // the LTC6811-1 daisy-chain (LtcChainLength = 10 ICs feeding 5 BMS
-// modules at 2 ICs each). Single-writer (BmsPollTask, #72); many
+// modules at 2 ICs each). Single-writer (BmsPollTask); many
 // readers (MainTask, AcuCanTask, BalanceController).
 //
-// Wire protocol: docs/BMS_LTC6811.md (#75) -- replaces the legacy
+// Wire protocol: docs/BMS_LTC6811.md -- replaces the legacy
 // FDCAN2 BMS section now marked DEPRECATED in docs/CAN_MAP.md.
 // Synchronisation: docs/ARCHITECTURE.md §7 ownership map.
 
@@ -94,7 +94,7 @@ struct BmsState {
 
     // Bit N set <=> module N's last PEC-clean response is within
     // BmsStaleMs of `now_tick`. Re-derived on every
-    // update_from_ltc_response from last_rx_tick freshness (see #249).
+    // update_from_ltc_response from last_rx_tick freshness.
     // Compared against config::AllModulesMask (0x1F) by SafetyTask;
     // also surfaced directly in 0x4A0[2] telemetry. A module that has
     // never reported (last_rx_tick == 0) stays masked off forever.
@@ -109,7 +109,7 @@ struct BmsState {
     // its LTCs) at least once, i.e. all last_rx_tick[m] != 0. Gates the
     // cell V/T range predicates so a partially-populated BmsState at the
     // boot-grace edge can't trip CellUnderVoltage on cells that haven't
-    // been read yet (#279). Never cleared -- once the whole pack has
+    // been read yet. Never cleared -- once the whole pack has
     // been seen, the range checks stay armed. A module that goes silent
     // afterwards is caught by the freshness / module_online_mask path,
     // not this flag.
@@ -134,13 +134,13 @@ public:
     //
     // Per-IC cell-slot mapping inside the module's 19-cell window:
     //
-    //   LTC_1 (chain index 2N, "upper", FIRST -- 9 cells)  [#423]
+    //   LTC_1 (chain index 2N, "upper", FIRST -- 9 cells)
     //     RDCVA -> module cells 0,1,2
     //     RDCVB -> module cells 3,4,5
     //     RDCVC -> module cells 6,7,8
     //     RDCVD -> discarded
     //
-    //   LTC_2 (chain index 2N+1, "lower", SECOND -- 10 cells)  [#423]
+    //   LTC_2 (chain index 2N+1, "lower", SECOND -- 10 cells)
     //     RDCVA -> module cells 9,10,11
     //     RDCVB -> module cells 12,13,14
     //     RDCVC -> module cells 15,16,17
@@ -258,8 +258,8 @@ private:
     std::uint8_t  open_run_ [config::BmsModuleCount][config::TempsPerModule] = {};
 };
 
-// Per-IC PEC error counter, exported for telemetry diagnostics
-// (#72 / #75). 10 ICs == LtcChainLength.
+// Per-IC PEC error counter, exported for telemetry diagnostics.
+// 10 ICs == LtcChainLength.
 extern "C" volatile std::uint32_t g_ltc_pec_err_count[config::LtcChainLength];
 
 }  // namespace ams
