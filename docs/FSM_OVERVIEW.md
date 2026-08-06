@@ -326,6 +326,32 @@ return { State::Start, 0u };
 
   Charger is exempt — the inverter is not in the charge loop and `dc_bus_V` is
   VCU-only, absent during a charge, so gating it would make Charger unarmable.
+- **`AMS_OK` is held low for as long as that gate blocks** — see
+  `safety::discharge_hold_required`. The discharge relay is wired into the
+  shutdown circuit with **no software control**: SDC open → relay de-energised →
+  discharge path closed → the link bleeds. Close the SDC and the relay
+  re-energises and the *discharge stops*. So without this, a driver who resets
+  the shutdown and closes TS mid-discharge freezes the link part-way, and the
+  gate above would then wait on a threshold that can never be reached.
+
+  `AMS_OK` is the AMS's own leg of that loop, upstream of TSMS. Holding it low
+  keeps the loop broken, which keeps the discharge relay de-energised, which
+  keeps the link draining — whatever the driver does with TSMS. It is the only
+  control the AMS has over a relay it cannot address directly.
+
+  **Self-clearing, never latched.** `AMS_OK` deasserting is normally a fault
+  indication that only a reset clears, and it must not become one here: the hold
+  releases the instant the link falls below threshold, so the loop restores
+  itself with no operator action beyond waiting.
+
+  The fail-safe polarity is **inverted** relative to the arming gate, and
+  deliberately so. Arming blocks unless the link is *proven discharged*; the hold
+  engages only while the link is *proven charged*. Both fail toward "do not
+  energise" — but if a stale reading could hold the SDC open, a VCU that is
+  merely slow to boot would leave the car permanently unable to start.
+
+  `g_discharge_hold_telemetry` mirrors the hold, so a car that will not arm reads
+  as "waiting for discharge" rather than a dead start button.
 - **Freshness is part of both DC-bus criteria, not a separate fault.**
   `dc_bus_V` holds its last value when the VCU stops reporting. A value frozen
   *high* satisfies `precharge_target_reached` forever — including after the link

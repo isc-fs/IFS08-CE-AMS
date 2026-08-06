@@ -595,3 +595,40 @@ extern "C" void test_predicates_disconnect_is_immediate_not_range_debounced(void
     TEST_ASSERT_FALSE(ams::safety::is_cell_range_reason(
         ams::safety::FaultReason::TempSensorDisconnected));
 }
+
+// ---------------------------------------------------------------------------
+// AMS_OK discharge hold. The discharge relay sits in the SDC with no software
+// control, so breaking the loop at AMS_OK is the only way the AMS can stop a
+// driver interrupting the discharge by closing TS.
+// ---------------------------------------------------------------------------
+extern "C" void test_discharge_hold_keeps_sdc_open_while_link_charged(void) {
+    using namespace ams;
+    const std::uint16_t charged   = config::DcBusDischargedV + 1u;
+    const std::uint16_t discharged = config::DcBusDischargedV;
+
+    // In Start with a charged link -> hold, and AMS_OK follows it low.
+    TEST_ASSERT_TRUE(safety::discharge_hold_required(true, charged, true));
+    TEST_ASSERT_FALSE(safety::ams_ok_asserted(config::SafetyBootGraceMs,
+                                              /*error_latched=*/false,
+                                              /*discharge_hold=*/true));
+
+    // SELF-CLEARING: at threshold the hold releases and AMS_OK comes back with
+    // no operator action. A latched version would leave the car unable to close
+    // its own shutdown circuit.
+    TEST_ASSERT_FALSE(safety::discharge_hold_required(true, discharged, true));
+    TEST_ASSERT_TRUE(safety::ams_ok_asserted(config::SafetyBootGraceMs, false,
+                                             /*discharge_hold=*/false));
+
+    // Fail-safe polarity is INVERTED vs the arming gate: hold only while the
+    // link is PROVEN charged. A stale reading must not hold the SDC open, or a
+    // VCU that is merely slow to boot leaves the car permanently unstartable.
+    TEST_ASSERT_FALSE(safety::discharge_hold_required(true, charged, false));
+
+    // Start only -- elsewhere the link is charged because the AMS put it there.
+    TEST_ASSERT_FALSE(safety::discharge_hold_required(false, charged, true));
+
+    // The hold never overrides the existing reasons to keep AMS_OK low.
+    TEST_ASSERT_FALSE(safety::ams_ok_asserted(config::SafetyBootGraceMs,
+                                              /*error_latched=*/true, false));
+    TEST_ASSERT_FALSE(safety::ams_ok_asserted(0u, false, false));  // boot grace
+}
