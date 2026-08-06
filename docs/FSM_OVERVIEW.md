@@ -155,7 +155,8 @@ struct Inputs {
     bool                dash_chg_edge;      // PF10 one-shot RISING EDGE (momentary press)
     Mode                mode_locked;        // set by SafetyTask at Start -> Precharge
     bool                predicate_fault;    // SafetyTask's ALREADY-DEBOUNCED fault decision
-    bool                bus_collapsed;       // SafetyTask-debounced dc_bus collapse (#330, Car/Run)
+    bool                bus_collapsed;      // SafetyTask-debounced dc_bus collapse (Car/Run)
+    bool                dc_bus_fresh;       // 0x100 heard within VcuStaleMs
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;   // tick the current state was entered
 };

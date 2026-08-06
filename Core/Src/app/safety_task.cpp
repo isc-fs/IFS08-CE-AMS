@@ -176,6 +176,14 @@ void SafetyTask::run() noexcept {
         const auto cur_snap = CurrentService::instance().snapshot();
         const auto veh_snap = VehicleService::instance().snapshot();
 
+        // VCU 0x100 freshness for precharge_target_reached. Held to VcuStaleMs,
+        // not the looser VcuFreshMs used for the mode lock: this criterion gates
+        // closing AIR+, so the same staleness that raises VcuStale must also make
+        // dc_bus_V unreadable. A never-seen VCU (tick 0) is not fresh.
+        const bool dc_bus_fresh =
+            veh_snap.last_dc_bus_tick != 0u &&
+            (now - veh_snap.last_dc_bus_tick) <= config::VcuStaleMs;
+
         // Operator-facing GPIO inputs: TSMS (side-of-car external
         // switch, PF9) and DASH_CHG (cockpit dashboard / charger
         // button, PF10). Both active-high, external pull-down on the
@@ -323,6 +331,7 @@ void SafetyTask::run() noexcept {
                     // tick), but it keeps the FSM's Error backstop honest.
                     predicate_fault,
                     bus_collapsed,   // debounced bus-collapse decision
+                    dc_bus_fresh,
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);
