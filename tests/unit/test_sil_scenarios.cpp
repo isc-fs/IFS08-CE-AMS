@@ -94,6 +94,9 @@ struct Harness {
             tsms, dash_chg_edge, mode_locked,
             predicate_fault,
             bus_collapsed,
+            // Mirrors SafetyTask: 0x100 freshness at VcuStaleMs, never-seen is stale.
+            veh.last_dc_bus_tick != 0u &&
+                (now - veh.last_dc_bus_tick) <= ams::config::VcuStaleMs,
             now, state_entry_tick,
         };
         const auto out = ams::fsm::step(in);

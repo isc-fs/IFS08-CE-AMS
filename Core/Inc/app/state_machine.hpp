@@ -68,6 +68,9 @@ struct Inputs {
     // back to Start (non-latching) rather than reclosing AIR+ onto a
     // discharged DC-link. Car/Run only; false in every other state.
     bool                bus_collapsed;
+    // Is the VCU's 0x100 heartbeat still fresh (SafetyTask, VcuStaleMs)? Part of
+    // precharge_target_reached rather than a separate fault -- see there.
+    bool                dc_bus_fresh;
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;
 };
@@ -83,8 +86,29 @@ struct Output {
 // the "no data yet" guard. Vehicle dc_bus_V is uint16 V, multiply
 // by 1000 to land in mV; max possible value 65535 * 1000 = 6.5e7
 // fits in uint32 with headroom.
+//
+// dc_bus_fresh is REQUIRED, not advisory. VehicleState holds the LAST RECEIVED
+// dc_bus_V, so when the VCU stops publishing 0x100 the number does not go away,
+// it freezes. Frozen at pack voltage it satisfies this test forever -- including
+// after the link has actually bled to zero, where closing AIR+ means full pack
+// voltage across the contactor with nothing to limit the inrush.
+//
+// VcuStale does catch a dead VCU, but it cannot catch it in time: it is gated on
+// vcu_required (false in Start, so the value may already be arbitrarily old when
+// the operator presses) and needs VcuStaleMs = 200 ms, while the FSM steps every
+// 20 ms. Precharge -> Transition therefore fires on the frozen reading roughly
+// ten steps before the fault can open the AIRs again. Freshness has to be part
+// of the criterion, not a separate fault racing it.
+//
+// bus_below_collapse deliberately does NOT take this: it is only consumed in Run,
+// where mode is locked to Car, so vcu_required is true and VcuStale bounds the
+// staleness at 200 ms -- the same 200 ms its own debounce already spends. Both of
+// its stale outcomes are safe (a false collapse de-energises to Start without
+// latching; a missed one is caught by VcuStale), so it has no race to lose.
 [[nodiscard]] inline bool precharge_target_reached(const BmsState& bms,
-                                                   const VehicleState& veh) noexcept {
+                                                   const VehicleState& veh,
+                                                   bool dc_bus_fresh) noexcept {
+    if (!dc_bus_fresh) return false;
     // "No data yet" guard: pack_voltage_mV is 0 until BmsPollTask
     // (or the HIL stub) has written at least one cycle. A real pack
     // can never reach 0 mV in-service, so 0 reliably means "no data".
@@ -228,7 +252,7 @@ struct Output {
             (in.mode_locked == Mode::Charger)
                 ? VehicleService::charge_requested(in.now_tick,
                                                    in.vehicle.last_charge_req_tick)
-                : precharge_target_reached(in.bms, in.vehicle);
+                : precharge_target_reached(in.bms, in.vehicle, in.dc_bus_fresh);
         if (precharge_done) {
             return { State::Transition,
                      events::safety::CloseAirP |
@@ -248,7 +272,7 @@ struct Output {
         // VCU-measured dc_bus_V, absent during a charge, so
         // Charger commits to Charge directly.
         if (in.mode_locked == Mode::Car &&
-            !precharge_target_reached(in.bms, in.vehicle)) {
+            !precharge_target_reached(in.bms, in.vehicle, in.dc_bus_fresh)) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |

@@ -40,6 +40,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
              /*mode_locked*/ams::fsm::Mode::Undecided,
              /*predicate_fault*/false,
              /*bus_collapsed*/false,
+             /*dc_bus_fresh*/true,
              /*now*/10000, /*entry*/9800 };
 }
 
@@ -379,4 +380,61 @@ extern "C" void test_fsm_precharge_holds_within_deadline(void) {
     veh.dc_bus_V = 0;   // not reached yet, but still within the deadline
     in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs - 1;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// A stale dc_bus_V frozen at pack voltage must NOT satisfy the precharge-complete
+// criterion. VehicleState holds the last received value, so a VCU that stops
+// publishing leaves the number sitting at whatever it last was -- and frozen high
+// it would close AIR+ onto a link that has since bled to zero. VcuStale catches
+// the dead VCU only after 200 ms and only once mode is locked to Car, while the
+// FSM steps every 20 ms, so it loses that race by an order of magnitude.
+extern "C" void test_fsm_precharge_rejects_stale_bus_reading(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;              // clears the 95 % bar on its face
+
+    // Fresh -> proceeds, closing AIR+.
+    in.dc_bus_fresh = true;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+
+    // Same reading, now stale -> holds in Precharge, AIR+ stays open. It will
+    // time out at PrechargeMaxMs into Error, which is the correct outcome.
+    in.dc_bus_fresh = false;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::CloseAirP);
+}
+
+// Transition re-checks the same criterion before committing to Run, so a reading
+// that goes stale between the two steps must not be trusted there either.
+extern "C" void test_fsm_transition_rejects_stale_bus_reading(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+}
+
+// Charger does not consume dc_bus_V at all -- it proceeds on 0x101 freshness,
+// because the VCU is absent by definition during a charge. Staleness here must
+// not block it.
+extern "C" void test_fsm_charger_precharge_unaffected_by_stale_bus(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.last_charge_req_tick = 9950;   // fresh 0x101
+    veh.dc_bus_V = 0;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
 }
