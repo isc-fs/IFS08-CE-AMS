@@ -323,6 +323,13 @@ void SafetyTask::run() noexcept {
                     // tick), but it keeps the FSM's Error backstop honest.
                     predicate_fault,
                     bus_collapsed,   // debounced bus-collapse decision
+                    // 0x100 freshness for the two DC-bus criteria. Held to
+                    // VcuStaleMs, not the looser VcuFreshMs used for the mode
+                    // lock: these criteria gate closing AIR+, so the same
+                    // staleness that raises VcuStale must also make them
+                    // unreadable. A never-seen VCU (tick 0) is not fresh.
+                    veh_snap.last_dc_bus_tick != 0u &&
+                        (now - veh_snap.last_dc_bus_tick) <= config::VcuStaleMs,
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);

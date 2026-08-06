@@ -68,6 +68,11 @@ struct Inputs {
     // back to Start (non-latching) rather than reclosing AIR+ onto a
     // discharged DC-link. Car/Run only; false in every other state.
     bool                bus_collapsed;
+    // Is the VCU's 0x100 heartbeat still fresh (SafetyTask, VcuFreshMs)? Part of
+    // both DC-bus criteria rather than a separate fault: dc_bus_V holds its last
+    // value when the VCU goes quiet, and a stale reading passes or fails those
+    // tests for reasons that have nothing to do with the actual link voltage.
+    bool                dc_bus_fresh;
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;
 };
@@ -83,8 +88,18 @@ struct Output {
 // the "no data yet" guard. Vehicle dc_bus_V is uint16 V, multiply
 // by 1000 to land in mV; max possible value 65535 * 1000 = 6.5e7
 // fits in uint32 with headroom.
+//
+// dc_bus_fresh is REQUIRED, not advisory. dc_bus_V holds its last value when the
+// VCU stops reporting, and a value frozen at pack voltage satisfies this test
+// forever -- including after the link has actually bled down to zero. VcuStale
+// does catch a dead VCU, but only after VcuStaleMs (200 ms), and it is gated on
+// vcu_required which is false in Start; the FSM steps every 20 ms, so AIR+ would
+// close roughly ten times sooner than the fault could stop it. Freshness has to
+// be part of the criterion itself.
 [[nodiscard]] inline bool precharge_target_reached(const BmsState& bms,
-                                                   const VehicleState& veh) noexcept {
+                                                   const VehicleState& veh,
+                                                   bool dc_bus_fresh) noexcept {
+    if (!dc_bus_fresh) return false;
     // "No data yet" guard: pack_voltage_mV is 0 until BmsPollTask
     // (or the HIL stub) has written at least one cycle. A real pack
     // can never reach 0 mV in-service, so 0 reliably means "no data".
@@ -92,6 +107,22 @@ struct Output {
     const std::uint64_t bus_mV  = static_cast<std::uint64_t>(veh.dc_bus_V) * 1000u;
     const std::uint64_t pack_mV = bms.pack_voltage_mV;
     return bus_mV * 100u >= pack_mV * 95u;
+}
+
+// Re-arm gate: has the inverter DC-link finished discharging?
+//
+// Opening the shutdown circuit de-energises the AIR coils directly -- the AMS
+// does not command it and its GPIO read-backs still say "closed". The link then
+// bleeds down through the inverter's discharge circuit over seconds, while a
+// driver can reset the shutdown and press start in well under one. This is what
+// stands between that and a precharge that does nothing (see DcBusDischargedV).
+//
+// Requires freshness for the same reason precharge_target_reached does, but the
+// failure is the mirror image: a stale value frozen LOW would report a charged
+// link as discharged. Unknown is not discharged.
+[[nodiscard]] inline bool bus_discharged(const VehicleState& veh,
+                                         bool dc_bus_fresh) noexcept {
+    return dc_bus_fresh && veh.dc_bus_V <= config::DcBusDischargedV;
 }
 
 // DC-bus collapse detector. True when the VCU-measured bus has
@@ -181,7 +212,30 @@ struct Output {
         // proceed; the resistor never enters the charge loop. Car keeps the
         // resistor precharge to soft-charge the inverter DC-link. Undecided
         // (shouldn't reach here) falls back to the conservative resistor path.
+        //
+        // Car additionally waits for the DC-link to finish discharging. After a
+        // shutdown-circuit open the link sits near pack voltage for seconds, and
+        // starting a precharge into it is a no-op: precharge_target_reached is
+        // already satisfied, so the FSM leaves Precharge on the next step without
+        // the resistor ever doing anything. Holding in Start (rather than
+        // latching) means the driver waits out the discharge and presses again --
+        // no reset needed.
+        //
+        // The press IS consumed on a blocked attempt (SafetyTask clears the edge
+        // after every step). That is deliberate: carrying it would let a press
+        // made while the link was live arm the car by itself seconds later, when
+        // the discharge finally completes and nobody is expecting it. Energising
+        // the tractive system takes a deliberate press at a moment when it can
+        // actually succeed.
+        //
+        // Charger is exempt: the inverter is not in the charge loop at all, and
+        // dc_bus_V is VCU-only and absent during a charge, so there is nothing to
+        // gate on. Gating Charger here would make it permanently unarmable.
         if (in.tsms && in.dash_chg_edge) {
+            if (in.mode_locked != Mode::Charger &&
+                !bus_discharged(in.vehicle, in.dc_bus_fresh)) {
+                return { State::Start, 0u };
+            }
             const std::uint32_t connect =
                 (in.mode_locked == Mode::Charger)
                     ? events::safety::CloseAirN
@@ -228,7 +282,7 @@ struct Output {
             (in.mode_locked == Mode::Charger)
                 ? VehicleService::charge_requested(in.now_tick,
                                                    in.vehicle.last_charge_req_tick)
-                : precharge_target_reached(in.bms, in.vehicle);
+                : precharge_target_reached(in.bms, in.vehicle, in.dc_bus_fresh);
         if (precharge_done) {
             return { State::Transition,
                      events::safety::CloseAirP |
@@ -248,7 +302,7 @@ struct Output {
         // VCU-measured dc_bus_V, absent during a charge, so
         // Charger commits to Charge directly.
         if (in.mode_locked == Mode::Car &&
-            !precharge_target_reached(in.bms, in.vehicle)) {
+            !precharge_target_reached(in.bms, in.vehicle, in.dc_bus_fresh)) {
             return { State::Error,
                      events::safety::ForceError |
                      events::safety::OpenAirN | events::safety::OpenAirP |

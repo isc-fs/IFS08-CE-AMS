@@ -597,6 +597,25 @@ inline constexpr float         PrechargeRatio   = 0.95f;
 inline constexpr std::uint32_t BusCollapsePercent     = 50;  // COMMISSION (% of pack)
 inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~200 ms @ 10 ms)
 
+// Re-arm gate: the inverter DC-link must have DISCHARGED below this before the
+// FSM will leave Start for another precharge.
+//
+// Opening the shutdown circuit drops the AIR coils, so the link starts bleeding
+// down through the inverter's discharge circuit -- but it takes seconds, and the
+// driver can reset the shutdown and press the start button in far less than that.
+// Without this gate, Start->Precharge fires onto a link still near pack voltage,
+// where precharge_target_reached (dc_bus >= 95 % of pack) is ALREADY true. The
+// FSM would leave Precharge on the very next step, so the resistor never carries
+// meaningful current and the soft-charge does not happen. Worse, that 95 % gate
+// is the only evidence the AMS has that the precharge resistor and contactor
+// work; satisfied by residual charge, it proves nothing.
+//
+// Absolute volts, not a percentage of pack: the number that matters is the
+// touch-safe DC limit the discharge circuit is required to reach, and it does not
+// scale with pack voltage. Confirm against the season's rulebook -- the discharge
+// requirement is stated as a voltage and a time, and both are the team's to meet.
+inline constexpr std::uint16_t DcBusDischargedV       = 60;   // COMMISSION (rulebook)
+
 // Current sensor calibration. Pack current measured via a Bourns
 // SSA-2-250A shunt sensor (datasheet: pcbs/ssa-2.pdf). The sensor is a
 // 2-wire amplified-differential device: its OUT_P / OUT_N pins carry a

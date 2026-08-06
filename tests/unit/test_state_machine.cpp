@@ -40,6 +40,7 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
              /*mode_locked*/ams::fsm::Mode::Undecided,
              /*predicate_fault*/false,
              /*bus_collapsed*/false,
+             /*dc_bus_fresh*/true,
              /*now*/10000, /*entry*/9800 };
 }
 
@@ -76,10 +77,88 @@ extern "C" void test_fsm_start_to_precharge_on_both_inputs(void) {
     in.tsms    = true;
     in.dash_chg_edge = true;
     in.mode_locked = ams::fsm::Mode::Car;
+    // Car arms only from a discharged DC-link; make_inputs leaves it at 350 V
+    // (the in-service value), which is the blocked case exercised below.
+    veh.dc_bus_V = 0;
     auto out = ams::fsm::step(in);
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+// Re-arm gate. Opening the shutdown circuit drops the AIRs but leaves the
+// inverter DC-link charged for seconds. Arming into that is a no-op precharge --
+// dc_bus >= 95 % of pack is already true, so the FSM would leave Precharge on the
+// next step without the resistor doing anything, and the check that is supposed
+// to PROVE the precharge circuit works would be satisfied by residual charge.
+extern "C" void test_fsm_start_blocks_until_dc_link_discharged(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+
+    // Link still near pack voltage -> hold in Start, no contactor moves at all.
+    veh.dc_bus_V = 350;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_EQUAL_UINT32(0u, out.safety_flags);
+
+    // Part-way down but still above the threshold -> still blocked.
+    veh.dc_bus_V = static_cast<std::uint16_t>(ams::config::DcBusDischargedV + 1u);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+
+    // At the threshold -> arms.
+    veh.dc_bus_V = ams::config::DcBusDischargedV;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+// A stale 0x100 must read as "not discharged". dc_bus_V holds its last value when
+// the VCU goes quiet, so a reading frozen LOW would otherwise report a charged
+// link as safe to arm into. Unknown is not discharged.
+extern "C" void test_fsm_start_blocks_on_stale_dc_bus(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 0;              // reads discharged...
+    in.dc_bus_fresh = false;       // ...but we cannot trust it
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+}
+
+// Charger is exempt: the inverter is not in the charge loop and dc_bus_V is
+// VCU-only, absent during a charge. Gating it would make Charger unarmable.
+extern "C" void test_fsm_charger_arms_regardless_of_dc_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 350;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+// A stale dc_bus_V frozen at pack voltage must NOT satisfy the precharge-complete
+// criterion. VcuStale catches a dead VCU, but only after VcuStaleMs (200 ms) and
+// only once mode is locked to Car; the FSM steps every 20 ms, so AIR+ would close
+// long before the fault could stop it -- onto a link that has since bled to zero.
+extern "C" void test_fsm_precharge_rejects_stale_bus_reading(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;            // would clear the 95 % bar...
+    in.dc_bus_fresh = false;       // ...but the VCU has gone quiet
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::CloseAirP);
 }
 
 // Charger mode SKIPS the precharge resistor: AIR- closes but the precharge

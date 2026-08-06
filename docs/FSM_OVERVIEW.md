@@ -155,7 +155,8 @@ struct Inputs {
     bool                dash_chg_edge;      // PF10 one-shot RISING EDGE (momentary press)
     Mode                mode_locked;        // set by SafetyTask at Start -> Precharge
     bool                predicate_fault;    // SafetyTask's ALREADY-DEBOUNCED fault decision
-    bool                bus_collapsed;       // SafetyTask-debounced dc_bus collapse (#330, Car/Run)
+    bool                bus_collapsed;      // SafetyTask-debounced dc_bus collapse (Car/Run)
+    bool                dc_bus_fresh;       // 0x100 heard within VcuStaleMs
     std::uint32_t       now_tick;
     std::uint32_t       state_entry_tick;   // tick the current state was entered
 };
@@ -287,6 +288,10 @@ offline/stale, current over-limit, VCU stale) latch on the first tick.
 
 ```cpp
 if (in.tsms && in.dash_chg_edge) {
+    if (in.mode_locked != Mode::Charger &&
+        !bus_discharged(in.vehicle, in.dc_bus_fresh)) {
+        return { State::Start, 0u };          // car: DC link still charged
+    }
     const std::uint32_t connect =
         (in.mode_locked == Mode::Charger)
             ? CloseAirN                       // charger: skip the resistor
@@ -299,6 +304,36 @@ return { State::Start, 0u };
 - **Trigger:** TSMS *held* (level) **AND** a DASH_CHG *press* (rising edge), in
   both Car and Charger. The press is edge-detected, so the operator must
   deliberately press — not merely hold a level — to energise.
+- **Car also waits for the DC link to discharge** (`dc_bus_V ≤ DcBusDischargedV`,
+  and `0x100` still fresh). Opening the shutdown circuit de-energises the AIR
+  coils directly — the AMS never commanded it, and its GPIO read-backs still say
+  "closed" — after which the link bleeds down through the inverter's discharge
+  circuit over *seconds*. A driver can reset the shutdown and press start in far
+  less than that.
+
+  Arming into a still-charged link is not merely wasteful, it is a **no-op
+  precharge**: `dc_bus ≥ 95 % of pack` is already true on entry, so the FSM
+  leaves Precharge on the very next 20 ms step and the resistor never carries
+  meaningful current. That 95 % gate is the only evidence the AMS has that the
+  precharge resistor and contactor actually work; satisfied by residual charge,
+  it proves nothing.
+
+  Blocking **holds in Start** rather than latching, so the driver just waits out
+  the discharge and presses again — no reset. The press *is* consumed on a
+  blocked attempt, deliberately: carrying it would let a press made while the
+  link was live arm the car by itself seconds later, when the discharge finally
+  completes and nobody expects it.
+
+  Charger is exempt — the inverter is not in the charge loop and `dc_bus_V` is
+  VCU-only, absent during a charge, so gating it would make Charger unarmable.
+- **Freshness is part of both DC-bus criteria, not a separate fault.**
+  `dc_bus_V` holds its last value when the VCU stops reporting. A value frozen
+  *high* satisfies `precharge_target_reached` forever — including after the link
+  has bled to zero — and a value frozen *low* would report a charged link as safe
+  to arm into. `VcuStale` does catch a dead VCU, but only after `VcuStaleMs`
+  (200 ms), and it is gated on `vcu_required`, which is false in Start; the FSM
+  steps every 20 ms, so AIR+ would close roughly ten times sooner than the fault
+  could stop it.
 - **Action (Car):** AIR− closes + Precharge closes → current flows through the
   precharge resistor into the inverter DC link.
 - **Action (Charger):** AIR− closes **only** — the precharge resistor is
@@ -450,7 +485,7 @@ stateDiagram-v2
     boot_check --> Start : ErrorLatch clear
     boot_check --> Error : ErrorLatch set (BKP1R magic survives reset)
 
-    Start --> Precharge : tsms (held) AND dash_chg edge (press) / CloseAirN (+ ClosePrecharge in Car) ; mode locked by SafetyTask
+    Start --> Precharge : tsms (held) AND dash_chg edge (press) AND (Charger OR DC link discharged) / CloseAirN (+ ClosePrecharge in Car) ; mode locked by SafetyTask
 
     Precharge --> Transition : Car: dc_bus >= 95% pack_V ; Charger: fresh 0x101 request / CloseAirP + OpenPrecharge
     Precharge --> Error : now - entry > PrechargeMaxMs (5000)
