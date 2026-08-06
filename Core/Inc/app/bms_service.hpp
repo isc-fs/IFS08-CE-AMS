@@ -220,6 +220,15 @@ public:
                                  std::uint16_t*      pu_out,
                                  std::uint16_t*      pd_out) noexcept;
 
+    // Decode one RDCVA..D reply into a flat 95-cell mV grid (module m, cell c ->
+    // index m*CellsPerModule + c; upper LTC -> cells 0..8, lower -> 9..18).
+    // PEC-skipped cells stay 0xFFFF. Static + touches no service state, so a
+    // diagnostic can re-measure the pack without disturbing the live snapshot the
+    // safety predicates read. capture_adow_raw is this run twice, once per pass.
+    static void capture_cell_raw(const std::uint8_t* reply,
+                                 std::size_t         len,
+                                 std::uint16_t*      out) noexcept;
+
     // Atomic read of the full state. Caller gets its own copy; the
     // mutex is released before this returns.
     [[nodiscard]] BmsState snapshot() const noexcept;

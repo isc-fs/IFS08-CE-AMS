@@ -13,6 +13,7 @@ void test_bms_open_wire_flags_module(void);
 void test_bms_open_wire_pec_glitch_signals_retry(void);
 void test_bms_open_wire_retry_preserves_confirmed_open(void);
 void test_bms_capture_adow_raw_decodes_grids(void);
+void test_bms_capture_cell_raw_decodes_grid(void);
 void test_bms_ltc_clean_response_decodes_all_cells(void);
 void test_bms_tap_artifact_does_not_trip_ov(void);
 void test_bms_real_overvoltage_not_masked(void);
@@ -539,6 +540,7 @@ int main(void) {
     RUN_TEST(test_bms_open_wire_pec_glitch_signals_retry);
     RUN_TEST(test_bms_open_wire_retry_preserves_confirmed_open);
     RUN_TEST(test_bms_capture_adow_raw_decodes_grids);
+    RUN_TEST(test_bms_capture_cell_raw_decodes_grid);
 RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_bms_tap_artifact_does_not_trip_ov);
     RUN_TEST(test_bms_real_overvoltage_not_masked);

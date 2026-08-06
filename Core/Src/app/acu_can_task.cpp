@@ -88,6 +88,9 @@ extern "C" std::uint16_t g_adow_diag_pu[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule];
 extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule];
+// Second-mode cell grid (config::AdcModeCrossCheck only), written by BmsPollTask.
+extern "C" std::uint16_t g_adc_xcheck_mv[ams::config::BmsModuleCount *
+                                         ams::config::CellsPerModule];
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
 // Balance-quiesce health: successful DCC clears before a measurement vs polls
@@ -412,9 +415,20 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     if (ams::config::AdowRawDiag) {
         for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
             send_or_fail_blocking(ams::config::AdowDiagPuBaseId + i,
-                                  ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pu, i));
+                                  ams::pit_diag::encode_raw_grid_frame(g_adow_diag_pu, i));
             send_or_fail_blocking(ams::config::AdowDiagPdBaseId + i,
-                                  ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pd, i));
+                                  ams::pit_diag::encode_raw_grid_frame(g_adow_diag_pd, i));
+        }
+    }
+
+    // BENCH DIAGNOSTIC (config::AdcModeCrossCheck): the pack re-measured in a
+    // second ADC mode, on AdcXCheckBaseId with the 0x680 grid layout. Diff it
+    // against 0x680: a cell that moves with conversion time has a settling-limited
+    // tap, one that does not is genuinely at that voltage.
+    if (ams::config::AdcModeCrossCheck) {
+        for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
+            send_or_fail_blocking(ams::config::AdcXCheckBaseId + i,
+                                  ams::pit_diag::encode_raw_grid_frame(g_adc_xcheck_mv, i));
         }
     }
 }

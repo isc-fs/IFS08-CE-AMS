@@ -863,7 +863,56 @@ No bespoke "BMS faulted" predicate.
 
 ---
 
-## 10. References
+## 10. Bench diagnostics
+
+Two flag-gated diagnostics publish raw per-cell grids over pit-diag. Both are
+`false` on dev and flight builds; the code still compiles either way, so CI
+type-checks it. Each uses the same 24-frame, 4-cell, big-endian-u16 window as the
+`0x680` cell grid, so one decoder reads all of them:
+
+```
+cell_index = 4 * (id - base) + slot;  module = cell_index / 19; cell = cell_index % 19
+0xFFFF = no cell, or that IC PEC-failed on this scan
+```
+
+| Flag | Block | What it dumps |
+|---|---|---|
+| `AdowRawDiag` | `0x6D0` (PU), `0x6E8` (PD) | Raw ADOW pull-up / pull-down readings. Runs its own two-pass scan independent of `CellOpenWireCheck`, so the ADOW encoding and timing can be debugged while live detection is off. A cell is reported only if **both** passes were PEC-clean — the diagnostic is the PU−PD delta, and half a pair has no delta. |
+| `AdcModeCrossCheck` | `0x700` | The same 95 cells re-measured in `AdcXCheckAdcMode` (default `Filt26Hz`) instead of the live `AdcMode` (`Norm7kHz`). |
+
+### Reading the ADC-mode cross-check
+
+Each cell input sits behind an RC filter at the LTC pin. Series resistance in the
+tap conductor — a cold crimp, a corroded ring terminal, a cracked joint — raises
+that time constant. A fast conversion samples before the input has settled and the
+cell reads low; a slow one settles and reads true. Charge state is not a function
+of conversion time, so:
+
+| `0x700` vs `0x680` | Meaning |
+|---|---|
+| agree | tap is fine; if the cell reads low, it **is** low |
+| `0x700` reads higher | settling-limited tap — a wiring fault, not a discharged cell |
+
+This is the discriminator `RDSTATA` cannot provide. Sum-of-cells is referenced to
+the same `C0` node as cell 1, so an offset there shifts `SC` and cell 1 by equal
+amounts and the sum still reconciles. Comparing modes does not depend on `C0` —
+which matters, because the bottom cell of each LTC segment (module cells 1 and 10)
+is exactly where a `C0` problem shows up.
+
+The sweep runs on its own slow cadence (`AdcXCheckPolls`, default 25 polls ≈ 5 s)
+because a filtered conversion costs ~201 ms. It is issued **after** the live read
+lands, so module freshness is never delayed by it — only the next poll starts
+late. `AdcXCheckPollBodyBudgetMs` bounds that against `BmsStaleMs` at compile
+time; confirm the real figures against `PitDiagTimingId` (`0x6C1`) on the bench
+rather than trusting the allowance.
+
+Both diagnostics run inside the balance quiesce window. Bleed current displaces
+these measurements exactly as it displaces the live one, and a displaced
+comparison would invent a tap fault that isn't there.
+
+---
+
+## 11. References
 
 - LTC6811-1 datasheet:
   - §"Packet Error Code (PEC)" — polynomial + worked example used in the unit tests

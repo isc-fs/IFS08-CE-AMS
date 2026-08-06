@@ -105,6 +105,14 @@ extern "C" std::uint16_t g_adow_diag_pu[ams::config::BmsModuleCount *
 extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule] = {};
 
+// BENCH DIAGNOSTIC (config::AdcModeCrossCheck): the same 95 cells re-measured in
+// config::AdcXCheckAdcMode. Diffed against the live 0x680 grid it separates a
+// settling-limited tap (mode-dependent) from a genuinely low cell (mode-
+// independent). Same ownership and tearing argument as the ADOW grids above.
+// Zero until the first sweep completes; 0xFFFF on a cell whose IC PEC-failed.
+extern "C" std::uint16_t g_adc_xcheck_mv[ams::config::BmsModuleCount *
+                                         ams::config::CellsPerModule] = {};
+
 namespace {
 
 // Balancing-update counters: cycles since last WRCFGA + total
@@ -112,6 +120,11 @@ namespace {
 volatile std::uint32_t g_balance_cycles_total  = 0;
 volatile std::uint32_t g_balance_cycles_active = 0;
 std::uint32_t          s_volt_poll_count       = 0;
+
+// Polls since the last ADC-mode cross-check sweep. Separate from
+// s_volt_poll_count, which is the balance-update counter and wraps every
+// BalanceUpdatePolls -- reusing it would fire the sweep on that cadence instead.
+std::uint32_t          s_xcheck_poll_count     = 0;
 
 // Last CFGA payload actually written to the chain, and whether it asserted any
 // DCC bit. The mask is only recomputed every BalanceUpdatePolls (800 ms) but
@@ -433,6 +446,59 @@ void capture_adow_diag() noexcept {
     }
 }
 
+// BENCH DIAGNOSTIC (config::AdcModeCrossCheck): re-measure every cell in a second
+// ADC mode and stash it for the pit-diag dump.
+//
+// Reads through the SAME taps and the same register groups as the live poll; only
+// the conversion time differs. That is the whole point -- a tap with excess series
+// resistance has not settled when a fast conversion samples it, so it reads low
+// there and true in a slow one, while a genuinely discharged cell reads the same
+// in both. See config::AdcModeCrossCheck for why sum-of-cells cannot answer this.
+//
+// Writes only the diagnostic grid: BmsService state is untouched, so the snapshot
+// feeding the safety predicates never sees a cross-check reading. Caller must have
+// quiesced balancing -- bleed current displaces this measurement exactly as it
+// displaces the live one, and a displaced comparison would invent a tap fault.
+void capture_adc_mode_crosscheck() noexcept {
+    using namespace ams;
+    constexpr std::size_t GroupBytes = config::LtcChainLength * 8u;
+    auto& bus = ltc6820::Bus::default_instance();
+
+    const auto adcv = ltc6811::pack_command(
+        ltc6811::adcv_cmd(static_cast<ltc6811::AdcMode>(config::AdcXCheckAdcMode),
+                          /*discharge_permit=*/false,
+                          ltc6811::CellSel::All));
+    if (!bus.send_command(adcv.data())) {
+        ++g_ltc_spi_err_count;
+        return;
+    }
+    osDelay(config::AdcXCheckSettleMs);
+
+    // Same stale-MOSI warm-up the live poll needs: the settling delay leaves MOSI
+    // idle long enough for a CS-edge-resyncing slave to sample a stray HIGH as the
+    // first bit of RDCVA. See attempt_voltage_poll step 3.
+    const auto rdcfga = ltc6811::pack_command(ltc6811::CmdRDCFGA);
+    std::uint8_t warmup_reply[8 * config::LtcChainLength];
+    if (!bus.read_register_group(rdcfga.data(), warmup_reply, sizeof(warmup_reply))) {
+        ++g_ltc_spi_err_count;
+        return;
+    }
+
+    static constexpr std::uint16_t RdcvCmds[4] = {
+        ltc6811::CmdRDCVA, ltc6811::CmdRDCVB,
+        ltc6811::CmdRDCVC, ltc6811::CmdRDCVD,
+    };
+    std::uint8_t reply[4 * GroupBytes] = {};
+    for (std::uint8_t g = 0; g < 4; ++g) {
+        const auto cmd = ltc6811::pack_command(RdcvCmds[g]);
+        if (!bus.read_register_group(cmd.data(), reply + g * GroupBytes, GroupBytes)) {
+            ++g_ltc_spi_err_count;
+            return;   // partial reply -> leave the previous sweep in place
+        }
+    }
+    BmsService::capture_cell_raw(reply, sizeof reply, g_adc_xcheck_mv);
+}
+
 void run_voltage_poll() {
     using namespace ams;
 
@@ -472,6 +538,16 @@ void run_voltage_poll() {
     if (config::CellOpenWireCheck) attempt_open_wire_poll();
     // Bench-only raw ADOW dump (dead-code-eliminated when AdowRawDiag is false).
     if (config::AdowRawDiag) capture_adow_diag();
+
+    // 1c. Bench-only second-mode sweep, on its own slow cadence because a filtered
+    //     conversion costs ~AdcXCheckSettleMs. Runs AFTER the live read so module
+    //     freshness is never delayed by it -- only the next poll starts late, which
+    //     the AdcXCheckPollBodyBudgetMs static_assert bounds against BmsStaleMs.
+    //     Still inside the quiesce window, same reason as the ADOW scan.
+    if (config::AdcModeCrossCheck && s_xcheck_poll_count++ == 0u) {
+        capture_adc_mode_crosscheck();
+    }
+    if (s_xcheck_poll_count >= config::AdcXCheckPolls) s_xcheck_poll_count = 0;
 
     // 2. Resume bleeding. Done here rather than waiting for the 1 Hz balance
     //    update, which would otherwise leave discharge off for three polls out
