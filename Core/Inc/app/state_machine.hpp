@@ -118,6 +118,38 @@ struct Output {
     return bus_mV * 100u >= pack_mV * 95u;
 }
 
+// Re-arm gate: may the FSM start another precharge?
+//
+// Two independent reasons to refuse, because they fail differently:
+//
+//   discharge_engaged  -- the ECU says the bleed resistor is CONNECTED across
+//     the link. Closing a contactor now would put pack current through a
+//     resistor rated for transient duty. This is the hard interlock and it is
+//     honoured whatever the voltage reads.
+//
+//   dc_bus above DcBusDischargedV -- the link is still charged, so a precharge
+//     would be a no-op: the 95 % completion criterion is already satisfied on
+//     entry and the resistor never does anything. Only enforced once the ECU has
+//     shown it speaks the discharge protocol (ecu_discharge_capable), because an
+//     ECU that cannot drain a stranded link cannot clear this block either --
+//     enforcing it against older firmware would brick the car rather than
+//     protect it.
+//
+// Stale 0x100 blocks on the second reason but not the first: an unknown voltage
+// is not a discharged one, while an unknown bleed state is better handled by the
+// AMS's normal fault path than by refusing to arm forever.
+//
+// Charger is exempt -- the inverter is not in the charge loop and dc_bus_V is
+// VCU-only, absent during a charge, so gating it would make Charger unarmable.
+[[nodiscard]] inline bool rearm_permitted(const VehicleState& veh,
+                                          bool dc_bus_fresh,
+                                          Mode mode_locked) noexcept {
+    if (mode_locked == Mode::Charger) return true;
+    if (veh.discharge_engaged) return false;
+    if (!veh.ecu_discharge_capable) return true;
+    return dc_bus_fresh && veh.dc_bus_V <= config::DcBusDischargedV;
+}
+
 // DC-bus collapse detector. True when the VCU-measured bus has
 // fallen well below the pack voltage -- i.e. the AIRs opened externally
 // (a cockpit SDC shutdown the AMS can't sense) while the FSM still thinks
@@ -205,7 +237,24 @@ struct Output {
         // proceed; the resistor never enters the charge loop. Car keeps the
         // resistor precharge to soft-charge the inverter DC-link. Undecided
         // (shouldn't reach here) falls back to the conservative resistor path.
+        //
+        // Car additionally waits for the DC link to be drained. Opening the
+        // shutdown circuit de-energises the discharge relay so the link starts
+        // bleeding down, but closing it again re-energises the relay and the
+        // discharge stops part-way -- so what is left on the link is not
+        // something the AMS can predict from how long ago the SDC was cycled.
+        // The ECU secures an interrupted discharge and reports the bleed state;
+        // this waits for it. See rearm_permitted.
+        //
+        // Holding in Start rather than latching: the driver waits out the
+        // discharge and presses again, no reset. The press IS consumed on a
+        // blocked attempt, deliberately -- carrying it would let a press made
+        // while the link was live arm the car by itself seconds later, when the
+        // discharge finally completes and nobody is expecting it.
         if (in.tsms && in.dash_chg_edge) {
+            if (!rearm_permitted(in.vehicle, in.dc_bus_fresh, in.mode_locked)) {
+                return { State::Start, 0u };
+            }
             const std::uint32_t connect =
                 (in.mode_locked == Mode::Charger)
                     ? events::safety::CloseAirN

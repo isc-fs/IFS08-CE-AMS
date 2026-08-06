@@ -479,6 +479,10 @@ inline constexpr std::uint8_t  BalanceModulesDefaultMask = AllModulesMask;  // 0
 //
 // 0x130 (SOC) deferred: no SOC estimator in firmware yet.
 inline constexpr std::uint32_t AcuTxOkPrechargeId    = 0x020;  // 1 byte: 1 if FSM in Run|Charge
+// 0x021 ACU_discharge_interlock: the two facts only the AMS can observe (FSM in
+// Start, SDC complete), published so the ECU can decide whether to secure an
+// interrupted DC-link discharge. See acu_discharge_interlock.def.
+inline constexpr std::uint32_t AcuTxDischargeInterlockId = 0x021;
 inline constexpr std::uint32_t AcuTxMinVoltId        = 0x12C;  // BE u16 mV (pack-wide cell min)
 inline constexpr std::uint32_t AcuTxSocId            = 0x130;  // 1 byte SoC % [DEFERRED -- no estimator yet; ID reserved + stub encoder available, not scheduled for TX]
 inline constexpr std::uint32_t AcuTxVminModuleAId    = 0x131;  // BE u16 mV x3 (modules 0..2)
@@ -596,6 +600,23 @@ inline constexpr float         PrechargeRatio   = 0.95f;
 // reclose damaging); the debounce rejects a single anomalous 0x100 frame.
 inline constexpr std::uint32_t BusCollapsePercent     = 50;  // COMMISSION (% of pack)
 inline constexpr std::uint16_t BusCollapseConfirmTicks = 20;  // COMMISSION (~200 ms @ 10 ms)
+
+// Re-arm gate: the DC link must be at or below this before the FSM will leave
+// Start for another precharge.
+//
+// Opening the shutdown circuit de-energises the discharge relay (NC) so the
+// bleed connects and the link drains; closing it again re-energises the relay
+// and the discharge STOPS part-way. Arming into what is left is a no-op
+// precharge: dc_bus >= 95 % of pack is already true on entry, so the FSM leaves
+// Precharge on the next step and the resistor never carries meaningful current.
+// That 95 % check is the only evidence the AMS has that the precharge resistor
+// and contactor work; satisfied by residual charge it proves nothing.
+//
+// Absolute volts, not a fraction of pack: the number is the touch-safe DC limit
+// the discharge is required to reach, and it does not scale with pack voltage.
+// Must sit at or above the ECU's own release threshold, or the two disagree
+// about the boundary and the AMS waits on a link the ECU has stopped draining.
+inline constexpr std::uint16_t DcBusDischargedV       = 60;   // COMMISSION (rulebook)
 
 // Current sensor calibration. Pack current measured via a Bourns
 // SSA-2-250A shunt sensor (datasheet: pcbs/ssa-2.pdf). The sensor is a

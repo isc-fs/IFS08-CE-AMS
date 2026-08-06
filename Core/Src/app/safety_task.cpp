@@ -60,6 +60,13 @@ extern "C" volatile std::uint8_t g_state_telemetry = 0;
 // the fsm::Mode enum (0=Undecided, 1=Car, 2=Charger).
 extern "C" volatile std::uint8_t g_mode_locked_telemetry = 0;
 
+// TSMS (PF9) level mirror. The shutdown circuit is complete when this is 1 --
+// any open shutdown element pulls it low -- so it is also the AMS's view of
+// whether the discharge relay is energised and the bleed disconnected. Published
+// on 0x021 so the ECU, which cannot see the SDC, can decide whether to secure an
+// interrupted discharge. Same single-writer 8-bit contract as g_state_telemetry.
+extern "C" volatile std::uint8_t g_tsms_telemetry = 0;
+
 // Telemetry TX failure counter, surfaced via a future diag frame.
 extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 
@@ -190,6 +197,7 @@ void SafetyTask::run() noexcept {
         // carrier. Polled every 10 ms; the 20 ms FSM step consumes
         // the latest reading.
         const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
+        g_tsms_telemetry = tsms ? 1u : 0u;
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
 
         // DASH_CHG rising-edge detect + latch. dash_chg stays the

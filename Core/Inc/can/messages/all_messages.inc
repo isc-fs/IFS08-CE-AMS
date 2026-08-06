@@ -21,6 +21,7 @@
 #include "ams_fw_health.def"
 
 #include "acu_ok_precharge.def"
+#include "acu_discharge_interlock.def"
 #include "acu_v_cell_min.def"
 #include "acu_vmin_module_a.def"
 #include "acu_vmin_module_b.def"

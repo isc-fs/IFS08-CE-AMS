@@ -183,7 +183,7 @@ IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
 `acu_can_task.cpp`):
 
 - 50 ms — `0x135` currents
-- 100 ms — `0x020`, `0x12C`, `0x131..0x134`
+- 100 ms — `0x020`, `0x021`, `0x12C`, `0x131..0x134`
 - 250 ms — `0x136..0x137`, `0x130`
 
 `0x130` (SOC) — pack state of charge, 1 byte, `0..100 %`. **`0xFF` is the
@@ -212,6 +212,41 @@ predicate reads it.
 | Byte | Field | Notes |
 |:---:|---|---|
 | 0 | `ok_precharge` | `1` iff FSM state ∈ {Run, Charge} (AIRs closed and ready). `0` otherwise. |
+
+### `0x021` — discharge_interlock
+
+| Field | Value |
+|---|---|
+| Direction | TX (AMS → ECU) |
+| Bus | FDCAN1 |
+| ID type | Standard |
+| DLC | 1 |
+| Period | 100 ms |
+
+| Bit | Field | Notes |
+|---|---|---|
+| 0 | `fsm_in_start` | FSM is in `Start` — AIR−, AIR+ and precharge are all commanded open, so any voltage on the link is left over rather than something the AMS is putting there |
+| 1 | `tsms` | Shutdown circuit is complete (PF9). Any open shutdown element pulls it low, so `1` means the discharge relay is energised and the bleed is **disconnected** |
+
+The two facts only the AMS can observe, so the ECU can decide whether to secure
+an interrupted DC-link discharge.
+
+Opening the shutdown circuit de-energises the discharge relay (NC) so the bleed
+connects and the link drains; closing it again re-energises the relay and the
+discharge **stops part-way**, leaving the link stranded — nothing drains it
+further while the SDC stays closed. The AMS cannot fix that: the discharge relay
+has no software control, and the AMS's own leg of that loop (`AMS_OK`) latches in
+hardware, so it can never be driven low temporarily. The ECU can, through a
+normally-closed relay in series with the discharge relay coil.
+
+The ECU secures on `fsm_in_start AND tsms AND (its own dc_bus > threshold)`,
+**latched** on entry and released on its own measurement falling. Latching
+matters: securing the discharge connects the bleed, which is what `tsms` reports
+on — evaluate it continuously and the action falsifies its own trigger.
+
+These are raw observations, not a request. The ECU owns the decision because it
+owns the measurement that decides it; sending a pre-computed request would put a
+stale CAN value in the middle of that judgement.
 
 ### `0x12C` — minimum cell voltage (pack-wide)
 
@@ -507,6 +542,20 @@ Source: `CPU_MOD::parse()` `class_cpu.cpp:65–68`,
 
 **Refactor decision:** enforce a 200 ms freshness on `DC_BUS`. Stale
 voltage during precharge is a real fault.
+
+> **Byte 2 bit 0 — `discharge_engaged`.** The ECU's report that the bleed
+> resistor is **connected** across the link, either because the shutdown circuit
+> is open or because the ECU is securing an interrupted discharge (see `0x021`).
+> The AMS closes no contactor while it is set: with the SDC closed and the bleed
+> connected, closing an AIR puts pack current through a resistor rated for
+> transient duty.
+>
+> Byte 2 is **optional on the wire**. A VCU that predates it sends DLC 2 and the
+> AMS reads the bit as 0, so older firmware behaves exactly as before instead of
+> blocking the car. The AMS latches "this ECU speaks the discharge protocol" the
+> first time it sees DLC ≥ 3, and only then enforces its own `dc_bus`-based
+> re-arm block — there is no point refusing to arm over a stranded link when the
+> other end has no way to drain it.
 
 ### `0x101` — operator charge-mode request (#305)
 
