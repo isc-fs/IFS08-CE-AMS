@@ -1,0 +1,41 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x021  ACU_discharge_interlock -- the two facts only the AMS can observe,
+ * published so the ECU can decide whether to secure the DC-link discharge.
+ *
+ * The rare case this exists for: the shutdown circuit is opened and closed again
+ * before the link has drained. Opening it de-energises the discharge relay (NC)
+ * so the bleed connects and the link starts falling; closing it re-energises the
+ * relay, the bleed disconnects, and the discharge STOPS part-way. The link is
+ * then stranded -- nothing drains it further while the SDC stays closed.
+ *
+ * The AMS cannot fix that. The discharge relay is wired into the SDC with no
+ * software control, and the AMS's own leg of that loop (AMS_OK) latches in
+ * hardware, so it can never be driven low temporarily. The ECU can fix it, via a
+ * normally-closed relay in series with the discharge relay coil -- but the ECU
+ * cannot see either fact below. Hence this frame.
+ *
+ * The ECU secures the discharge on:
+ *     fsm_in_start AND tsms AND (its OWN dc_bus measurement > threshold)
+ * latched on entry, released on its own measurement falling. Latching matters:
+ * securing the discharge connects the bleed, which is what `tsms` reports on --
+ * evaluate it continuously and the action falsifies its own trigger.
+ *
+ * Both fields are raw observations, not a request. The ECU owns the decision
+ * because it owns the measurement that decides it; sending a pre-computed
+ * request would put a stale CAN value in the middle of that judgement.
+ *
+ * Field macro args (bits): (name, ctype, abs_bit_offset, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(ACU_discharge_interlock, 0x021, 1, "AMS", 100)
+    /* FSM is in Start: AIR-, AIR+ and precharge are ALL commanded open, so any
+     * voltage on the link is left over rather than something the AMS is putting
+     * there. Excludes Precharge/Transition, where the link is deliberately
+     * rising through the resistor and a forced discharge would fight it. */
+    FIELD_LE_BITS (fsm_in_start, uint8_t, 0, 1, 1, 0, "bool")
+    /* Shutdown circuit is complete (PF9). Any open shutdown element pulls this
+     * low, so tsms=1 means the discharge relay is energised and the bleed is
+     * DISCONNECTED -- i.e. the normal discharge path is not running. */
+    FIELD_LE_BITS (tsms,         uint8_t, 1, 1, 1, 0, "bool")
+CAN_MSG_END(ACU_discharge_interlock)

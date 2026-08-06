@@ -12,6 +12,7 @@
 //
 //    50 ms: 0x135 currents (i16 deciamps; accu, dcdc)
 //   100 ms: 0x020 ok_precharge
+//           0x021 discharge_interlock (fsm_in_start + tsms, for the ECU)
 //           0x12C v_cell_min (pack-wide min cell mV)
 //           0x131/0x132 vmin_module  (5 modules over two frames)
 //           0x133/0x134 vmax_module
@@ -58,6 +59,9 @@ extern "C" osMessageQueueId_t acu_rx_queueHandle;
 // FSM state mirror maintained by safety_task.cpp; used here for
 // ok_precharge (= 1 iff state in {Run=3, Charge=4}).
 extern "C" volatile std::uint8_t g_state_telemetry;
+// TSMS (PF9) level from SafetyTask: 1 = shutdown circuit complete. Published on
+// 0x021 for the ECU's discharge decision -- see acu_discharge_interlock.def.
+extern "C" volatile std::uint8_t g_tsms_telemetry;
 
 // Pit-diag needs read-only visibility into a handful of locals
 // owned by other TUs. SafetyTask writes g_mode_locked_telemetry on the
@@ -245,6 +249,11 @@ inline void send_or_fail_blocking(std::uint32_t id,
 void tx_ok_precharge() noexcept {
     send_or_fail(ams::config::AcuTxOkPrechargeId,
                  ams::acu_tx::encode_ok_precharge(g_state_telemetry));
+}
+void tx_discharge_interlock() noexcept {
+    send_or_fail(ams::config::AcuTxDischargeInterlockId,
+                 ams::acu_tx::encode_discharge_interlock(
+                     g_state_telemetry, g_tsms_telemetry != 0u));
 }
 void tx_min_voltage(const ams::BmsState& b) noexcept {
     send_or_fail(ams::config::AcuTxMinVoltId,        ams::acu_tx::encode_min_voltage(b));
@@ -600,6 +609,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         }
         if (now2 - last_mid_tx >= ams::config::EcuMidTxMs) {
             tx_ok_precharge();
+            tx_discharge_interlock();
             tx_min_voltage(bms);
             tx_vmin_module_a(bms);
             tx_vmin_module_b(bms);

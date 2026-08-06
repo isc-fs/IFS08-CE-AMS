@@ -26,6 +26,19 @@ namespace ams {
 struct VehicleState {
     std::uint16_t dc_bus_V;          // from 0x100, little-endian bytes 0..1
     std::uint32_t last_dc_bus_tick;
+    // ECU report that the bleed resistor is CONNECTED across the DC link, from
+    // 0x100 byte 2 bit 0. Set while the shutdown circuit is open, and while the
+    // ECU is securing a discharge that the SDC closing again had interrupted.
+    // The AMS must close no contactor while it is set: with the SDC closed and
+    // the bleed connected, closing an AIR puts pack current through a resistor
+    // rated for transient duty.
+    bool          discharge_engaged;
+    // Sticky: an 0x100 with DLC >= 3 has been seen, so this ECU publishes the
+    // discharge state and is able to drain a stranded link. Until then the AMS
+    // does not enforce its own dc_bus re-arm block -- refusing to arm over a
+    // link the other end has no way to drain would brick the car against an
+    // older ECU. Never cleared; a mid-session downgrade is not worth modelling.
+    bool          ecu_discharge_capable;
     // Tick of the last valid (magic-matched) operator charge-mode request
     // frame (ChargeModeReqId). 0 = never seen. SafetyTask reads its
     // freshness at the Start->Precharge mode lock.

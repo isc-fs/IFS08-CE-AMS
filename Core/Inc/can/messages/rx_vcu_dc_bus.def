@@ -1,5 +1,26 @@
 /* SPDX-License-Identifier: proprietary */
-/* 0x100 VCU_dc_bus_heartbeat -- DC bus volts. RX (VCU sends; AMS mode-locks on it). */
-CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 2, "VCU", 100)
-    FIELD_LE (dc_bus_V, uint16_t, 0, 16, 1, 0, "V")
+/*
+ * 0x100 VCU_dc_bus_heartbeat -- DC bus volts + discharge state.
+ * RX (VCU sends; AMS mode-locks on it and gates precharge on it).
+ *
+ * discharge_engaged is the ECU's report that the bleed resistor is CONNECTED
+ * across the link -- either because the shutdown circuit is open, or because the
+ * ECU is securing an interrupted discharge (see acu_discharge_interlock.def).
+ * The AMS must not close a contactor while it is set: with the SDC closed and
+ * the bleed connected, closing an AIR puts pack current through a resistor rated
+ * for transient duty.
+ *
+ * Byte 2 is OPTIONAL on the wire. A VCU that predates it sends DLC 2 and the AMS
+ * reads the bit as 0, so an older ECU behaves exactly as before rather than
+ * blocking the car. The AMS latches "this ECU speaks the discharge protocol"
+ * the first time it sees DLC >= 3, and only enforces its own dc_bus-based block
+ * after that -- there is no point refusing to arm over a stranded link when the
+ * other end has no way to clear it.
+ *
+ * Field macro args (bits): (name, ctype, abs_bit_offset, bit_len, factor, offset, unit)
+ */
+
+CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 3, "VCU", 100)
+    FIELD_LE_BITS (dc_bus_V,          uint16_t,  0, 16, 1, 0, "V")
+    FIELD_LE_BITS (discharge_engaged, uint8_t,  16,  1, 1, 0, "bool")
 CAN_MSG_END(VCU_dc_bus_heartbeat)

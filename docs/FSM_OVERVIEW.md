@@ -300,6 +300,38 @@ return { State::Start, 0u };
 - **Trigger:** TSMS *held* (level) **AND** a DASH_CHG *press* (rising edge), in
   both Car and Charger. The press is edge-detected, so the operator must
   deliberately press — not merely hold a level — to energise.
+- **Car also waits for the DC link to be drained** (`rearm_permitted`). Opening
+  the shutdown circuit de-energises the discharge relay (NC) so the bleed
+  connects and the link drains; closing it again re-energises the relay and the
+  discharge **stops part-way**. What is left is therefore not something the AMS
+  can infer from how long ago the SDC was cycled, so it waits for the ECU's
+  report instead. Two independent reasons to refuse, because they fail
+  differently:
+
+  | reason | why |
+  |---|---|
+  | `discharge_engaged` (`0x100` byte 2 bit 0) | the bleed resistor is **connected**; closing a contactor would put pack current through a part rated for transient duty. Hard interlock, honoured whatever the voltage reads. |
+  | `dc_bus_V > DcBusDischargedV` | the link is still charged, so a precharge would be a **no-op** — the 95 % completion criterion is already true on entry and the resistor never does anything |
+
+  The second is only enforced once `ecu_discharge_capable` latches (an `0x100`
+  with DLC ≥ 3 has been seen). An ECU that predates the protocol can neither
+  report the bleed state nor drain a stranded link, so enforcing it against
+  older firmware would brick the car rather than protect it.
+
+  Blocking **holds in Start**, it does not latch — the driver waits out the
+  discharge and presses again, no reset. The press *is* consumed on a blocked
+  attempt, deliberately: carrying it would let a press made while the link was
+  live arm the car by itself seconds later, when nobody expects it.
+
+  Charger is exempt — the inverter is not in the charge loop and `dc_bus_V` is
+  VCU-only, absent during a charge.
+- **The ECU owns the discharge decision, the AMS owns the two facts it needs.**
+  `0x021 ACU_discharge_interlock` publishes `fsm_in_start` and `tsms` at 100 ms;
+  the ECU combines them with its **own** dc-bus measurement and secures the
+  discharge through a normally-closed relay in series with the discharge relay
+  coil. Raw observations, not a request — the ECU decides because it owns the
+  measurement that decides it, and routing a pre-computed request would put a
+  stale CAN value in the middle of that judgement.
 - **Action (Car):** AIR− closes + Precharge closes → current flows through the
   precharge resistor into the inverter DC link.
 - **Action (Charger):** AIR− closes **only** — the precharge resistor is
@@ -451,7 +483,7 @@ stateDiagram-v2
     boot_check --> Start : ErrorLatch clear
     boot_check --> Error : ErrorLatch set (BKP1R magic survives reset)
 
-    Start --> Precharge : tsms (held) AND dash_chg edge (press) / CloseAirN (+ ClosePrecharge in Car) ; mode locked by SafetyTask
+    Start --> Precharge : tsms (held) AND dash_chg edge (press) AND (Charger OR link drained) / CloseAirN (+ ClosePrecharge in Car) ; mode locked by SafetyTask
 
     Precharge --> Transition : Car: dc_bus >= 95% pack_V ; Charger: fresh 0x101 request / CloseAirP + OpenPrecharge
     Precharge --> Error : now - entry > PrechargeMaxMs (5000)

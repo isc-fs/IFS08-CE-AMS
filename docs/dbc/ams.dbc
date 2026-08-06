@@ -75,6 +75,10 @@ BO_ 1738 AMS_fw_health: 8 AMS
 BO_ 32 ACU_ok_precharge: 1 AMS
  SG_ ok_precharge : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
+BO_ 33 ACU_discharge_interlock: 1 AMS
+ SG_ fsm_in_start : 0|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ tsms : 1|1@1+ (1,0) [0|0] "bool" Vector__XXX
+
 BO_ 300 ACU_v_cell_min: 2 AMS
  SG_ min_cell_mV : 7|16@0+ (1,0) [0|0] "mV" Vector__XXX
 
@@ -183,8 +187,9 @@ BO_ 1739 PIT_balance_health: 8 AMS
 BO_ 2033 PitDiag_ack: 1 AMS
  SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
-BO_ 256 VCU_dc_bus_heartbeat: 2 VCU
+BO_ 256 VCU_dc_bus_heartbeat: 3 VCU
  SG_ dc_bus_V : 0|16@1+ (1,0) [0|0] "V" Vector__XXX
+ SG_ discharge_engaged : 16|1@1+ (1,0) [0|0] "bool" Vector__XXX
 
 BO_ 257 Operator_charge_request: 4 Pit_Tool
  SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
@@ -602,6 +607,7 @@ BA_ "GenMsgCycleTime" BO_ 1186 500;
 BA_ "GenMsgCycleTime" BO_ 1188 100;
 BA_ "GenMsgCycleTime" BO_ 1738 1000;
 BA_ "GenMsgCycleTime" BO_ 32 100;
+BA_ "GenMsgCycleTime" BO_ 33 100;
 BA_ "GenMsgCycleTime" BO_ 300 100;
 BA_ "GenMsgCycleTime" BO_ 305 100;
 BA_ "GenMsgCycleTime" BO_ 306 100;

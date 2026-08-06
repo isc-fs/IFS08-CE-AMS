@@ -438,3 +438,87 @@ extern "C" void test_fsm_charger_precharge_unaffected_by_stale_bus(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
     TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
 }
+
+// ---------------------------------------------------------------------------
+// Re-arm gate. Opening the shutdown circuit de-energises the discharge relay
+// (NC) so the bleed connects; closing it again re-energises the relay and the
+// discharge STOPS part-way. What is left on the link is then not something the
+// AMS can infer, so it waits for the ECU's report instead.
+// ---------------------------------------------------------------------------
+extern "C" void test_fsm_start_blocks_while_bleed_connected(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = true;
+    veh.dc_bus_V = 0;                      // link is down...
+    veh.discharge_engaged = true;          // ...but the bleed is still connected
+
+    // Hard interlock: closing a contactor now would put pack current through a
+    // resistor rated for transient duty. Blocked regardless of the voltage.
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_EQUAL_UINT32(0u, out.safety_flags);
+
+    veh.discharge_engaged = false;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+extern "C" void test_fsm_start_blocks_while_link_charged(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = false;
+
+    // Above threshold -> a precharge here would be a no-op, since the 95 %
+    // completion criterion is already satisfied on entry.
+    veh.dc_bus_V = static_cast<std::uint16_t>(ams::config::DcBusDischargedV + 1u);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+
+    // At the threshold -> arms.
+    veh.dc_bus_V = ams::config::DcBusDischargedV;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+
+    // Stale 0x100 is not a discharged link.
+    in.dc_bus_fresh = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+}
+
+// An ECU that predates the discharge protocol sends 0x100 with DLC 2, so it can
+// neither report the bleed state nor drain a stranded link. Enforcing the
+// voltage block against it would brick the car rather than protect it.
+extern "C" void test_fsm_start_not_blocked_by_older_ecu(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = false;     // never seen DLC >= 3
+    veh.discharge_engaged = false;
+    veh.dc_bus_V = 350;                    // charged, but nothing can clear it
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// Charger is exempt: the inverter is not in the charge loop and dc_bus_V is
+// VCU-only, absent during a charge, so gating it would make Charger unarmable.
+extern "C" void test_fsm_charger_arms_regardless_of_discharge_state(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = true;
+    veh.dc_bus_V = 350;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
