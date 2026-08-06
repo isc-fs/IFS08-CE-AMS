@@ -280,46 +280,9 @@ module_above_i16(const std::int16_t (&per_module)[config::BmsModuleCount],
 // SDC against possibly-unverified inputs -- and (b) no ERROR is latched.
 // SafetyTask calls this every 10 ms tick and drives the pin, so AMS_OK
 // tracks the live latch state and deasserts the instant a fault latches.
-// discharge_hold additionally holds AMS_OK LOW -- see discharge_hold_required.
 [[nodiscard]] inline bool ams_ok_asserted(std::uint32_t now_tick,
-                                          bool error_latched,
-                                          bool discharge_hold = false) noexcept {
-    return (now_tick >= config::SafetyBootGraceMs) && !error_latched &&
-           !discharge_hold;
-}
-
-// Hold the shutdown circuit OPEN while the inverter DC-link is still charged, so
-// the discharge cannot be interrupted.
-//
-// The discharge relay sits in the SDC with no software control: SDC open ->
-// relay de-energised -> discharge path closed -> the link bleeds down. Close the
-// SDC and the relay re-energises and the discharge STOPS. So a driver who resets
-// the shutdown and closes TS before the link has drained freezes it part-way,
-// and it stays there for as long as the SDC is closed.
-//
-// AMS_OK is the AMS's own leg of that loop and sits UPSTREAM of TSMS. Holding it
-// low keeps the loop broken, which keeps the discharge relay de-energised, which
-// keeps the link draining -- whatever the driver does with TSMS. It is the only
-// control the AMS has over a relay it cannot address directly.
-//
-// SELF-CLEARING, never latched. AMS_OK deasserting is normally a fault
-// indication that only a reset can clear, and it must not become one here: this
-// releases the instant the link falls below threshold, so the loop restores
-// itself with no operator action beyond waiting. A latched version would leave
-// the car unable to close its shutdown circuit at all.
-//
-// Note the fail-safe polarity is INVERTED relative to the arming gate
-// (fsm::bus_discharged), deliberately. Arming blocks unless the link is PROVEN
-// discharged; this holds only while the link is PROVEN charged. Both fail toward
-// "do not energise" -- but if a stale reading held the SDC open, a VCU that is
-// merely slow to boot would leave the car permanently unable to start.
-//
-// Start only. In Precharge / Transition / Run / Charge the link is charged
-// because the AMS put it there, and AMS_OK must stay asserted.
-[[nodiscard]] inline bool discharge_hold_required(bool fsm_in_start,
-                                                  std::uint16_t dc_bus_V,
-                                                  bool dc_bus_fresh) noexcept {
-    return fsm_in_start && dc_bus_fresh && dc_bus_V > config::DcBusDischargedV;
+                                          bool error_latched) noexcept {
+    return (now_tick >= config::SafetyBootGraceMs) && !error_latched;
 }
 
 // The cell voltage / temperature RANGE reasons -- the slow-by-nature

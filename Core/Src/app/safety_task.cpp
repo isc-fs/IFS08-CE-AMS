@@ -70,13 +70,6 @@ extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 extern "C" volatile std::uint8_t g_fault_reason_telemetry = 0;
 extern "C" volatile std::uint8_t g_fault_detail_telemetry = 0;
 
-// 1 while AMS_OK is being held low to keep the DC-link discharging (see
-// safety::discharge_hold_required). Without this the car simply refuses to arm
-// and the start button looks dead -- this is what tells the operator to wait
-// rather than go hunting for a fault. Not a fault itself: it clears on its own
-// once the link drains.
-extern "C" volatile std::uint8_t g_discharge_hold_telemetry = 0;
-
 namespace ams {
 
 SafetyTask& SafetyTask::instance() noexcept {
@@ -182,15 +175,6 @@ void SafetyTask::run() noexcept {
         const auto bms_snap = BmsService::instance().snapshot();
         const auto cur_snap = CurrentService::instance().snapshot();
         const auto veh_snap = VehicleService::instance().snapshot();
-
-        // VCU 0x100 freshness, computed once per tick and used by both the FSM
-        // DC-bus criteria and the AMS_OK discharge hold. Held to VcuStaleMs, not
-        // the looser VcuFreshMs used for the mode lock: these gate closing AIR+
-        // and breaking the SDC, so the same staleness that raises VcuStale must
-        // also make dc_bus_V unreadable. A never-seen VCU (tick 0) is not fresh.
-        const bool dc_bus_fresh =
-            veh_snap.last_dc_bus_tick != 0u &&
-            (now - veh_snap.last_dc_bus_tick) <= config::VcuStaleMs;
 
         // Operator-facing GPIO inputs: TSMS (side-of-car external
         // switch, PF9) and DASH_CHG (cockpit dashboard / charger
@@ -339,7 +323,13 @@ void SafetyTask::run() noexcept {
                     // tick), but it keeps the FSM's Error backstop honest.
                     predicate_fault,
                     bus_collapsed,   // debounced bus-collapse decision
-                    dc_bus_fresh,
+                    // 0x100 freshness for the two DC-bus criteria. Held to
+                    // VcuStaleMs, not the looser VcuFreshMs used for the mode
+                    // lock: these criteria gate closing AIR+, so the same
+                    // staleness that raises VcuStale must also make them
+                    // unreadable. A never-seen VCU (tick 0) is not fresh.
+                    veh_snap.last_dc_bus_tick != 0u &&
+                        (now - veh_snap.last_dc_bus_tick) <= config::VcuStaleMs,
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);
@@ -391,19 +381,12 @@ void SafetyTask::run() noexcept {
         // ---------------- AMS_OK / SDC enable (every 10 ms) ----------------
         // Drive PB4 to track the live safety state: HIGH only once the
         // boot grace has passed AND no ERROR is latched; LOW during grace
-        // (predicates suppressed) and LOW the moment a fault latches.
-        // error_latched_ already reflects this tick's fault/FSM decision above.
-        //
-        // Also held LOW while the DC-link is still discharging in Start. The
-        // discharge relay is wired into the SDC with no software control, so
-        // breaking the loop here is what keeps it de-energised -- and therefore
-        // keeps the link draining -- even if the driver closes TS mid-discharge.
-        // Self-clearing; see safety::discharge_hold_required.
-        const bool discharge_hold = safety::discharge_hold_required(
-            state == fsm::State::Start, veh_snap.dc_bus_V, dc_bus_fresh);
-        g_discharge_hold_telemetry = discharge_hold ? 1u : 0u;
-        Relays::set_ams_ok(
-            safety::ams_ok_asserted(now, error_latched_, discharge_hold));
+        // (predicates suppressed) and LOW the moment a fault latches. The
+        // firmware previously never drove this pin, so the SDC enable was
+        // never asserted in a healthy state and never deasserted on a
+        // fault -- it just decayed from its boot-default level. error_latched_
+        // already reflects this tick's fault/FSM decision above.
+        Relays::set_ams_ok(safety::ams_ok_asserted(now, error_latched_));
 
         // ---------------- Telemetry (every 500 ms, regardless of state) ----------------
         if (now - last_telemetry_tick >= config::TelemetryPeriodMs) {
