@@ -101,7 +101,31 @@ inline constexpr std::int16_t  CellOverTempC  =    60;  // over-temp °C    -- C
 // unaffected. Flip to true once the mux fix ships to flight and temps are
 // bench-validated end-to-end.
 inline constexpr bool          TempFaultsTrusted = false;
-inline constexpr std::int32_t  CurrentMaxMa   = 60000; // |I| max mA      -- COMMISSION
+// Pack over-current trip. |filtered_mA| above this latches CurrentOverLimit,
+// which opens the AIRs and drops AMS_OK.
+//
+// 185 A is the 6P continuous rating of the cells: 95S6P of VTC6 at 30 A
+// continuous each, so a series element sustains 6 x 30 = 180 A. The sensor is a
+// Bourns SSA-2-250A, so the limit sits inside what the front end can actually
+// measure. 60 A was roughly C/3 -- well under what the pack is rated for and far
+// under a launch, so it would have opened the contactors under full load.
+//
+// There is NO debounce on this check; the smoothing comes entirely from the
+// filter feeding it. filtered_mA is a first-order IIR with CurrentFilterShift=4
+// at CurrentPeriodMs=50, i.e. tau ~ 800 ms, so the trip time is
+// tau*ln(I/(I-limit)):
+//
+//     200 A -> 2.1 s     250 A -> 1.1 s     300 A -> 0.8 s     400 A -> 0.5 s
+//
+// A brief inrush therefore rides through while a sustained overload still opens
+// the SDC in about a second. Note the corollary: currents between the cell
+// rating and this limit never trip at all, by design -- protection against a
+// slow overload is the cell temperature path, not this.
+//
+// COMMISSION: derived from the cell datasheet, NOT measured against the car's
+// real draw or validated against the contactor and fuse ratings. Confirm the
+// inverter peak and the SDC element ratings before trusting it.
+inline constexpr std::int32_t  CurrentMaxMa   = 185000; // 6P continuous -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
 inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
