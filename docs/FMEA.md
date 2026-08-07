@@ -33,7 +33,7 @@ engineering judgement and says so:
 | [LATCH-1](#latch-1--every-backup-register-write-is-unverified--open) | Every `ErrorLatch` write is fire-and-forget; the read is an exact-match compare. |
 | [LATCH-3](#latch-3--ams_hil_clear_error_latch-has-no-build-system-guard--open) | The bench latch-wipe flag has no build-system guard against reaching flight. |
 | [RELAY-2](#relay-2--a-welded-precharge-contactor-is-invisible-to-the-swap-check--open) | The contactor-swap check reads bus voltage, so a welded precharge contactor passes it. |
-| [DISCHARGE-1](#discharge-1--the-ecu-half-does-not-exist-yet--open) | **The ECU half of the discharge interlock is not implemented; the AMS side changes nothing today.** |
+| [DISCHARGE-1](#discharge-1--both-halves-exist-the-pairing-is-unproven--open) | **Both halves of the discharge interlock now exist, but no bench has run them on one bus.** |
 | [BALANCE-1](#balance-1--a-failed-quiesce-corrupts-the-readings-the-selector-ranks--open) | A failed balance quiesce feeds bleed-displaced cell voltages to the safety predicates and the open-wire scan. |
 | [BALANCE-3](#balance-3--board-temperature-in-a-sealed-box-is-unmeasured--open) | Balance-board temperature in a sealed accumulator has never been measured. |
 | [BMS-2](#bms-2--open-wire-detection-covers-interior-conductors-only--open) | Open-wire detection is live, but the endpoint conductors are bench-unvalidated. |
@@ -412,7 +412,7 @@ caught by `VcuStale` — so it has no race to lose.
 
 The AMS's leg of the shutdown circuit is a **self-holding relay (K5) plus an
 `RST_BMS` button the driver cannot reach** — recorded in
-`docs/ARCHITECTURE.md` §8 and `docs/CAN_MAP.md`. This is a hardware fact, not
+`docs/ARCHITECTURE.md` §1 invariant 8 and `docs/CAN_MAP.md`. This is a hardware fact, not
 visible anywhere in the firmware, and it constrains the firmware absolutely.
 
 Once `Relays::set_ams_ok(false)` runs, the loop stays open until somebody

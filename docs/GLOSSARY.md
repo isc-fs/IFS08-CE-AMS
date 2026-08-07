@@ -100,12 +100,15 @@ latches `ecu_discharge_capable` true, and only then does the AMS enforce its
 own voltage-based block — refusing to arm over a link the other end has no way
 to drain would brick the car rather than protect it.
 
-**Status, honestly:** the AMS half is complete and unit-tested. The ECU half
-lives in a different repository and is **not** verifiable from here. In this
-repo nothing ever sets `discharge_engaged`, so until an ECU ships that sends
-DLC ≥ 3 on `0x100`, `ecu_discharge_capable` stays false and `rearm_permitted`
-always returns true — the interlock is present but inert. Do not treat it as
-live protection until you have watched byte 2 on a real bus.
+**Status, honestly:** both halves now exist. The AMS half is complete and
+unit-tested; the ECU half lives in a different repository (`IFS08-CE-ECU`),
+is implemented on its `dev` branch, and is **not** verifiable from here.
+Nothing in this repo ever sets `discharge_engaged` — it arrives on the wire or
+it does not. So the interlock is live only against an ECU that actually sends
+DLC ≥ 3 on `0x100`; against a shorter frame `ecu_discharge_capable` stays false
+and `rearm_permitted` always returns true, which is the inert case. The two
+halves have never been run on one bus. Do not treat this as live protection
+until you have watched byte 2 on a real bus.
 
 ## The state machine
 

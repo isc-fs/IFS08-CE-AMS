@@ -15,11 +15,12 @@
 // CubeMX-generated MX_GPIO_Init drives them to PIN_RESET (open / SDC
 // disabled) BEFORE configuring them as outputs, so the pack is
 // electrically isolated for the entire window between reset and the
-// first task running.  See docs/ARCHITECTURE.md §1 invariant 2 / §9.
+// first task running.  See docs/ARCHITECTURE.md §1 invariant 2 / §6
+// (boot sequence).
 //
 // API is intentionally minimal and stateless. The only "policy" lives
 // in SafetyTask -- this is just the bit-banging primitive. Per
-// ARCHITECTURE.md §5, ONLY SafetyTask (and App_InitTask during boot)
+// ARCHITECTURE.md §7, ONLY SafetyTask (and App_InitTask during boot)
 // may call the close_* helpers; the FSM's relay-action bitmask is
 // applied inline by SafetyTask in the same iteration it ran.
 

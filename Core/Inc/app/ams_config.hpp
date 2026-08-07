@@ -12,7 +12,7 @@
 namespace ams::config {
 
 // ---------------------------------------------------------------------------
-// Pack thresholds (FS rules). See docs/ARCHITECTURE.md §6 (SafetyTask)
+// Pack thresholds (FS rules). See docs/ARCHITECTURE.md §3 (task architecture)
 // and docs/COMMISSIONING.md §1 for the procedure to finalise these.
 //
 // COMMISSION: these are placeholder defaults. Finalise per cell
@@ -197,7 +197,7 @@ inline constexpr std::uint32_t PrechargeMaxMs = 5000;  // COMMISSION (resistor t
 inline constexpr std::uint8_t  AllModulesMask = 0x1F;  // 5 modules present
 
 // ---------------------------------------------------------------------------
-// Task periods (ms). See docs/ARCHITECTURE.md §2 task table.
+// Task periods (ms). See docs/ARCHITECTURE.md §3 task table.
 // ---------------------------------------------------------------------------
 
 inline constexpr std::uint32_t SafetyPeriodMs    =  10;

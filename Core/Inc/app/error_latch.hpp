@@ -26,7 +26,7 @@
 // deliberate power-cycle is treated as the manual reset, and a
 // persistent fault re-latches on the next post-grace evaluation anyway.
 // Do NOT assume this flag survives a power-off. See docs/ARCHITECTURE.md
-// §1 invariant 5 and §9 power-up.
+// §1 invariant 5 and §6 power-up.
 
 #pragma once
 
