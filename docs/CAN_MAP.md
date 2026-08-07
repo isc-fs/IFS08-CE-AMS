@@ -1,732 +1,925 @@
 # AMS CAN map
 
-Source-of-truth for the wire format that the firmware emits + consumes
-on the **accumulator bus (FDCAN1)**. The "BMS slave bus" sections
-further down are historical archaeology — see the note below.
+The wire format the AMS firmware emits and consumes on **FDCAN1**, the only
+CAN peripheral the application uses.
 
----
+## Read this first: where the truth lives
 
-## Bus assignment
+The byte layouts are **code-first**. Each message is declared once, in a
+`.def` file under [`Core/Inc/can/messages/`](../Core/Inc/can/messages/), using
+the macro DSL in [`can_dsl.hpp`](../Core/Inc/can/can_dsl.hpp). From that single
+declaration `can_codecs.hpp` mechanically generates, in five preprocessor
+passes: the typed struct, the firmware encoder, the firmware decoder, a runtime
+descriptor table, and a compile-time bit-overlap `static_assert`. The DBC in
+`docs/dbc/ams.dbc` is generated from the *same* descriptors by
+`tools/dbc_dump.cpp`, and CI regenerates and diffs it.
 
-**Bit rate: 500 kbps** (classic CAN, 68.75 % sample point — FDCAN kernel
-clock 24 MHz, nominal prescaler 3, Tseg1 10, Tseg2 5, SJW 1). The 1 Mbps
-bump (#338) was **reverted** (#351): on real hardware the bus ran near its
-signal-integrity margin (~7 errors/5 min vs ≈0 at 500 k) and a mid-flash
-bit error bricked chips via stm32-can-bootloader#166; doubling the bit time
-restores the margin. The whole bus — VCU, ECU, charger, and the
-**bootloader** — must run at 500 kbps in lockstep. No CAN-FD / bit-rate
-switching (all frames classic).
+So the ordering of authority is:
 
-| Bus | Role | Frame format | Filter |
-|---|---|---|---|
-| **FDCAN1** | Accumulator / vehicle / telemetry / bootloader-trigger | Standard only (extended rejected at HW filter since #236) | Accept all unmatched standard into FIFO0; reject extended; reject remote |
+1. `Core/Inc/can/messages/*.def` — the layout. Change here, everything follows.
+2. `Core/Inc/can/can_codecs.hpp` — the array-of-frames families (`ALL_ARRAYS`),
+   which have no `.def` yet.
+3. `Core/Inc/app/ams_config.hpp` — IDs, cadences, magics, DLCs.
+4. This document — prose, reasoning, and the parts that are not in any of the
+   above (why a frame exists, what is untested).
 
-**The app is FDCAN1-only.** FDCAN2 was dropped from the AMS CubeMX
-project in #388 (`a885bf5`) — there is no `MX_FDCAN2_Init` and no
-`hfdcan2` handle; the sole residue is the PB13 pin still muxed to
-`GPIO_AF9_FDCAN2` (unused). The in-band reboot trigger (`0x002`) rides on
-FDCAN1 alongside everything else (see below). The
-`isc-fs/stm32-can-bootloader` is a **separate sector-0 image** that brings
-up its own CAN peripheral from scratch after the magic-reset jump — the
-AMS app does not leave any peripheral configured for it.
+If this page and a `.def` disagree, the `.def` is right and this page is a bug.
 
----
-
-> **DEPRECATED in v1.2.0 (LTC6811-1 isoSPI).** The five BMS modules
-> no longer talk to the AMS over FDCAN2 — they sit on a daisy-chained
-> isoSPI link driven by an LTC6820 master and read via the LTC6811-1
-> register groups. The legacy on-MCU surface (`BmsService::update_from_frame`
-> + `BmsRxTask`) was retired in #73. New code goes through
-> `BmsService::update_from_ltc_response` and the wire format is
-> documented in `docs/BMS_LTC6811.md` (#75). The sections marked
-> `[LEGACY]` below are kept verbatim for archaeology and for firmware
-> running on legacy carriers; nothing in the current build emits or
-> consumes those frames.
-
-## Module addressing — BMS slaves (5 modules) [LEGACY]
-
-Each BMS slave has its own CANID. **All response and request IDs for a
-given module are offsets from that module's CANID**, not from a single
-global base:
-
-```
-CANID(m)        = 0x12C + m * 0x1E      (m = 0..4)
-voltage poll TX = CANID(m)              -- offset 0
-voltage resp RX = CANID(m) + 1..5       -- 5 frames per module
-temp poll    TX = CANID(m) + 20         -- offset 20
-temp resp    RX = CANID(m) + 21..25     -- 5 frames per module
+```bash
+# Regenerate the DBC after any wire-format change (CI enforces the diff).
+c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump && /tmp/dbc_dump > docs/dbc/ams.dbc
 ```
 
-| Module | CANID | Voltage resp | Temp poll TX | Temp resp |
-|---|---|---|---|---|
-| 0 | 0x12C | 0x12D – 0x131 | 0x140 | **0x141 – 0x145** |
-| 1 | 0x14A | 0x14B – 0x14F | 0x15E | **0x15F – 0x163** |
-| 2 | 0x168 | 0x169 – 0x16D | 0x17C | **0x17D – 0x181** |
-| 3 | 0x186 | 0x187 – 0x18B | 0x19A | **0x19B – 0x19F** |
-| 4 | 0x1A4 | 0x1A5 – 0x1A9 | 0x1B8 | **0x1B9 – 0x1BD** |
-
-> **Corrected 2026-05-11.** An earlier revision of this document put
-> the temperature responses at `0x14D + m * 0x1E` (a fixed global
-> base). That's wrong: it lands `0x21` above each module's CANID,
-> well outside the legacy guard `id > CANID && id < CANID + 30`.
-> Caught by unit tests in fix/3-unit-tests against the actual legacy
-> parser at `isc-fs/IFS08-CE/AMS/Core/Src/class_bms.cpp:121-122`.
-
-Module index of an incoming frame is recovered by walking the 5 CANIDs
-and matching `id > CANID(m) && id < CANID(m) + 30`. Inter-module ranges
-abut (module n ends at `CANID + 30` = module n+1's CANID) so a single
-match is always unambiguous.
+The generated DBC is deliberately lean: `BO_`/`SG_` rows plus
+`GenMsgCycleTime`, and **no `VAL_` enum tables and no `CM_` comments**
+(`dbc_dump.cpp` says so explicitly). The enum meanings — FSM state, mode,
+fault reason — live only here and in the headers. Do not expect a DBC importer
+to name them for you.
 
 ---
 
-## TX — AMS to BMS slaves (FDCAN2)
+## Bus
 
-### `0x12C + 0x1E·m` — voltage poll / balancing command
+**500 kbps classic CAN, sample point 68.75 %.** Derived, not asserted: FDCAN
+kernel clock is HSE = 24 MHz (`stm32h7xx_hal_msp.c` selects
+`RCC_FDCANCLKSOURCE_HSE`; `HSE_VALUE` is 24 000 000 in `stm32h7xx_hal_conf.h`),
+`NominalPrescaler` 3, `NominalTimeSeg1` 10, `NominalTimeSeg2` 5, `SJW` 1
+(`main.c` `MX_FDCAN1_Init`). One bit = 1 + 10 + 5 = 16 tq; 24 MHz / 3 / 16 =
+500 kbps; sample point = 11/16 = 68.75 %.
 
-| Field | Value |
+The bit rate is **not** an AMS-local choice. Every node on this bus — VCU, ECU,
+charger tooling — plus the `isc-fs/stm32-can-bootloader` sector-0 image must
+agree, and the bootloader's rate is compiled in. Raising it is a coordinated
+change across repositories, and a bit error during a flash write bricks the
+node. (The team's recorded reason for staying at 500 k is a bench-measured
+error rate at 1 Mbps near the signal-integrity margin. That measurement is not
+reproducible from this tree — treat it as a lab observation, not a datum.)
+
+`FrameFormat = FDCAN_FRAME_CLASSIC`, `BitRateSwitch = FDCAN_BRS_OFF` on every
+TX. **No CAN-FD, no bit-rate switching, ever.**
+
+| | |
 |---|---|
-| Direction | TX (AMS → BMS[m]) |
-| Bus | FDCAN2 |
-| ID type | Standard |
-| DLC | 2 |
-| Period | 250 ms (`TIME_LIM_SEND_VOLTS`) |
-| Suppressed when | charging (`flag_charger == 1`) |
+| Peripheral | FDCAN1 — accumulator / vehicle / telemetry / diag / boot-trigger |
+| Frame format | **Standard 11-bit only.** Extended frames are rejected at the hardware global filter |
+| Filter | `HAL_FDCAN_ConfigGlobalFilter(ACCEPT_IN_RX_FIFO0, REJECT, REJECT_REMOTE, REJECT_REMOTE)` — accept all unmatched standard into FIFO0, reject extended, reject remote (`app_init_task.cpp`) |
+| TX FIFO depth | 16 (`TxFifoQueueElmtsNbr`), `AutoRetransmission` **DISABLE** |
+| RX FIFO depth | 32 |
 
-Payload:
+Consequence of `AutoRetransmission = DISABLE`: a frame that loses arbitration
+and then errors is **dropped, not retried**. Every signal on this bus is
+periodic and self-refreshing, which is what makes that acceptable — nothing
+here is a one-shot command whose loss matters. If you ever add one, it must
+carry its own repeat/ack.
 
-| Byte | Field | Notes |
+**The app is FDCAN1-only.** There is no `MX_FDCAN2_Init` and no `hfdcan2`
+handle in `main.c`; the only residue is pin PB13 still muxed to
+`GPIO_AF9_FDCAN2` and unused. `CanBus::Bms` survives in `can_frame.hpp` purely
+as a "wrong bus" sentinel for dispatch-rejection tests. The bootloader is a
+separate sector-0 image that brings up its own CAN peripheral from scratch
+after the magic-reset jump — the app leaves nothing configured for it.
+
+### Bus-Off recovery
+
+The STM32H7 M_CAN latches Bus_Off after sustained TX errors, and Bus_Off sets
+`CCCR.INIT`, which halts **both** TX and RX. The node goes silent, stops
+ACKing, and **does not self-clear**. `AcuCanTask` polls
+`HAL_FDCAN_GetProtocolStatus` every loop pass and issues a rate-limited
+Stop→Start; the attempt count is published on `0x6C9[0..3]` so a CAN-only bench
+can confirm a recovery fired without a debugger. On the car this has never been
+needed only because the bus always has another ACKing node.
+
+---
+
+## Full ID index
+
+Everything the firmware puts on, or takes off, the wire.
+
+| ID | Name | Dir | DLC | Period | Layout source |
+|---|---|---|---|---|---|
+| `0x002` | BL_boot_trigger | RX | 4 (exact) | — | `rx_bl_boot_trigger.def` |
+| `0x002` | LOGFS request (ISO-TP) | RX | 8 | — | `isotp.hpp` / `diag_proto.hpp` |
+| `0x012` | LOGFS response (ISO-TP) | TX | 8 | — | `isotp.hpp` / `diag_proto.hpp` |
+| `0x020` | ACU_ok_precharge | TX | 1 | 100 ms | `acu_ok_precharge.def` |
+| `0x021` | ACU_discharge_interlock | TX | 1 | 100 ms | `acu_discharge_interlock.def` |
+| `0x100` | VCU_heartbeat | RX | 3 (2 accepted) | 10 ms | `rx_vcu_dc_bus.def` |
+| `0x101` | Operator_charge_request | RX | ≥ 4 | ≥ 2 Hz | `rx_operator_charge_request.def` |
+| `0x103` | Operator_balance_override | RX | ≥ 4 | ≥ 2 Hz | `rx_operator_balance_override.def` |
+| `0x104` | Operator_balance_modules | RX | ≥ 5 | ≥ 2 Hz | `rx_operator_balance_modules.def` |
+| `0x12C` | ACU_v_cell_min | TX | 2 | 100 ms | `acu_v_cell_min.def` |
+| `0x130` | ACU_soc | TX | 1 | 250 ms | `acu_soc.def` |
+| `0x131` | ACU_vmin_module_a | TX | 6 | 100 ms | `acu_vmin_module_a.def` |
+| `0x132` | ACU_vmin_module_b | TX | 4 | 100 ms | `acu_vmin_module_b.def` |
+| `0x133` | ACU_vmax_module_a | TX | 6 | 100 ms | `acu_vmax_module_a.def` |
+| `0x134` | ACU_vmax_module_b | TX | 4 | 100 ms | `acu_vmax_module_b.def` |
+| `0x135` | ACU_currents | TX | 4 | 50 ms | `acu_currents.def` |
+| `0x136` | ACU_tmax_module_a | TX | 6 | 250 ms | `acu_tmax_module_a.def` |
+| `0x137` | ACU_tmax_module_b | TX | 6 | 250 ms | `acu_tmax_module_b.def` |
+| `0x4A0` | AMS_status | TX | 8 | 500 ms | `ams_status.def` |
+| `0x4A1` | AMS_pack | TX | 8 | 500 ms | `ams_pack.def` |
+| `0x4A2` | AMS_temps | TX | 8 | 500 ms | `ams_temps.def` |
+| `0x4A4` | AMS_relay_status | TX | 8 | 100 ms | `relay_status.def` |
+| `0x680..0x697` | PitDiag cell grid (24) | TX | 8 | 1 Hz, gated | `can_codecs.hpp` `ALL_ARRAYS[0]` |
+| `0x6A0..0x6B8` | PitDiag temp grid (25) | TX | 8 | 1 Hz, gated | `can_codecs.hpp` `ALL_ARRAYS[1]` |
+| `0x6C0..0x6C9` | PIT status frames (10) | TX | 8 | 1 Hz, gated | `pit_*.def` |
+| `0x6CA` | AMS_fw_health | TX | 8 | 1 Hz, **ungated** | `ams_fw_health.def` |
+| `0x6CB` | PIT_balance_health | TX | 8 | 1 Hz, gated | `pit_balance_health.def` |
+| `0x6D0..0x6E7` | ADOW raw PU grid (24) | TX | 8 | bench build only | none — `pit_diag_emitter.hpp` |
+| `0x6E8..0x6FF` | ADOW raw PD grid (24) | TX | 8 | bench build only | none — `pit_diag_emitter.hpp` |
+| `0x7F0` | PitDiag_cmd | RX | 4 (exact) | — | `rx_pitdiag_cmd.def` |
+| `0x7F1` | PitDiag_ack | TX | 1 | one-shot | `pit_ack.def` |
+
+Declared in `ams_config.hpp` but **never transmitted by any code path**:
+`0x4A3` (`AmsTelemDiagId`), `0x500`/`0x501`/`0x502`
+(`AcuTxCurrentWarnId` / `OverLimitId` / `NormalId`). They have no `.def`, no DBC
+row, and no call site. Treat them as reserved IDs, not as protocol.
+
+---
+
+## TX — AMS to ECU (the "ECU TX matrix")
+
+The ECU's second CAN peripheral is wired to AMS FDCAN1; these frames feed the
+ECU's own logic and the real-time telemetry uplink. Scheduled by `AcuCanTask`
+in three cadence groups, all driven by a deadline computed against the RX queue
+wait so TX jitter stays bounded and RX latency stays low:
+
+| Group | Constant | Frames |
 |---|---|---|
-| 0 | `BALANCING_V >> 8` | Big-endian. Cell-balancing target voltage (mV). |
-| 1 | `BALANCING_V & 0xFF` | |
+| 50 ms | `EcuFastTxMs` | `0x135` |
+| 100 ms | `EcuMidTxMs` | `0x020`, `0x021`, `0x12C`, `0x131`, `0x132`, `0x133`, `0x134` |
+| 250 ms | `EcuSlowTxMs` | `0x136`, `0x137`, `0x130` |
 
-Source: `BMS_MOD::query_voltage()` in `class_bms.cpp:242–250`.
-
-### `0x140 + 0x1E·m` — temperature poll
-
-| Field | Value |
-|---|---|
-| Direction | TX (AMS → BMS[m]) |
-| Bus | FDCAN2 |
-| ID type | Standard |
-| DLC | 2 |
-| Payload | `{0x00, 0x00}` |
-| Period | 500 ms (`TIME_LIM_SEND_TEMPS`) |
-
-Source: `BMS_MOD::query_temperature()` in `class_bms.cpp:282`.
-
----
-
-## RX — BMS slaves to AMS (FDCAN2)
-
-### `0x12D – 0x131` (+ 0x1E·m) — cell voltages
-
-5 frames per module covering 19 cells. 4 cells per frame, last frame has
-3 cells (bytes 6–7 unused).
-
-| Field | Value |
-|---|---|
-| Direction | RX (BMS[m] → AMS) |
-| ID type | Standard |
-| DLC | 8 |
-| Encoding | Big-endian uint16, mV |
-| Freshness timeout | 1500 ms (enforced) → `BMS_ERROR_COMMUNICATION` |
-
-Frame-to-cell index mapping:
-
-| Frame ID offset | Cell indices |
-|---|---|
-| +1 (0x12D) | 0, 1, 2, 3 |
-| +2 (0x12E) | 4, 5, 6, 7 |
-| +3 (0x12F) | 8, 9, 10, 11 |
-| +4 (0x130) | 12, 13, 14, 15 |
-| +5 (0x131) | 16, 17, 18 |
-
-Per-cell decode: `cell_mV = (buf[2k] << 8) | buf[2k+1]` for `k ∈ {0,1,2,3}`.
-
-Source: `BMS_MOD::parse()` in `class_bms.cpp:121–164`.
-
-### `0x14D – 0x151` (+ 0x1E·m) — cell temperatures
-
-5 frames per module covering 38 temperatures. 8 sensors per frame, last
-frame has 6 (bytes 6–7 unused).
-
-| Field | Value |
-|---|---|
-| Direction | RX (BMS[m] → AMS) |
-| ID type | Standard |
-| DLC | 8 |
-| Encoding | int8 °C per byte |
-| Freshness timeout | 1000 ms (legacy: declared but **not enforced**) |
-
-Frame-to-temp index mapping:
-
-| Frame ID offset | Temp indices |
-|---|---|
-| +21 (0x14D) | 0..7 |
-| +22 (0x14E) | 8..15 |
-| +23 (0x14F) | 16..23 |
-| +24 (0x150) | 24..31 |
-| +25 (0x151) | 32..37 |
-
-Source: `BMS_MOD::parse()` in `class_bms.cpp:166–192`.
-
-**Refactor decision:** enforce the 1000 ms freshness check — currently a
-silent failure mode.
-
----
-
-## TX — AMS to ECU (FDCAN1) — ECU forwards to real-time telemetry
-
-The ECU's FDCAN2 peripheral is wired to AMS FDCAN1; these frames feed the
-ECU's onboard logic + the real-time telemetry uplink. All standard 11-bit
-IDs, big-endian payloads. Cadence groups (per-frame deadline scheduler in
-`acu_can_task.cpp`):
-
-- 50 ms — `0x135` currents
-- 100 ms — `0x020`, `0x021`, `0x12C`, `0x131..0x134`
-- 250 ms — `0x136..0x137`, `0x130`
-
-`0x130` (SOC) — pack state of charge, 1 byte, `0..100 %`. **`0xFF` is the
-"no trustworthy estimate" sentinel, not a reading**: it appears before the
-first OCV anchor and whenever the pack current sensor faults or goes stale,
-since Coulomb counting cannot be trusted across an unmeasured interval.
-Consumers must render `0xFF` as *unknown* rather than clamping it to 100 %.
-
-Produced by `CurrentSensorTask` via `soc_estimator.hpp`: Coulomb counting
-against `PackCapacityMah` (18 Ah = 6P x 3.0 Ah VTC6), re-anchored on the
-fitted VTC6 OCV curve whenever the pack has rested below `SocRestCurrentMa`
-for `SocRestSettleMs`. The anchor is taken off the **minimum** cell, since
-usable pack charge is set by the weakest one. TELEMETRY ONLY — no safety
-predicate reads it.
+All sends in this matrix are **non-blocking**. A momentarily full TX FIFO
+increments `g_acu_tx_fail` (published on `0x6C9[4..7]`) rather than stalling
+the cadence — losing one periodic frame is strictly better than delaying the
+next one.
 
 ### `0x020` — ok_precharge
 
-| Field | Value |
-|---|---|
-| Direction | TX (AMS → ECU) |
-| Bus | FDCAN1 |
-| ID type | Standard |
-| DLC | 1 |
-| Period | 100 ms |
+DLC 1, 100 ms. Byte 0 = `1` iff the FSM state is `Run` (3) or `Charge` (4),
+else `0`.
 
-| Byte | Field | Notes |
-|:---:|---|---|
-| 0 | `ok_precharge` | `1` iff FSM state ∈ {Run, Charge} (AIRs closed and ready). `0` otherwise. |
+`ok_precharge = 0` is **ambiguous on its own**: it is equally true in `Start`
+(re-armable) and in `Error` (latched, reset-only). A consumer that needs to
+tell those apart must read `0x4A0[0]`.
 
 ### `0x021` — discharge_interlock
 
-| Field | Value |
-|---|---|
-| Direction | TX (AMS → ECU) |
-| Bus | FDCAN1 |
-| ID type | Standard |
-| DLC | 1 |
-| Period | 100 ms |
+DLC 1, 100 ms. Two bits, byte 0:
 
-| Bit | Field | Notes |
+| Bit | Field | Meaning |
 |---|---|---|
-| 0 | `fsm_in_start` | FSM is in `Start` — AIR−, AIR+ and precharge are all commanded open, so any voltage on the link is left over rather than something the AMS is putting there |
-| 1 | `tsms` | Shutdown circuit is complete (PF9). Any open shutdown element pulls it low, so `1` means the discharge relay is energised and the bleed is **disconnected** |
+| 0 | `fsm_in_start` | FSM state is `Start`. AIR−, AIR+ and precharge are all commanded open, so any voltage on the link is left over rather than something the AMS is putting there. Deliberately excludes `Precharge`/`Transition`, where the link is *supposed* to be rising and a forced discharge would fight it |
+| 1 | `tsms` | Shutdown circuit is complete (PF9 high). Any open shutdown element pulls it low, so `1` means the discharge relay is **energised** and the bleed is **disconnected** |
 
-The two facts only the AMS can observe, so the ECU can decide whether to secure
-an interrupted DC-link discharge.
+**Why this frame exists.** The DC-link bleed relay is normally-closed and wired
+into the shutdown circuit with no software control. Opening the SDC
+de-energises it, the bleed resistor connects, and the link drains. Close the
+SDC again before the link has finished draining and the relay re-energises: the
+discharge **stops part-way** and the link is stranded at an unpredictable
+voltage, with nothing to drain it while the SDC stays closed.
 
-Opening the shutdown circuit de-energises the discharge relay (NC) so the bleed
-connects and the link drains; closing it again re-energises the relay and the
-discharge **stops part-way**, leaving the link stranded — nothing drains it
-further while the SDC stays closed. The AMS cannot fix that: the discharge relay
-has no software control, and the AMS's own leg of that loop (`AMS_OK`) latches in
-hardware, so it can never be driven low temporarily. The ECU can, through a
-normally-closed relay in series with the discharge relay coil.
+The AMS cannot fix that. Its own leg of the loop, `AMS_OK`, latches in
+**hardware** (self-holding relay K5 plus an RST_BMS button the driver cannot
+reach), so firmware can never pulse it low to reopen the SDC. The ECU can fix
+it: it owns a normally-closed relay in series with the discharge relay coil.
+But the ECU cannot see either bit above. Hence this frame.
 
-The ECU secures on `fsm_in_start AND tsms AND (its own dc_bus > threshold)`,
-**latched** on entry and released on its own measurement falling. Latching
-matters: securing the discharge connects the bleed, which is what `tsms` reports
-on — evaluate it continuously and the action falsifies its own trigger.
+The intended ECU rule is `fsm_in_start AND tsms AND (its own dc_bus above
+threshold)`, **latched on entry** and released on its own measurement falling.
+The latch is not an optimisation: securing the discharge connects the bleed,
+which is exactly what `tsms` reports on, so a continuously-evaluated rule
+would falsify its own trigger the instant it acted.
 
-These are raw observations, not a request. The ECU owns the decision because it
-owns the measurement that decides it; sending a pre-computed request would put a
-stale CAN value in the middle of that judgement.
+Both bits are **raw observations, not a request**. The ECU owns the decision
+because it owns the DC-link measurement that decides it; shipping a
+pre-computed request would insert a stale CAN value into the middle of that
+judgement.
 
-### `0x12C` — minimum cell voltage (pack-wide)
+> **The ECU half exists, and has never run against this one.** `IFS08-CE-ECU`
+> `dev` mirrors this `.def` field for field, supplies the third term from its
+> own DC-link measurement, latches the hold and releases at
+> `DischargeReleaseV` = 10 V — below this repo's `DcBusDischargedV` = 60 V, so
+> the re-arm gate clears before the ECU lets go. It gives up after 30 s and
+> reports a fault if the link does not fall.
+>
+> What is *not* verified is the pairing: the AMS side is exercised only by
+> `tests/unit/test_state_machine.cpp`, the ECU side only by its SIL, and no
+> bench has ever had both boards on it. ECU `main` predates the feature and
+> sends `0x100` at DLC 2, where `ecu_discharge_capable` never latches and this
+> frame changes nothing.
 
-| Field | Value |
-|---|---|
-| Direction | TX |
-| Bus | FDCAN1 |
-| ID type | Standard |
-| DLC | 2 |
-| Period | 100 ms |
+### `0x12C` — pack-wide minimum cell voltage
 
-| Byte | Field |
-|:---:|---|
-| 0–1 | `v_cell_min` BE uint16, mV (`BmsState.min_cell_mV`) |
+DLC 2, 100 ms. Bytes 0–1: `min_cell_mV`, big-endian uint16, mV.
 
-### `0x131` — vmin per module (modules 0..2)
+### `0x130` — pack state of charge
 
-| Field | Value |
-|---|---|
-| Direction | TX |
-| ID type | Standard |
-| DLC | 6 |
-| Period | 100 ms |
+DLC 1, 250 ms. Byte 0: `0..100 %`.
 
-| Bytes | Field |
-|:---:|---|
-| 0–1 | `vmin_module[0]` BE uint16, mV |
-| 2–3 | `vmin_module[1]` BE uint16, mV |
-| 4–5 | `vmin_module[2]` BE uint16, mV |
+**`0xFF` is the "no trustworthy estimate" sentinel, not a reading.** It appears
+before the first OCV anchor and whenever the pack current sensor faults or goes
+stale, because Coulomb counting cannot be trusted across an unmeasured
+interval. A consumer that clamps `0xFF` to 100 % will display a full pack on a
+flat one. Render it as *unknown*.
 
-For an offline module, sentinel `0xFFFF`.
+Produced by `CurrentSensorTask` via `soc_estimator.hpp`: Coulomb counting
+against `PackCapacityMah` (18 000 mAh = 6P × 3.0 Ah VTC6), corrected by an EKF
+whose observation matrix is dOCV/dSoC — so the gain self-schedules and goes
+nearly zero on the OCV plateau where voltage carries no SoC information. The
+anchor is taken off the **minimum** cell (`current_task.cpp` passes
+`bms.min_cell_mV`), because usable pack charge is set by the weakest element.
 
-### `0x132` — vmin per module (modules 3..4)
+**TELEMETRY ONLY — no safety predicate reads it.**
 
-| Field | Value |
-|---|---|
-| DLC | 4 | Period | 100 ms |
+The 250 ms in the `.def` is not decorative: it must match the scheduler group
+`tx_soc()` actually rides in, because it becomes `GenMsgCycleTime` in the DBC
+and every consumer sizes its receive timeout from that. If `tx_soc()` moves
+cadence group, this number moves with it.
 
-| Bytes | Field |
-|:---:|---|
-| 0–1 | `vmin_module[3]` BE uint16, mV |
-| 2–3 | `vmin_module[4]` BE uint16, mV |
+### `0x131` / `0x132` — per-module minimum cell voltage
 
-### `0x133` — vmax per module (modules 0..2)
+`0x131` DLC 6, 100 ms: modules 0, 1, 2 as BE uint16 mV.
+`0x132` DLC 4, 100 ms: modules 3, 4.
 
-Same layout as `0x131` with `vmax_module[0..2]`. Sentinel for offline module: `0x0000`.
+**Offline module sentinel: `0xFFFF`** (`bms_service.cpp` leaves the aggregate at
+`uint16_t` max when no cell contributed).
 
-### `0x134` — vmax per module (modules 3..4)
+### `0x133` / `0x134` — per-module maximum cell voltage
 
-Same layout as `0x132` with `vmax_module[3..4]`.
+Same shape as `0x131`/`0x132` with `vmax_module[]`.
 
-### `0x135` — pack + DCDC current (signed deciamps)
+**Offline module sentinel: `0x0000`** — different from vmin, because vmax is a
+running maximum seeded at 0 and vmin a running minimum seeded at `0xFFFF`. Both
+sentinels are "impossible reading in the direction that would look safe", which
+is the property that matters: an offline module never reports a comfortable
+number.
 
-| Field | Value |
-|---|---|
-| Direction | TX |
-| ID type | Standard |
-| DLC | 4 |
-| Period | 50 ms |
+### `0x135` — pack + DCDC current
 
-| Bytes | Field |
-|:---:|---|
-| 0–1 | `current_accu` BE int16, deciamps (1 LSB = 0.1 A; `+` = discharge) |
-| 2–3 | `current_dcdc` BE int16, deciamps |
-
-Sign convention preserved from `+ = discharge, − = charge`. Pack current
-is read **differentially** (PF7/PF8, ADC3_INP3/INN3); the front-end now
-observes well beyond the FS-rules range (the old ×4 + 1.65 V single-ended
-front-end capped firmware-side at ±82.5 A — that limit is gone).
-Supersedes the retired `0x450`.
-
-### `0x136` — temp_max per module (modules 0..2)
-
-| Field | Value |
-|---|---|
-| DLC | 6 | Period | 250 ms |
+DLC 4, 50 ms.
 
 | Bytes | Field |
 |:---:|---|
-| 0–1 | `temp_max_module[0]` BE int16, °C |
-| 2–3 | `temp_max_module[1]` BE int16, °C |
-| 4–5 | `temp_max_module[2]` BE int16, °C |
+| 0–1 | `current_accu_dA` BE **int16**, deciamps (1 LSB = 0.1 A) |
+| 2–3 | `current_dcdc_dA` BE **int16**, deciamps |
 
-Sentinel for offline module: `INT16_MIN` = `0x8000`.
+**Sign convention: `+` = discharge, `−` = charge.** This convention holds
+across the whole codebase; do not re-derive it per frame.
 
-### `0x137` — temp_max per module (modules 3..4) + temp_dcdc
+The DBC carries `factor = 0.1` as *display* metadata. The C++ struct holds raw
+deciamps and the encoder never applies the factor — the mA→dA conversion
+happens in `acu_tx_encoders.hpp` (`mA_to_deciamps_i16`, round-to-nearest then
+saturate to int16) before the struct is populated. This is the DSL's global
+convention: **structs hold raw wire integers; factor/offset are DBC display
+only.**
 
-| Field | Value |
-|---|---|
-| DLC | 6 | Period | 250 ms |
+Pack current is read **differentially** on PF7/PF8 (ADC3 INP3/INN3).
 
-| Bytes | Field |
-|:---:|---|
-| 0–1 | `temp_max_module[3]` BE int16, °C |
-| 2–3 | `temp_max_module[4]` BE int16, °C |
-| 4–5 | `temp_dcdc` BE int16, °C **[STUB — `INT16_MIN`]** until the DCDC temp sensor is wired |
+### `0x136` / `0x137` — per-module maximum temperature
 
-### `0x450` — current measurement **[RETIRED — fix/53]**
+Both DLC 6, 250 ms. BE int16 °C.
 
-Legacy 2-byte unsigned current frame. Superseded by `0x135` (signed
-deciamps + DCDC current in the same frame).
+`0x136`: modules 0, 1, 2. `0x137`: modules 3, 4, then `tmax_dcdc`.
 
-### `0x20` — AMS state reply **[LEGACY DOC — superseded by `0x020`]**
+**Offline module sentinel: `INT16_MIN` (`0x8000`).**
 
-The legacy AMS used the extended-ID `0x20` with 5-value state byte. The
-current firmware emits `0x020` (standard) as a simple `ok_precharge`
-boolean (see above). Full state mirror still lives in `0x4A0[0]` for
-diagnostic consumers that want it. Kept as a doc anchor so spelunkers in
-old logs can find the cross-reference.
-
-### `0x450` — current measurement **[RETIRED — fix/53, see above]**
-
-Legacy 2-byte unsigned current frame. Removed; `0x135` is the successor.
-Kept as a doc anchor for log-archaeology.
-
-### `0x500` / `0x501` / `0x502` — current warning / over-limit / normal **[RESERVED — not emitted]**
-
-`AcuTxCurrentWarnId` (`0x500`), `AcuTxCurrentOverLimitId` (`0x501`), and
-`AcuTxCurrentNormalId` (`0x502`) are declared in `ams_config.hpp:180–182`
-but marked **reserved for future use** (comment at `ams_config.hpp:177–179`,
-alongside the retired `0x450`). **No current firmware emits them** —
-`acu_can_task.cpp` transmits only `0x135` for current. There is no
-threshold/warning/recovery current frame on the wire today; these IDs are
-placeholders for a future warning stream. (Historically these were
-`class_curent.cpp` frames; that legacy file is gone.)
-
-### `0x40D – 0x412` — temperature forwarding (charger mode only) **[RETIRED — FDCAN2 drop + isoSPI]**
-
-This charger-mode passthrough forwarded raw **FDCAN2** temperature RX onto
-FDCAN1 as extended-ID frames. It no longer exists: FDCAN2 was dropped
-(#388, `a885bf5`), so there is no FDCAN2 RX to forward, and temperatures now
-come from the LTC6811-1 isoSPI chain (`docs/BMS_LTC6811.md`) rather than
-CAN. Nothing in the current build emits `0x40D–0x412`. (The legacy
-`class_bms.cpp` / `class_temperatures.cpp` source is gone.)
+`0x137` bytes 4–5 are a **stub**: `config::DcdcTempStubValue` = `-32768` is
+transmitted unconditionally until a DCDC temperature sensor is physically
+wired. It is not a reading and never has been.
 
 ---
 
-## TX — AMS pit-diag stream (FDCAN1, runtime-toggleable)
+## TX — AMS telemetry
 
-Optional full-grid diagnostic stream gated by a runtime CAN command.
-Default OFF; intended for pit-stop debugging when the accumulator is
-plugged into a `candump`-grade tool — either with the pack mounted in
-the car (stationary) or out of the car on the charger. **Never on
-during a track session** because nothing persists the flag across
-reboots (#247).
-
-### Enable / disable
-
-| Direction | ID | DLC | Payload | Meaning |
-|---|---|---|---|---|
-| RX | `0x7F0` | 4 | `DE AD BE EF` | Pit-diag stream ON |
-| RX | `0x7F0` | 4 | `00 00 00 00` | Pit-diag stream OFF |
-| TX | `0x7F1` | 1 | `01` or `00` | One-shot ACK after a state change |
-
-Reboot clears the flag — every power-cycle returns to OFF. Stream
-continues through `fsm::State::Error` so charging-fault diagnostics
-survive a predicate trip.
-
-### Stream layout (cadence 1 Hz when enabled)
-
-| IDs | Frames | Layout | Cadence |
-|---|---|---|---|
-| `0x680..0x697` | 24 cell-V frames | 4 cells per frame, BE u16 mV. Row-major over `cell_mV[5][19]`. Last frame has 3 real cells + 2-byte sentinel `0xFFFF`. Decode: `cell_index = 4·(id - 0x680) + slot; module = cell_index / 19; cell = cell_index % 19`. | 1 Hz |
-| `0x6A0..0x6B8` | 25 cell-T frames | 8 NTCs per frame, signed i8 °C each. Row-major over `cell_tempC[5][40]`. Decode: `temp_index = 8·(id - 0x6A0) + slot; module = temp_index / 40; temp = temp_index % 40`. | 1 Hz |
-| `0x6C0` | 1 FSM extended status | `[0]` FSM state, `[1]` mode_locked (0/1/2), `[2]` bits `2`=balance_override (#336, balancing paused by a fresh `0x103` "BALO"), `1`=TSMS, `0`=DASH_CHG, `[3]` AMS_OK GPIO, `[4..5]` PEC error total BE u16, `[6]` fault_reason (latched-ERROR predicate branch; see below), `[7]` fault_detail (BmsStale / CellUnderVoltage / CellOverVoltage / CellOverTemp: offending module index 0..4, or `0xFF` = none matched → inconsistent/torn snapshot; BmsModuleOffline: module_online_mask; else 0) | 1 Hz |
-| `0x6C1` | 1 poll timing | `[0..1]` last V-poll ms BE u16, `[2..3]` worst-case V-poll BE u16, `[4..7]` last T-sweep failure mask LE u32 | 1 Hz |
-| `0x6C2` | 1 balance mask A | DCC mask bits 0..63: `[i]` bit `b` = cell `(8·i + b)` of the row-major flat (`cell_idx = 19·m + c`) selected for discharge last balance window. | 1 Hz |
-| `0x6C3` | 1 balance mask B | `[0..3]` DCC mask bits 64..94 (bit 31 reserved 0), `[4..5]` `balance_cycles_total` LE u16 (mod 65536), `[6..7]` `balance_cycles_active` LE u16. Reconstruct: bit `b` → `module = b/19, cell = b%19`. | 1 Hz |
-| `0x6C4` | 1 boot diag | `[0..3]` `jump_reason` LE u32 (RTC→BKP2R; `config::JumpReason`; 0 = clean cold POR), `[4]` `g_app_init_progress` (0..7 milestone), `[5..7]` `g_fdcan1_start_result` LE u24 (0 = HAL_OK). | 1 Hz |
-| `0x6C5` | 1 crash post-mortem | `[0]` stack-overflow seen (0/1), `[1]` stack-overflow watermark low byte (0xFF = API-failed sentinel), `[2..5]` failing-task `xTaskHandle` LE u32, `[6..7]` `malloc_failed_count` LE u16 (sat 0xFFFF). All 0 on a clean session. | 1 Hz |
-| `0x6C6` | 1 firmware ID | `[0]` fw major, `[1]` minor, `[2]` patch, `[3..6]` `git_hash[0..3]` (first 4 of 8 bytes), `[7]` `bl_node_id` (`firmware_info.reserved[0]`). | 1 Hz |
-| `0x6C7` | 1 per-IC PEC count (ICs 0..7) | 8 bytes, one saturating uint8 per chain index. Maps chain index → module: IC `2m`=upper / `2m+1`=lower of module `m`. (#258) | 1 Hz |
-| `0x6C8` | 1 per-IC PEC count (ICs 8..9 + reserved) | `[0]` IC 8, `[1]` IC 9, `[2..7]` reserved 0 | 1 Hz |
-| `0x6CB` | 1 balance-quiesce health | `[0..3]` `g_balance_quiesce_count` LE u32 (DCC successfully cleared before a measurement), `[4..7]` `g_balance_quiesce_fail_count` LE u32 (both WRCFGA attempts failed -> that poll measured with cells still bleeding). **The RATIO is the diagnostic** -- a bare fail count means nothing without the attempt count. `fail` climbing means cell voltages are being sampled under bleed, which corrupts both the balance selector (it ranks raw `cell_mV`) and the SoC filter (it corrects on `min_cell_mV`). Note DCP=0 on the ADCV does NOT cover a failed quiesce: per LTC6811 Table 53 it suppresses discharge only on the measured cell and its immediate neighbours. | 1 Hz |
-| `0x6C9` | 1 FDCAN1 comms health | `[0..3]` `fdcan1_busoff_recovery_count` LE u32 (Bus-Off Stop/Start recoveries this session; `0` = never went Bus-Off), `[4..7]` `g_acu_tx_fail` LE u32 (ECU-TX-matrix enqueue failures). Lets the CAN-only bench confirm a Bus-Off recovery fired. (#331) | 1 Hz |
-
-`0x6C0[6]` fault_reason values (#276): `0`=None, `1`=ForceError, `2`=BmsModuleOffline, `3`=BmsStale, `4`=CellUnderVoltage, `5`=CellOverVoltage, `6`=CellUnderTemp, `7`=CellOverTemp, `8`=CurrentSensorFault, `9`=CurrentStale, `10`=CurrentOverLimit, `11`=VcuStale, `12`=FsmError (FSM-driven Error path — precharge timeout / Transition guard; a TSMS drop is non-latching in **Car** mode since #327, so it is *not* an Error there), `13`=TempSensorDisconnected, `14`=ChargerStale (charger `0x101` heartbeat stale > `ChargerStaleMs` while committed to Charger mode — the WarioCharger was disconnected mid-charge), `15`=ChargerTsmsOpen (TSMS dropped while committed to **Charger** mode — unlike Car mode this latches Error so the charge output cannot be re-activated after the SDC opens, per scrutineering; re-energising needs a full reset). Latched once at the transition into ERROR; stays put until the latch clears. These enum mappings — plus `fsm_state` and `mode_locked` — are also emitted as machine-readable `VAL_` tables in [`docs/dbc/ams.dbc`](dbc/ams.dbc) (#291).
-
-Encoders are pure-logic in
-[`Core/Inc/app/pit_diag_emitter.hpp`](../Core/Inc/app/pit_diag_emitter.hpp);
-unit tests in
-[`tests/unit/test_pit_diag_emitter.cpp`](../tests/unit/test_pit_diag_emitter.cpp).
-Dispatch + flag ownership in
-[`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp).
-
-Bus cost: 60 frames/scan (24 cell-V + 25 cell-T + 11 status `0x6C0..0x6C9`, `0x6CB`)
-× ~12 bytes-on-wire ≈ 5.7 kbit, ~11.4 ms at 500 kbps ≈ 1.1 % bus load (1 Hz)
-when enabled.
-
----
-
-## TX — AMS telemetry (FDCAN1)
-
-Three single-purpose 8-byte frames emitted every **500 ms** by
-`MainTask` (the consolidated SafetyTask + StateTask + TelemetryTask
-since refactor/19 phase 3). Bench tools and the VCU consume these
-instead of the legacy UART telemetry line (the UART path was
-dropped in feat/22).
-
-Encoders are pure-logic in
-[`Core/Inc/app/telemetry_encoders.hpp`](../Core/Inc/app/telemetry_encoders.hpp);
-unit tests in
-[`tests/unit/test_telemetry_encoders.cpp`](../tests/unit/test_telemetry_encoders.cpp).
+Emitted by `MainTask` (the CubeMX thread is still named `SafetyTask`). Pure
+encoders in
+[`telemetry_encoders.hpp`](../Core/Inc/app/telemetry_encoders.hpp), byte-level
+tests in `tests/unit/test_telemetry_encoders.cpp`.
 
 ### `0x4A0` — AMS status
 
-Standard 11-bit. DLC 8. Cadence 500 ms.
+DLC 8, 500 ms.
 
 | Byte | Field | Notes |
 |:---:|---|---|
-| 0 | `state` | `ams::fsm::State` enum (0..5: Start, Precharge, Transition, Run, Charge, Error). **ECU↔AMS state contract — see below.** |
-| 1 | `ams_ok` | GPIO PB4 read-back; 0 or 1 |
-| 2 | `module_online_mask` | Low byte of `BmsState.module_online_mask`. 0x1F = all 5 modules healthy |
+| 0 | `fsm_state` | `ams::fsm::State`: 0 Start, 1 Precharge, 2 Transition, 3 Run, 4 Charge, 5 Error |
+| 1 | `ams_ok` | PB4 read-back, normalised to 0/1 |
+| 2 | `module_online_mask` | `0x1F` = all 5 modules healthy |
 | 3 | reserved | 0 |
-| 4-5 | `min_cell_mV` | Big-endian uint16, mV |
-| 6-7 | `max_cell_mV` | Big-endian uint16, mV |
+| 4–5 | `min_cell_mV` | BE uint16, mV |
+| 6–7 | `max_cell_mV` | BE uint16, mV |
 
-> **`0x4A0[0]` is a stable cross-board contract (#342).** It is the
-> supported way for external consumers (notably the ECU) to read the AMS
-> FSM state — emitted **continuously, including while latched in `Error`**
-> (the telemetry block runs after the fault branch in `safety_task.cpp`).
-> The ECU uses it to tell **`Start`** (re-armable) apart from **`Error`**
-> (latched, reset-only) — both of which read `0x020 (ok_precharge) = 0`,
-> so `ok_precharge` alone is ambiguous. **Do not reorder the `fsm::State`
-> enum values or move byte 0 without coordinating with the ECU** — the
-> enum is the contract. (The `VAL_` table in `ams.dbc` mirrors it.)
+> **`0x4A0[0]` is a stable cross-board contract.** It is the supported way for
+> an external consumer — notably the ECU — to read the AMS FSM state, and it is
+> emitted **continuously, including while latched in `Error`** (the telemetry
+> block in `safety_task.cpp` runs after the fault branch). It is what
+> disambiguates `Start` from `Error`, which `0x020` cannot. **Do not reorder
+> the `fsm::State` enum values and do not move byte 0 without coordinating with
+> the ECU.** The enum *is* the contract, and the generated DBC does not carry a
+> `VAL_` table to remind anyone.
 
 ### `0x4A1` — AMS pack
 
-Standard 11-bit. DLC 8. Cadence 500 ms.
+DLC 8, 500 ms.
+
+| Bytes | Field | Notes |
+|:---:|---|---|
+| 0–3 | `pack_voltage_mV` | **Little-endian** uint32, mV, sum of all cells |
+| 4–7 | `filtered_mA` | **Little-endian signed** int32, mA. `+` discharge, `−` charge |
+
+Note the endianness flip against `0x4A0[4..7]`. Both are correct; the DSL
+records each field's endianness individually and there is no frame-wide rule.
+Always read the `.def`.
+
+### `0x4A2` — AMS temps, DC bus, cockpit, heartbeat
+
+DLC 8, 500 ms.
 
 | Byte | Field | Notes |
 |:---:|---|---|
-| 0-3 | `pack_voltage_mV` | Little-endian uint32, mV (sum of all cells) |
-| 4-7 | `filtered_mA` | Little-endian **signed** int32, mA. `+ = discharge, − = charge` |
+| 0 | `min_tempC` | int8 °C, saturating clip of `BmsState.min_tempC` |
+| 1 | `max_tempC` | int8 °C |
+| 2 | `avg_tempC` | int8 °C |
+| 3–4 | `dc_bus_voltage` | **Little-endian** uint16, V — the last value received on `0x100`, with no freshness attached |
+| 5 | `tsms_dash_chg_byte` | cockpit snapshot, below |
+| 6 | `tx_fail_count_lo` | low byte of `g_telemetry_tx_fail` |
+| 7 | `heartbeat` | 8-bit wraparound, +1 per 500 ms telemetry cycle |
 
-### `0x4A2` — AMS temps + heartbeat
+Byte 5, assembled in `safety_task.cpp`:
 
-Standard 11-bit. DLC 8. Cadence 500 ms.
+| Bit(s) | Meaning |
+|---|---|
+| 7 | sentinel, always `1` — distinguishes a live byte from a zeroed reserved one |
+| 3:2 | `mode_locked`: 00 Undecided, 01 Car, 10 Charger |
+| 1 | TSMS (PF9) level |
+| 0 | DASH_CHG (PF10) level |
 
-Flight layout:
-
-| Byte | Field | Notes |
-|:---:|---|---|
-| 0 | `min_tempC` | Signed int8, °C. `BmsState.min_tempC` clipped to int8 range |
-| 1 | `max_tempC` | Signed int8, °C |
-| 2 | `avg_tempC` | Signed int8, °C |
-| 3-4 | `dc_bus_V` | Little-endian uint16, V (from `VehicleState.dc_bus_V`) |
-| 5 | `tsms_dash_chg_byte` | Cockpit-input snapshot (#246, always-on post-#251): bit 7 = sentinel `1`, bits 3:2 = `mode_locked` (00=Undecided / 01=Car / 10=Charger), bit 1 = TSMS, bit 0 = DASH_CHG. Was reserved=0 in pre-v1.5.0 builds. |
-| 6 | `tx_fail_lo` | Low byte of `g_telemetry_tx_fail` |
-| 7 | `heartbeat` | Wraparound 8-bit counter, increments per MainTask telemetry cycle (500 ms). Useful for detecting dropped frames on the receiver. |
-
-> The legacy HIL_STUB byte 3..4 overlay (which carried bench diagnostic
-> probes in place of `dc_bus_V`) was retired with the `AMS_BMS_HIL_STUB`
-> flag; the equivalent diagnostics now live on the pit-diag stream
-> (`0x680..0x6C8`). The flight layout above is the only layout.
+Byte 3–4 is a **frozen** value when the VCU is silent, not a stale-flagged one.
+`VehicleState` keeps the last received `dc_bus_voltage` forever. If you are logging
+this for post-analysis, correlate it against the VCU's own `0x100` presence in
+the same capture; the AMS gives you no freshness bit here.
 
 ### `0x4A4` — AMS relay status
 
-Standard 11-bit. DLC 8. Cadence 100 ms (`RelayStatusPeriodMs`). Always-on
-contactor + SDC-output snapshot so a datalogger can watch the AIR /
-precharge sequence without arming the pit-diag stream. All values are
-**MCU-side GPIO read-backs** (ODR): they confirm what the firmware is
-driving the coils to, not that the contactor physically closed (same
-caveat as `Relays::is_*_closed()`).
+DLC 8, **100 ms** (`RelayStatusPeriodMs`) — four times faster than the rest of
+the telemetry block, on its own timer, so a datalogger can watch the whole
+AIR/precharge sequence without arming the pit-diag stream.
 
-| Byte | Bit | Field | Notes |
-|:---:|:---:|---|---|
-| 0 | 0 | `air_negative` | AIR− (PB6) commanded closed |
-| 0 | 1 | `air_positive` | AIR+ (PB5) commanded closed |
-| 0 | 2 | `precharge` | Precharge contactor (PB7) commanded closed |
-| 0 | 3 | `ams_ok` | AMS_OK / SDC-enable (PB4) high = AMS healthy |
-| 1-7 | — | reserved | Zero; room for future output state |
+| Byte | Bit | Field |
+|:---:|:---:|---|
+| 0 | 0 | `air_negative` — AIR− (PB6) commanded closed |
+| 0 | 1 | `air_positive` — AIR+ (PB5) commanded closed |
+| 0 | 2 | `precharge` — precharge contactor (PB7) commanded closed |
+| 0 | 3 | `ams_ok` — AMS_OK / SDC enable (PB4) high = AMS not blocking |
+| 1–7 | — | reserved, zero |
+
+**These are MCU-side GPIO read-backs (ODR).** They tell you what the firmware
+is driving the coils to. They do **not** tell you a contactor physically
+closed — there is no auxiliary-contact feedback in this design. Same caveat as
+`Relays::is_*_closed()`. A welded or failed-open contactor looks identical here
+to a healthy one.
 
 ---
 
-## RX — vehicle / charger to AMS (FDCAN1)
+## TX — firmware health (ungated)
 
-### `0x100` — DC bus voltage from VCU
+### `0x6CA` — AMS_fw_health
 
-| Field | Value |
+DLC 8, **1 Hz, always on**, regardless of the pit-diag arm state. Emitted from
+`AcuCanTask` so a passive listener sees AMS liveness the instant the board
+powers up. Byte-for-byte parity with the ECU's own `0x704` health frame, so one
+tool decodes both.
+
+| Bytes | Field | Notes |
+|:---:|---|---|
+| 0–1 | `free_heap` | BE uint16, bytes, clamped |
+| 2–3 | `min_free_heap` | BE uint16, bytes — min-ever, the number that actually matters |
+| 4 | `task_liveness` | bitfield, below |
+| 5 | `reset_cause` | enum, below |
+| 6 | `uptime_s` | uint8 seconds, **wraps at 256** |
+| 7 | `last_fault` | sticky fault class, below |
+
+`task_liveness` (bit set = that task stepped in the last second; the 1 Hz emit
+samples **and clears** the field, so a stalled task leaves its bit at 0):
+
+| Bit | Task |
 |---|---|
-| Direction | RX (VCU → AMS) |
-| Bus | FDCAN1 |
-| ID type | Extended |
-| DLC | 2 |
-| Decode | `DC_BUS = (buf[1] << 8) | buf[0]` (little-endian, volts) |
-| Use | precharge complete when `200 < DC_BUS < 500` |
-| Freshness | 1000 s declared, not enforced |
+| 0 | `MainStepped` — MainTask 10 ms loop |
+| 1 | `CanRx` — AcuCanTask serviced its RX queue |
+| 2 | `CanTx` — AcuCanTask ran its periodic TX scheduler |
+| 3 | `Housekeeping` — BmsPollTask isoSPI sweep |
 
-Source: `CPU_MOD::parse()` `class_cpu.cpp:65–68`,
-`parse_state()` `module_state_machine.cpp:334–335`.
+`reset_cause` (`config::ResetCause`): 0 Unknown, 1 PowerOn, 2 Pin, 3 Software,
+4 Iwdg, 5 Wwdg, 6 LowPower. The specific causes win over the generic Pin/POR a
+reset usually also asserts; POR beats Pin because a cold boot raises both.
 
-**Refactor decision:** enforce a 200 ms freshness on `DC_BUS`. Stale
-voltage during precharge is a real fault.
+`last_fault` (`config::LastFault`, latched in RTC backup register 3 across a
+reset, cleared on a clean boot): 0 None, 1 HardFault, 2 StackOverflow,
+3 MallocFail, 4 AssertFail.
 
-> **Byte 2 bit 0 — `discharge_engaged`.** The ECU's report that the bleed
-> resistor is **connected** across the link, either because the shutdown circuit
-> is open or because the ECU is securing an interrupted discharge (see `0x021`).
-> The AMS closes no contactor while it is set: with the SDC closed and the bleed
-> connected, closing an AIR puts pack current through a resistor rated for
-> transient duty.
+`0x6CA` is the frame to look for first when a board appears dead. It is
+distinct from the *gated* `0x6C9` comms-health frame, which needs the pit-diag
+stream armed.
+
+---
+
+## TX — pit-diag stream (gated)
+
+A full-grid diagnostic dump, off by default, armed by a CAN command. Intended
+for pit-side debugging with a `candump`-grade tool, with the pack either
+stationary in the car or out of it on the charger.
+
+The arm flag `s_pit_diag_enabled` lives in `.bss` in `acu_can_task.cpp`, so
+**every power-cycle returns to OFF** — it cannot be inherited from a previous
+session, and it also cannot be relied on to survive a reset mid-debug. The
+stream keeps running through `fsm::State::Error`, deliberately: a charging
+fault is exactly when you want the diagnostics.
+
+### Enable / disable
+
+| Dir | ID | DLC | Payload | Effect |
+|---|---|---|---|---|
+| RX | `0x7F0` | 4 (exact) | `DE AD BE EF` | stream ON |
+| RX | `0x7F0` | 4 (exact) | `00 00 00 00` | stream OFF |
+| TX | `0x7F1` | 1 | `01` / `00` | one-shot ACK, sent only on an actual state change |
+
+Any other payload, or any DLC other than exactly 4, is not a pit-diag command
+and falls through to normal dispatch (`classify_command`). Enabling resets the
+scan clock so the first scan lands within 1 s of the command, not at whatever
+residual phase was on the timer.
+
+### Cost, and why it is the only blocking TX path
+
+A scan is **60 frames**: 24 cell + 25 temp + 10 status (`0x6C0..0x6C9`) +
+`0x6CB`. All DLC 8. A standard-ID 8-byte data frame is ~111 bits on the wire
+before stuffing, so a scan is ≈6.7 kbit ≈ 13 ms of bus time — about **1.3 %
+average load at 1 Hz**, up to ~1.6 % with worst-case bit stuffing.
+
+60 frames do not fit a 16-deep TX FIFO. Without flow control, frames 17+ are
+silently NACKed and only the front of the burst reaches the wire. So the
+pit-diag burst — and *only* the pit-diag burst — uses a yield-while-full send
+(`osDelay(1)` on a full FIFO), costing ~6 ms of AcuCanTask time per scan. The
+flight TX matrix stays non-blocking on purpose: a FIFO bump there must bump a
+counter, never stall a safety-adjacent cadence.
+
+### Cell + temperature grids
+
+| IDs | Frames | Layout |
+|---|---|---|
+| `0x680..0x697` | 24 | 4 cells per frame, BE uint16 mV, row-major over `cell_mV[5][19]` |
+| `0x6A0..0x6B8` | 25 | 8 NTCs per frame, int8 °C, row-major over `cell_tempC[5][40]` |
+
+Decode:
+
+```
+cell_index = 4 * (id - 0x680) + slot;   module = cell_index / 19;  cell = cell_index % 19
+temp_index = 8 * (id - 0x6A0) + slot;   module = temp_index / 40;  temp = temp_index % 40
+```
+
+95 cells / 4 = 23 full frames + 3 cells, so the last cell frame's final slot
+pair is the sentinel. 200 NTCs / 8 = 25 exactly, no padding.
+
+**`0xFFFF` in a cell slot means "no measurement", and there are three separate
+reasons for it** (`encode_cell_frame`):
+
+1. Slot past cell 94 — padding in the last frame.
+2. The module is offline (`module_online_mask` bit clear). `cell_mV` still
+   holds the last good voltages, and emitting those would show a disconnected
+   chain as live data.
+3. The cell straddles an **ADOW-confirmed open tap**. When a sense node floats,
+   *both* cells sharing it are displaced — one high, one low — and neither is
+   recoverable; only their sum survives. Emitting a number that looks like a
+   measurement and is not would be worse than emitting nothing. `cell_mV` keeps
+   the raw split internally for the pair average.
+
+Temperatures use `config::NtcNoReading` (`INT16_MIN`) for an offline module,
+which clips to `-128` on the wire — so **`-128 °C` is a sentinel, not a
+reading**.
+
+The grid layouts live in `can_codecs.hpp` `ALL_ARRAYS`, not in a `.def`: they
+are windowed array views selected at runtime and the DSL has no multiplexed
+representation yet. `dbc_dump` still expands them into one DBC message per
+frame, so they *are* in `ams.dbc`.
+
+### Status frames
+
+#### `0x6C0` — FSM extended status
+
+| Byte | Field |
+|:---:|---|
+| 0 | `fsm_state` (same encoding as `0x4A0[0]`) |
+| 1 | `mode_locked`: 0 Undecided, 1 Car, 2 Charger |
+| 2 | bit 0 `dash_chg`, bit 1 `tsms`, bit 2 `balance_override` |
+| 3 | `ams_ok_gpio` |
+| 4–5 | `pec_err_total` BE uint16, sum over all 10 ICs, saturating |
+| 6 | `fault_reason` |
+| 7 | `fault_detail` |
+
+**`0x6C0[2]` bit 2 is not "an operator sent BALO".** It is set whenever the
+*effective* balance command resolves to `Off`, which includes the dead-man
+fallback: no `0x103` ever seen, or the last one older than
+`BalanceOverrideFreshMs`. On a freshly booted board with no pit tool connected
+the bit reads **1**. See `0x103` below.
+
+`fault_reason` = `ams::safety::FaultReason`, **append-only wire contract, never
+renumber**:
+
+| | | | |
+|---|---|---|---|
+| 0 None | 1 ForceError | 2 BmsModuleOffline | 3 BmsStale |
+| 4 CellUnderVoltage | 5 CellOverVoltage | 6 CellUnderTemp | 7 CellOverTemp |
+| 8 CurrentSensorFault | 9 CurrentStale | 10 CurrentOverLimit | 11 VcuStale |
+| 12 FsmError | 13 TempSensorDisconnected | 14 ChargerStale | 15 ChargerTsmsOpen |
+| 16 CellOpenWire | | | |
+
+**6 `CellUnderTemp` and 7 `CellOverTemp` cannot occur in the current build.**
+Both are gated behind `config::TempFaultsTrusted`, which is **`false`**: NTC
+temperatures come through the ADG731 mux and are not yet validated end-to-end,
+so the firmware does not open the AIRs on them. Do not read "no over-temp
+faults in the log" as "the pack stayed cool" — read it as "temperature is not a
+fault source yet". Cell *voltage* protection is unaffected.
+
+Other notes that matter when reading a log:
+
+- **12 `FsmError`** has no enum slot (it is `safety::FsmErrorReason`, a bare
+  constant) because the FSM, not the predicate set, produces it: precharge
+  timeout, or the `Transition` bus-still-up guard failing. A TSMS drop in
+  **Car** mode is *not* an error at all — it de-energises to `Start` without
+  latching, so the driver can stop and restart unaided.
+- **15 `ChargerTsmsOpen`** is the Charger-mode counterpart, and it *does*
+  latch: scrutineering forbids re-activating a charge output after the SDC
+  opens, so recovery needs a full reset.
+- **14 `ChargerStale`** means the `0x101` heartbeat went silent beyond
+  `ChargerStaleMs` while committed to Charger mode — the charger was unplugged
+  mid-charge.
+- **16 `CellOpenWire`** is an LTC6811 ADOW two-pass open-wire confirmation. It
+  catches a broken sense tap that still reads *in range*, which a plain
+  cell-mV plausibility check cannot. It faults in **any** state.
+
+`fault_detail` depends on the reason: `BmsStale` / `CellUnderVoltage` /
+`CellOverVoltage` / `CellOverTemp` carry the offending module index 0..4, or
+`0xFF` if no module matched (an inconsistent or torn snapshot);
+`BmsModuleOffline` carries the live `module_online_mask`;
+`TempSensorDisconnected` and `CellOpenWire` carry their module masks; otherwise
+0.
+
+#### `0x6C1` — poll timing
+
+`[0..1]` last voltage-poll ms BE uint16, `[2..3]` worst-case since boot BE
+uint16 (both clipped at `0xFFFF`), `[4..7]` last temperature-sweep failure mask
+LE uint32, one bit per NTC channel the chain did not return.
+
+#### `0x6C2` / `0x6C3` — balance mask + cycles
+
+`0x6C2`: DCC bits for flat cells 0..63 as a 64-bit LE mask.
+`0x6C3`: `[0..3]` cells 64..94 in bits 0..30 (bit 31 reserved 0), `[4..5]`
+`balance_cycles_total` LE uint16, `[6..7]` `balance_cycles_active` LE uint16,
+both saturating at `0xFFFF`.
+
+Flat index is row-major `cell_idx = 19*m + c`; reconstruct with
+`module = b / 19, cell = b % 19`.
+
+#### `0x6C4` — boot diag
+
+`[0..3]` `jump_reason` LE uint32, read from RTC backup register 2
+(`config::JumpReason`: 0 none/clean cold POR, `'JUMP'` CAN-triggered BL jump,
+`'FAUT'` fault-forced, `'MANU'` operator-issued). `[4]` `app_init_progress`,
+a milestone counter that reaches **7** on a fully successful init — anything
+less pinpoints where `app_init_task.cpp` stopped. `[5..7]`
+`fdcan1_start_result` LE uint24, 0 = `HAL_OK`.
+
+#### `0x6C5` — crash post-mortem
+
+`[0]` stack-overflow seen (0/1), `[1]` watermark low byte (`0xFF` also encodes
+"the API call itself failed"), `[2..5]` failing task's `xTaskHandle` LE uint32,
+`[6..7]` `malloc_failed_count` LE uint16 saturating. **All zero on a clean
+session** — that is the normal reading.
+
+#### `0x6C6` — firmware ID
+
+`[0..2]` semver major/minor/patch, `[3..6]` first 4 bytes of the 8-byte git
+hash, `[7]` bootloader node ID from `firmware_info.reserved[0]`. Lets a tool
+verify at flash time that the app matches the bootloader it is talking to.
+
+#### `0x6C7` / `0x6C8` — per-IC PEC error counts
+
+Saturating uint8 per chain index. `0x6C7` = ICs 0..7, `0x6C8[0..1]` = ICs 8..9,
+`0x6C8[2..7]` reserved 0.
+
+Chain index → module: IC `2m` is module `m`'s **upper** LTC (cells 0..8), IC
+`2m+1` is the **lower** (cells 9..18) — `CellsPerLtcUpper` = 9,
+`CellsPerLtcLower` = 10. So a spike on `0x6C7[0]` reads "module 0's upper
+LTC6811 is misbehaving". `0x6C0[4..5]` says the chain is unhealthy; these say
+which IC.
+
+Counts reset only on cold boot — there is no per-session clear.
+
+#### `0x6C9` — FDCAN1 comms health
+
+`[0..3]` `fdcan1_busoff_recovery_count` LE uint32 (Stop/Start attempts this
+session; 0 = never went Bus-Off), `[4..7]` `g_acu_tx_fail` LE uint32 (ECU-TX
+matrix enqueue failures). No saturation on either.
+
+#### `0x6CB` — balance-quiesce health
+
+`[0..3]` `g_balance_quiesce_count` LE uint32 (DCC successfully cleared before a
+measurement), `[4..7]` `g_balance_quiesce_fail_count` LE uint32 (both WRCFGA
+attempts failed, so that poll measured with cells still bleeding).
+
+**The ratio is the diagnostic.** A bare fail count means nothing without the
+attempt count. `ok` climbing with `fail` flat means the quiesce is healthy —
+look elsewhere. `fail` climbing means cell voltages are being sampled under
+bleed, which corrupts both the balance selector (it ranks raw `cell_mV`) and
+the SoC filter (it corrects on `min_cell_mV`).
+
+Note that `DCP = 0` on the ADCV does **not** cover a failed quiesce: per
+LTC6811 datasheet Table 53 it suppresses discharge only on the cell being
+measured and its immediate neighbours, so roughly half the selected cells keep
+bleeding through the conversion. The quiesce is the only full stop.
+
+### `0x6D0..0x6FF` — raw ADOW grids (bench build only)
+
+Two more 24-frame blocks with the **same** window layout as the `0x680` cell
+grid, carrying the raw ADOW pull-up (`0x6D0`) and pull-down (`0x6E8`) readings
+so the open-wire check can be debugged against real hardware. `0xFFFF` = no
+cell, or PEC-skipped this scan.
+
+Gated on `config::AdowRawDiag`, which is **`false`** — the block is
+dead-code-eliminated on flight builds and has no `.def` and no DBC row. If you
+see traffic in `0x6D0..0x6FF` on a car, someone flashed a bench build.
+
+---
+
+## RX — vehicle and operator frames
+
+Dispatched in `AcuCanTask` in a fixed order that matters: pit-diag command
+first (cheap classify, and it must not be mistaken for a VCU frame on dispatch
+failure), then the bootloader trigger, then LOGFS, then `VehicleService`.
+Anything matching nothing increments `g_acu_rx_dropped_unknown`.
+
+### `0x100` — VCU DC-bus heartbeat
+
+**Standard 11-bit** (the hardware filter rejects extended frames, so a
+29-bit `0x100` never reaches the firmware). Declared DLC **3**, **10 ms** —
+the ECU posts it from its unconditional 10 ms control body, so that is the
+rate, and it is what `GenMsgCycleTime` carries for other teams' tooling. It is
+*not* `VcuStaleMs`: 200 ms is this repo's tolerance for the frame going quiet,
+which is a different question and deliberately twenty frames of margin.
+
+| Bytes | Field |
+|---|---|
+| 0–1 | `dc_bus_voltage` — **little-endian** uint16, volts: `(buf[1] << 8) | buf[0]` |
+| 2 bit 0 | `discharge_engaged` |
+| 2 bit 1 | `dc_bus_valid` — `dc_bus_voltage` is a present-tense measurement. `0` = do not use the voltage in **either** direction |
+
+`VehicleService::update_from_frame` accepts **DLC ≥ 2** and ignores byte 2 when
+it is absent.
+
+#### Freshness is part of the precharge criterion, not a separate check
+
+`VcuStaleMs` = **200 ms**, and it is enforced: `VcuStale` (reason 11) latches
+Error once the FSM has committed to **Car** mode. But that alone is not enough,
+and understanding why is the single most important thing on this page.
+
+`VehicleState` stores the **last received** `dc_bus_voltage`. When the VCU stops
+publishing, the number does not disappear — it **freezes**. Frozen at pack
+voltage, it satisfies the "bus ≥ 95 % of cell-sum pack voltage" precharge
+completion test *forever*, including after the link has actually bled to zero.
+Closing AIR+ then puts full pack voltage across the contactor with nothing to
+limit the inrush.
+
+`VcuStale` cannot win that race: it is gated on `vcu_required`, which is false
+in `Start`, so the value may already be arbitrarily old at the moment the
+operator presses; and it needs 200 ms while the FSM steps every 20 ms. So
+`precharge_target_reached()` **requires `dc_bus_fresh` as its first condition**
+(`state_machine.hpp`), where `dc_bus_fresh` = "a `0x100` arrived within
+`VcuStaleMs`, and at least one has ever arrived".
+
+Two different freshness windows are applied to the same frame, deliberately:
+
+| Window | Constant | Used for |
+|---|---|---|
+| 200 ms | `VcuStaleMs` | `dc_bus_fresh` — gates closing AIR+, and the `VcuStale` fault |
+| 1000 ms | `VcuFreshMs` | Car-vs-Charger mode lock at `Start → Precharge` |
+
+The mode lock is looser on purpose: a slow VCU should not be misread as an
+absent one and silently lock the car into Charger mode.
+
+#### Byte 2 bit 0 — `discharge_engaged`
+
+The ECU's report that the bleed resistor is **connected** across the link,
+either because the shutdown circuit is open or because the ECU is securing an
+interrupted discharge (see `0x021`). While it is set the AMS refuses to leave
+`Start`, so no contactor closes: with the SDC closed and the bleed connected,
+closing an AIR would put pack current through a resistor rated for transient
+duty. (The gate is on the *re-arm* only — `fsm::rearm_permitted` is evaluated
+on the `Start → Precharge` edge, not continuously in `Run`.)
+
+**Byte 2 is optional on the wire, and the compatibility rule is not
+symmetric.** A VCU that predates it sends DLC 2, the bit reads 0, and the AMS
+behaves exactly as before rather than blocking the car. The first time the AMS
+sees DLC ≥ 3 it **latches** `ecu_discharge_capable` (never cleared — a
+mid-session downgrade is not modelled).
+
+That latch gates only the *second* of two independent refusals in
+`fsm::rearm_permitted`:
+
+| Refusal | Condition | Gated on `ecu_discharge_capable`? |
+|---|---|---|
+| bleed connected | `discharge_engaged` set | **No** — honoured whatever the voltage reads |
+| link still charged | `dc_bus_V > DcBusDischargedV` (60 V) | **Yes**, and also requires `dc_bus_fresh` |
+
+The asymmetry is the point. Refusing to arm over a stranded link makes sense
+only if the other end can actually drain it; enforcing that against an ECU that
+cannot would brick the car rather than protect it. A connected bleed, by
+contrast, is a hard interlock regardless.
+
+`Charger` mode is exempt from both: the inverter is not in the charge loop and
+`dc_bus_voltage` is VCU-only and absent during a charge, so gating on it would make
+Charger unarmable.
+
+A blocked re-arm **holds in `Start`** rather than latching Error — the driver
+waits out the discharge and presses again, no reset needed. The DASH_CHG press
+*is* consumed on a blocked attempt, deliberately: carrying it forward would let
+a press made while the link was live arm the car by itself seconds later, when
+the discharge finally completes and nobody is expecting it.
+
+> **Which ECU is on the bus decides whether any of this runs.** `IFS08-CE-ECU`
+> `dev` sends DLC 3, so `ecu_discharge_capable` latches and both refusals are
+> live. ECU `main` sends DLC 2: the bit reads 0, the latch never sets, and the
+> car behaves exactly as it did before this frame grew a third byte. That
+> compatibility is the point of the asymmetry above, not an accident.
 >
-> Byte 2 is **optional on the wire**. A VCU that predates it sends DLC 2 and the
-> AMS reads the bit as 0, so older firmware behaves exactly as before instead of
-> blocking the car. The AMS latches "this ECU speaks the discharge protocol" the
-> first time it sees DLC ≥ 3, and only then enforces its own `dc_bus`-based
-> re-arm block — there is no point refusing to arm over a stranded link when the
-> other end has no way to drain it.
+> Neither path has been exercised on hardware. Verified in this repo only by
+> `tests/unit/test_state_machine.cpp`.
 
-### `0x101` — operator charge-mode request (#305)
+### `0x101` — operator charge-mode request
 
-| Field | Value |
+| | |
 |---|---|
-| Direction | RX (operator tool → AMS) |
-| Bus | FDCAN1 (standard 11-bit) |
+| Direction | RX (charger-side tool → AMS) |
 | DLC | ≥ 4 |
-| Payload | bytes `[0..3]` must equal the magic `43 48 52 47` ("CHRG"); other bytes ignored |
-| Use | Declares "we are on the charger." The AMS enters **Charger** mode only if a fresh request (within `ChargeReqFreshMs` = 1000 ms) is present **and** the VCU is absent, at the Start→Precharge mode lock. A still-fresh `0x101` later also gates the Charger precharge→Transition proceed (closing AIR+). |
-| Source | the charger emits it automatically the moment it is connected |
-| Cadence | sent periodically (≥ 2 Hz) while connected, so it stays fresh both at the mode lock and at the precharge proceed |
+| Payload | bytes `[0..3]` must equal `43 48 52 47` = `"CHRG"`; later bytes ignored |
+| Freshness | `ChargeReqFreshMs` = 1000 ms; `ChargerStaleMs` = 1000 ms for the fault |
+| Cadence | re-sent ≥ 2 Hz while connected |
 
-The charger itself has no comms with the AMS, so this auto-emitted frame
-is the positive charge-detect. Without it, a car with a dead VCU locks
-**Car** mode and faults on VcuStale rather than silently charging. The
-magic gate prevents bus noise / a stray frame from flipping the AMS into
-a HV charge mode. Handled in `vehicle_service.cpp`.
+The magic gate exists so bus noise or a stray frame cannot flip the AMS into a
+HV charge mode. Handled in `vehicle_service.cpp`.
 
-Full charge bring-up (one button): with `0x101` fresh (charger connected)
-and the VCU absent, the operator presses **DASH_CHG** (PF10, a momentary
-edge-detected button) **once** to leave Start→Precharge. The proceed to
-Transition (close AIR+) is then gated on `0x101` *still* being fresh — the
-charger's auto-emitted "I'm connected and ready" signal — since Charger
-has no `dc_bus_V` to voltage-gate on, and the charger soft-starts its own
-output. If `0x101` goes stale before the proceed (charger unplugged), the
-precharge holds and hits the `PrechargeMaxMs` timeout → Error rather than
-closing AIR+ into a disconnected charger. See `state_machine.hpp` /
-`safety_task.cpp`.
+This frame does **three** distinct jobs, and they happen at different moments:
 
-### `0x103` — operator balance-control override (#336)
+1. **Mode lock at `Start → Precharge`.** Charger mode requires a fresh `0x101`
+   **and** VCU absence (`0x100` silent beyond `VcuFreshMs`). Requiring both
+   means a car with a merely dead VCU does *not* silently lock Charger — it
+   locks Car and faults on `VcuStale`, which is the correct, loud outcome.
+   Symmetrically, a stray `0x101` while the VCU is live cannot flip a running
+   car into Charger.
+2. **Precharge → Transition proceed, in Charger mode only.** There is nothing
+   to voltage-gate on: `dc_bus_voltage` comes only from the VCU, which is absent
+   during a charge. A **still-fresh** `0x101` is the "charger is connected and
+   ready" signal that authorises closing AIR+. If it goes stale first, precharge
+   simply holds until `PrechargeMaxMs` (5000 ms) expires → Error, rather than
+   closing AIR+ into a disconnected charger.
+3. **Heartbeat while charging.** Once committed to Charger mode, silence beyond
+   `ChargerStaleMs` latches Error with reason 14 `ChargerStale`.
 
-| Field | Value |
+Note what Charger mode does **not** do: it closes only AIR− on entry to
+Precharge, then AIR+ on the proceed. The precharge contactor sits in *parallel*
+with AIR+, so closing it while the charger sources current would route the full
+charge current through the transient-rated resistor. The charger voltage-matches
+its output to the pack before asserting `0x101`, so there is no inrush to
+absorb. **The precharge resistor never enters the charge loop.**
+
+Full charge bring-up is one button: with `0x101` fresh and the VCU absent, the
+operator presses **DASH_CHG** (PF10, momentary, edge-detected at the 10 ms
+cadence) once.
+
+### `0x103` — operator balance master switch
+
+| | |
 |---|---|
-| Direction | RX (operator tool → AMS) |
-| Bus | FDCAN1 (standard 11-bit) |
+| Direction | RX (pit tool → AMS) |
 | DLC | ≥ 4 |
-| Payload | bytes `[0..3]` = `42 41 4C 4F` ("BALO") → **suppress** autonomous balancing; `42 41 4C 58` ("BALX") → **resume** auto. Other payloads ignored. |
-| Source | the ChargerDisplayWario pit tool (BALANCE ON/OFF button) |
-| Cadence | re-sent ≥ 2 Hz while suppress is held |
-| Freshness | reverts to autonomous if silent > `BalanceOverrideFreshMs` (5000 ms) |
+| Cadence | re-sent ≥ 2 Hz |
+| Freshness | `BalanceOverrideFreshMs` = 5000 ms |
 
-Lets the pit operator pause passive cell balancing during a charge (e.g.
-for a clean cell-voltage snapshot) without a firmware change. The AMS
-suppresses balancing only while a fresh "BALO" is in effect; a "BALX" or a
-stale override resumes autonomous balancing. **Only affects balancing —
-which runs in `Charge` only — so it can never touch an AIR / safety path,
-and `Error` is unaffected.** The acknowledged override state is mirrored on
-pit-diag `0x6C0[2]` bit 2 so the display can confirm receipt. Magic-gated
-against bus noise; handled in `vehicle_service.cpp`, consumed by
-`BmsPollTask` via `VehicleService::balance_suppressed`.
+**Three** magics, not two (`config::BalanceCmd*Magic`):
+
+| Bytes `[0..3]` | ASCII | `BalanceCmd` | Effect |
+|---|---|---|---|
+| `42 41 4C 4F` | `"BALO"` | `Off` (0) | suppress balancing |
+| `42 41 4C 4E` | `"BALN"` | `On` (2) | force balancing on |
+| `42 41 4C 58` | `"BALX"` | `Auto` (1) | autonomous balancing |
+
+Any other payload is ignored and leaves the previous command *and* its
+freshness tick in place — bus-noise safe.
+
+**The dead-man falls back to `Off`, not to `Auto`, and "never seen" counts as
+stale.** `VehicleService::effective_balance_cmd` returns `Off` when
+`last_override_tick == 0` or when the last command is older than
+`BalanceOverrideFreshMs`. So on a board that has never heard a `0x103`,
+balancing is **off** and `0x6C0[2]` bit 2 reads **1**. That is the intended
+failure direction: a dead pit-tool link must never leave a pack bleeding
+unattended.
+
+Balancing runs in `Charge` only, so this can never touch an AIR or a safety
+path, and `Error` is unaffected. Consumed by `BmsPollTask` via
+`VehicleService::balance_suppressed`.
 
 ### `0x104` — operator per-module balance enable
 
-| Field | Value |
+| | |
 |---|---|
-| Direction | RX (operator tool → AMS) |
-| Bus | FDCAN1 (standard 11-bit) |
+| Direction | RX (pit tool → AMS) |
 | DLC | ≥ 5 |
-| Payload | bytes `[0..3]` = `42 41 4C 4D` ("BALM") magic; byte `[4]` = 5-bit enable mask, **bit `m` (0..4) = 1 → module `m` may balance**. Other magic ignored (bus-noise safe). |
-| Source | the ChargerDisplayWario pit tool (per-module balance toggles) |
-| Cadence | re-sent ≥ 2 Hz while held |
-| Freshness | stale > `BalanceModulesFreshMs` (5000 ms) or never seen → **all modules enabled** (`BalanceModulesDefaultMask` = `0x1F`) |
+| Payload | `[0..3]` = `42 41 4C 4D` = `"BALM"`; `[4]` = 5-bit mask, bit `m` = 1 → module `m` may balance |
+| Cadence | re-sent ≥ 2 Hz |
+| Freshness | `BalanceModulesFreshMs` = 5000 ms |
 
-Layers **under** the `0x103` master switch: `0x103` decides OFF/ON/AUTO for the
-whole pack, and `0x104` then narrows *which modules* participate. A disabled
-module never discharges (`balance_controller.hpp` skips it), but its cells still
-count toward the pack-wide balance floor. The dead-man deliberately re-enables
-every module on a stale link — the `0x103` dead-man (→ OFF) is what actually
-stops balancing when the WarioCharger link dies, so a lost `0x104` must not
-silently freeze balancing off. **Only affects balancing — never an AIR / safety
-path.** Handled in `vehicle_service.cpp`, resolved by
-`VehicleService::effective_balance_modules_mask`, consumed by `BmsPollTask`.
+Layers **under** `0x103`: `0x103` decides Off/On/Auto for the whole pack, and
+`0x104` then narrows which modules participate. A disabled module never
+discharges, but its cells still count toward the pack-wide balance floor.
 
-### `0x600` — start button **[RETIRED — fix/48]**
+**This dead-man goes the opposite way: stale or never-seen re-enables *every*
+module** (`BalanceModulesDefaultMask` = `0x1F`). That is not an inconsistency
+with `0x103` — it is the consequence of `0x103` already being the thing that
+stops balancing on a dead link. If `0x104` also failed closed, a lost frame
+would silently freeze balancing off on some modules with no indication.
 
-Replaced by the **TSMS** GPIO (PF9, active-high, external pull-down). The
-FSM Start→Precharge transition now requires `TSMS` held **and** a
-**DASH_CHG** press: TSMS is level-polled, while DASH_CHG (PF10) is a
-momentary button edge-detected at the 10 ms cadence in `safety_task.cpp`
-(#305). Run/Charge are sustained by TSMS alone.
+Resolved by `VehicleService::effective_balance_modules_mask`, consumed by
+`BmsPollTask`.
 
-### `0x401 – 0x406` — accumulator temperature sensors **[RETIRED — FDCAN2 drop + isoSPI]**
+### `0x002` — reboot into bootloader
 
-On-CAN temperature RX rode the legacy **FDCAN2** bus, which no longer
-exists (#388, `a885bf5`). No current firmware consumes `0x401–0x406`:
-accumulator temperatures are read over the LTC6811-1 isoSPI chain
-(`docs/BMS_LTC6811.md`), not CAN. (The legacy `class_temperatures.cpp`
-parser is gone.)
-
-### `0x18FF50E7` — charger detected **[RETIRED — fix/48]**
-
-The charger no longer communicates over CAN; the only thing on the
-charger-assembly bus is an HMI for displaying cell V/T. Car-vs-charger
-context is now distinguished by VCU `0x100` heartbeat freshness at the
-moment of Start→Precharge transition: heard within `VcuFreshMs`
-(1000 ms) → Car (target = Run), silent → Charger (target = Charge).
-The captured mode locks for the rest of the boot cycle and never
-re-evaluates.
-
----
-
-## RX — bootloader-trigger command (FDCAN1)
-
-Not from the legacy AMS — added in the refactor for in-system firmware
-update via [isc-fs/stm32-can-bootloader](https://github.com/isc-fs/stm32-can-bootloader).
-
-> Moved from FDCAN2 to FDCAN1 in v1.2.0 (#73). The in-band reboot
-> trigger rides on the accumulator/vehicle bus (FDCAN1) alongside
-> everything MingoCAN already sends. The AMS app is FDCAN1-only
-> (FDCAN2 dropped in #388, `a885bf5`); the stm32-can-bootloader is a
-> separate sector-0 image that brings up its own CAN peripheral after
-> the reset — the app does not leave anything configured for it.
-
-### `0x002` — request reboot into bootloader
-
-| Field | Value |
+| | |
 |---|---|
 | Direction | RX (host → AMS) |
-| Bus | **FDCAN1** (accumulator bus; the sector-0 bootloader brings up its own CAN after the reset) |
-| ID type | Standard 11-bit, very high arbitration priority |
-| DLC | 4 |
-| Payload | `{0xB0, 0x07, 0xAD, 0x11}` -- all 4 bytes must match exactly |
-| Effect | `AcuCanTask` calls `ams::Bootloader::request_reboot()` which opens all relays, drains TX, writes `0xB00710AD` to `RTC->BKP0R`, and `NVIC_SystemReset()`s. The sector-0 bootloader's reset handler sees the magic, clears it (one-shot), and stays in BL mode awaiting flash commands on the CAN peripheral it brings up. |
-| Failure modes | Wrong bus, wrong ID, wrong DLC, or any byte of the payload differing → frame silently dropped, no reboot. |
+| DLC | **exactly 4** |
+| Payload | `B0 07 AD 11` — all four bytes must match |
+| Effect | `ams::Bootloader::request_reboot()`: opens all relays, writes `0xB00710AD` to `RTC->BKP0R`, `NVIC_SystemReset()`. Never returns |
 
-Source: [`Core/Inc/app/bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`), [`Core/Src/app/bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`), dispatched in [`Core/Src/app/acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp). Constants in [`Core/Inc/app/ams_config.hpp`](../Core/Inc/app/ams_config.hpp) (`BlBootReqCanId`, `BlBootReqPayload`, `BlBootReqDlc`).
+The sector-0 bootloader's reset handler sees the magic, clears it (one-shot),
+and stays in BL mode awaiting flash commands on the CAN peripheral it brings up
+itself. Wrong bus, wrong ID, wrong DLC, or any byte differing → silently
+dropped, no reboot.
+
+The check runs **before** `VehicleService`, so the AMS still reboots on request
+even if `0x002` ever collides with a future frame.
+
+Sources: [`bootloader.hpp`](../Core/Inc/app/bootloader.hpp) (`matches_trigger`),
+[`bootloader.cpp`](../Core/Src/app/bootloader.cpp) (`request_reboot`);
+constants `BlBootReqCanId` / `BlBootReqPayload` / `BlBootReqDlc` in
+`ams_config.hpp`.
 
 ---
 
-## RX/TX — LOGFS log extraction (FDCAN1, ISO-TP)
+## RX/TX — LOGFS log extraction (ISO-TP)
 
-On-CAN retrieval of the SD datalogs, so a card never has to be pulled from
-a mounted accumulator. Serves [#406](https://github.com/isc-fs/IFS08-CE-AMS/issues/406)
-(MingoCAN) and [#439](https://github.com/isc-fs/IFS08-CE-AMS/issues/439) (`ui.py`)
-with one protocol.
-
-Unlike everything else in this document, LOGFS is **not** a fixed-layout
-signal frame — it is a request/response protocol over **ISO-TP
-(ISO 15765-2)**, so it does not appear in `ams.dbc`.
+On-CAN retrieval of the SD datalogs, so a card never has to be pulled from a
+mounted accumulator. Unlike everything else here this is **not** a fixed-layout
+signal frame — it is a request/response protocol over **ISO-TP (ISO 15765-2)**,
+which is why it has no `.def` and does not appear in `ams.dbc`.
 
 ### Addressing
 
-| Direction | ID | Note |
-|---|---|---|
-| Host → AMS | `0x000 + NodeID` = **`0x002`** | AMS is node **2** ([#403](https://github.com/isc-fs/IFS08-CE-AMS/issues/403); role map ECU=1 / AMS=2 / uDV=3) |
-| AMS → host | `0x010 + NodeID` = **`0x012`** | |
+| Direction | ID |
+|---|---|
+| Host → AMS | `0x000 + NodeID` = **`0x002`** |
+| AMS → host | `0x010 + NodeID` = **`0x012`** |
 
-> **`0x002` is shared with the boot trigger above, and that is safe.** This is
-> now live, not hypothetical — the AMS is node 2.
-> `matches_trigger` requires **DLC 4** *and* the exact `B0 07 AD 11`
-> payload; an ISO-TP frame is always **DLC 8**, and `0xB0` can never be a
-> valid ISO-TP PCI byte (only `0x0`–`0x3` are). The trigger check runs
-> first in `AcuCanTask`, so a LOGFS frame passes through it untouched.
+`AmsNodeId` = **2** (role map: ECU 1, AMS 2, uDV 3). The board's bootloader
+must be provisioned to the same node — both halves change together.
+
+> **`0x002` is shared with the boot trigger, and that is safe by construction.**
+> `matches_trigger` demands DLC **4** *and* the exact `B0 07 AD 11` payload; an
+> ISO-TP frame is always DLC 8, and `0xB0` can never be a valid ISO-TP PCI byte
+> (only `0x0`–`0x3` are). The trigger check runs first, so a LOGFS frame passes
+> through it untouched.
+
+ISO-TP parameters: `MaxMsg` 1024 B, timeout 1000 ms, flow control
+`BS = 0` / `STmin = 0` (every consecutive frame, no further FC, no inter-frame
+gap).
 
 ### Message framing
 
-Each reassembled ISO-TP message is `[msg_type][opcode][payload…]`.
+Each reassembled message is `[msg_type][opcode][payload…]`, payloads
+little-endian.
 
-Requests use **`msg_type = 0x06` (`BL_MSG_APP_CTRL`)**, *not* `0x00`
-(`BL_MSG_CMD`). Under `CMD` the application and bootloader would share one
-opcode registry, and `0x2x` is bootloader-adjacent (`0x20` is reserved
-there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
+Requests use **`msg_type = 0x06` (`AppCtrl`)**, *not* `0x00` (`Cmd`). Under
+`Cmd` the application and the bootloader would share one opcode registry, and
+`0x2x` is bootloader-adjacent there. Responses reuse `Ack 0x01` / `Nack 0x02`.
 
-> **Consequence for hosts:** the bootloader *silently drops* `APP_CTRL`. A
-> LOGFS command sent while the node sits in the **bootloader** yields a
+> **Consequence for host tools:** the bootloader *silently drops* `AppCtrl`. A
+> LOGFS command sent while the node is sitting in the **bootloader** yields a
 > **timeout, not a NACK** — indistinguishable from a dead node. Probe with a
-> bootloader command (`DISCOVER 0x03` / `GET_FW_INFO 0x04` under `CMD`),
-> which the BL *does* answer, before reporting a cable fault.
+> bootloader command (`DISCOVER 0x03` / `GET_FW_INFO 0x04` under `Cmd`), which
+> the BL does answer, before reporting a cable fault.
+>
+> Symmetrically, the application answers a `Cmd`-typed frame with **silence**,
+> not a NACK: it does not speak for the bootloader's namespace.
 
-### Opcodes (little-endian payloads)
+### Opcodes
 
 | Opcode | Name | Args | ACK payload |
 |---|---|---|---|
@@ -739,34 +932,35 @@ there for a future `CMD_MEM_READ`). Responses reuse `ACK 0x01` / `NACK 0x02`.
 | `0x25` | CLOSE | `handle:u16` | — |
 | `0x27` | FINALIZE | — | `index:u16` |
 
-`entry` is a fixed **22 bytes** — `{index:u16, size:u32, mtime:u32,
-name[12]}` — so a listing is parsed by stride. `mtime` is the packed FAT
-stamp (`fdate << 16 | ftime`). `next_cursor == 0xFFFF` ends the listing.
+`entry` is a fixed **22 bytes** — `{index:u16, size:u32, mtime:u32, name[12]}` —
+so a listing parses by stride alone. `mtime` is the packed FAT stamp
+(`fdate << 16 | ftime`). `next_cursor == 0xFFFF` ends the listing. At most
+**46** entries fit one reply.
 
-On OPEN, **`crc32 == 0` means "not available — use `LOGFS_CRC`"**, not a literal
-zero CRC. Every file this firmware seals gets a `.CRC` sidecar, but cards
-written before sidecars existed have none, and OPEN must never block streaming
-4 MiB to compute one.
+Three behaviours a host must get right:
 
-**A short READ means end-of-file**, and is an ACK, not an error — that is
-the host's normal termination signal. An oversized `len` is clamped to 512
-rather than rejected.
+- **On OPEN, `crc32 == 0` means "not available — use `CRC`"**, not a literal
+  zero CRC. Every file this firmware seals gets a `.CRC` sidecar, but cards
+  written before sidecars existed have none, and OPEN must never block
+  streaming 4 MiB to compute one.
+- **A short READ means end-of-file**, and it is an ACK, not an error — that is
+  the host's normal termination signal. An oversized `len` is clamped to 512
+  rather than rejected.
+- **`FINALIZE` seals the *active* log** — flush, close, rename to `.CSV`, write
+  the CRC sidecar — and returns the sealed index, so the run that just happened
+  is immediately listable rather than waiting on rotation. It NACKs
+  `FILE_NOT_FOUND` when there is nothing to seal (no active file, or no rows
+  written), so an eager operator cannot fill the card with header-only files.
+  Any open read handle is released, since the file set changed.
 
-**`FINALIZE` (`0x27`)** seals the *active* log — flush, close, rename to
-`.CSV`, write the CRC sidecar — and returns the sealed index, so the run that
-just happened is immediately listable and openable rather than waiting on
-rotation. It NACKs `FILE_NOT_FOUND` when there is nothing to seal (no active
-file, or no rows written yet), so an eager operator cannot fill the card with
-header-only files. Any open read handle is released, since the file set has
-changed.
-
-**v1 is read-only.** There is no DELETE (`0x26` is deliberately
-unimplemented and NACKs as unsupported): an extraction tool that can also
-erase logs is the wrong tool to hand a pit crew.
+**v1 is read-only.** `0x26` (DELETE) is deliberately unimplemented and NACKs as
+unsupported: an extraction tool that can also erase logs is the wrong tool to
+hand a pit crew.
 
 ### NACK codes
 
-Values ≤ `0x10` are the bootloader's, reused verbatim.
+Values ≤ `0x10` are the bootloader's, reused verbatim so the vocabulary stays
+coherent across both images.
 
 | Code | Meaning |
 |---|---|
@@ -783,63 +977,70 @@ Values ≤ `0x10` are the bootloader's, reused verbatim.
 
 ### Vehicle-state gate
 
-**Log extraction is permitted only with the contactors open and the tractive
-system down — states `Start` and `Error`.** Any LOGFS opcode in `Precharge` /
-`Transition` / `Run` / `Charge` is refused with `NACK VEHICLE_STATE (0x15)`,
-and any open read handle is released.
+**Log extraction is permitted only in `Start` and `Error`** — the two states
+with the contactors open and the tractive system down, which is the property
+the rule is actually about. Any LOGFS opcode in `Precharge` / `Transition` /
+`Run` / `Charge` is refused with `NACK VEHICLE_STATE (0x15)`, and any open read
+handle is released.
 
-Beyond the obvious (a pull is a multi-minute, bus-heavy operation and should not
-be invited while the car can move) there is a concrete mechanism: the diag TX id
-`0x010 + NodeID` is numerically **lower** than the VCU heartbeat `0x100`, so
-every queued LOGFS frame **wins arbitration** against the heartbeat the safety
-FSM depends on. `VcuStaleMs` is 200 ms and latches `Error`, which opens the
+Beyond the obvious — a pull is a multi-minute, bus-heavy operation and nobody
+should be inviting it while the car can move — there is a concrete mechanism.
+The diag TX id `0x012` is numerically **lower** than the VCU heartbeat `0x100`,
+so every queued LOGFS frame **wins arbitration** against the heartbeat the
+safety FSM depends on. `VcuStaleMs` is 200 ms and latches Error, which opens the
 contactors. A single reply burst is only ~17–33 ms so the margin is wide, but
-the failure mode is *"a log pull opens the AIRs"* and it is not worth carrying
-when the alternative is simply not extracting while the car is live.
+the failure mode is *"a log pull opens the AIRs"*, and that is not worth
+carrying when the alternative is simply not extracting while the car is live.
 
-`CONNECT` / `DISCONNECT` remain available in **any** state: they cost nothing on
-the bus and let a host discover *why* it is being refused rather than facing a
-silent node.
+`Error` is permitted deliberately, not grudgingly: "grab the log from the run
+that just faulted" is the case the feature exists for, and a faulted car sits in
+`Error`. With `ErrorLatch` sticky across resets, a power-cycled post-fault car
+boots straight back into it. It is also the one state where the arbitration
+hazard cannot bite — `VcuStale` latching Error is exactly what the gate protects
+against, and in `Error` that has already happened.
 
-> `Error` is permitted deliberately: it is the case the feature exists for.
-> #448 is *"grab the log from the run that just faulted"*, and a faulted car
-> sits in `Error` — with `ErrorLatch` sticky across resets, a power-cycled
-> post-fault car boots back into it. It is also the one state where the
-> arbitration hazard cannot bite: `VcuStale` latching `Error` is precisely what
-> the gate protects against, and in `Error` that has already happened.
+The gate is checked **after** the session check, so a connected host gets a
+specific reason instead of a generic refusal, and **before** anything reaches
+the card. `CONNECT` / `DISCONNECT` remain available in **any** state: they cost
+nothing on the bus and let a host discover *why* it is being refused rather than
+facing a silent node.
 
 ### Session
 
-`CONNECT` opens a session; everything except CONNECT/DISCONNECT is refused
-with `BAD_SESSION` without one, so a stray frame cannot stream the card to
-whoever is on the bus. Idle timeout is **10 s**, after which any open file
-handle is released — an operator who unplugs mid-pull does not pin it.
-A CONNECT from a second host takes over, releasing the previous handle.
-
-A `CMD`-typed (`0x00`) frame gets **silence**, not a NACK: the application
-does not answer for the bootloader's namespace.
+`CONNECT` opens a session; everything except CONNECT/DISCONNECT is refused with
+`BAD_SESSION` without one, so a stray frame cannot stream the card to whoever is
+on the bus. Idle timeout is **10 s**, after which any open handle is released —
+an operator who unplugs mid-pull does not pin it. A CONNECT from a second host
+takes over, releasing the previous handle: a pit tool that cannot connect
+because a dead session is parked is worse than one that interrupts a session
+nobody is driving.
 
 ### Files visible
 
 Only sealed `LOGnnnn.CSV`. The active `LOGnnnn.TMP` is excluded because its
 length would be stale before a host finished reading it, and `LOGnnnn.CRC`
-sidecars are an implementation detail. The sidecar holds the CRC-32
-accumulated as rows were written, so `CRC` answers without re-reading the
-file; absent one, it falls back to streaming.
+sidecars are an implementation detail. The sidecar holds the CRC-32 accumulated
+as rows were written, so `CRC` answers without re-reading the file; absent one,
+it falls back to streaming.
 
-CRC-32 is **ISO-HDLC / zlib** (poly `0xEDB88320` reflected, init and final
-XOR `0xFFFFFFFF`) — i.e. Python's `zlib.crc32`. Deliberately *not* the
-STM32 hardware CRC default (CRC-32/MPEG-2), which is a different checksum.
+CRC-32 is **ISO-HDLC / zlib** (poly `0xEDB88320` reflected, init and final XOR
+`0xFFFFFFFF`) — i.e. Python's `zlib.crc32`. Deliberately **not** the STM32
+hardware CRC default (CRC-32/MPEG-2), which is a different checksum.
 
 ### Throughput — plan for it
 
-ISO-TP carries 7 of every 8 bytes, so a 512-byte READ is ~76 frames ≈ 19 ms
-at 500 kbit/s → **~27 KB/s on an idle bus**. With `LogFileMaxBytes` at 4 MiB
-that is **~2.5–3 min per file**, and the bus is not idle. Larger reads buy
-~5%; per-frame overhead dominates. Hosts should show progress, let operators
-pick files from `LIST` sizes, and resume via the offset-based `READ`.
+ISO-TP carries 7 of every 8 bytes, so a 512-byte READ is ~76 frames ≈ 19 ms at
+500 kbit/s → **~27 KB/s on an idle bus**. With `LogFileMaxBytes` at 4 MiB that
+is **~2.5–3 min per file**, and the bus is not idle. Larger reads buy ~5 %;
+per-frame overhead dominates. Hosts should show progress, let operators pick
+files from `LIST` sizes, and resume via the offset-based `READ`.
 
-Source: [`Core/Inc/app/isotp.hpp`](../Core/Inc/app/isotp.hpp),
+The reply pump deliberately leaves `DiagTxReservedSlots` (6) of the 16-deep TX
+FIFO free rather than filling it, so the flight telemetry matrix — which ships
+non-blocking later in the same loop pass — always finds room. Filling to zero
+blacks out telemetry for the whole multi-minute pull.
+
+Sources: [`isotp.hpp`](../Core/Inc/app/isotp.hpp),
 [`diag_proto.hpp`](../Core/Inc/app/diag_proto.hpp),
 [`diag_dispatch.hpp`](../Core/Inc/app/diag_dispatch.hpp),
 [`logfs_server.hpp`](../Core/Inc/app/logfs_server.hpp),
@@ -849,38 +1050,87 @@ Source: [`Core/Inc/app/isotp.hpp`](../Core/Inc/app/isotp.hpp),
 
 ---
 
-## Timeout summary
+## Retired IDs
 
-| Signal | Timeout | Enforced (legacy) | Refactor plan |
-|---|---|---|---|
-| BMS voltage RX | 1500 ms | Yes → `BMS_ERROR_COMMUNICATION` | Keep, route to `FORCE_ERROR` |
-| BMS temperature RX | 1000 ms | No (commented out) | **Enforce** |
-| `0x100` DC bus | 1000 s | No | **Tighten to 200 ms** |
-| Temperature module RX | 1000 ms | No | **Enforce** |
-| Current sensor | — | — | Add: 200 ms staleness → `FORCE_ERROR` |
+Nothing in the current build emits or consumes any of these. Listed only so
+someone spelunking an old trace can find the cross-reference.
+
+| ID(s) | Was | Replaced by |
+|---|---|---|
+| `0x20` (extended) | AMS state reply, 5-value state byte | `0x020` standard `ok_precharge`; full state on `0x4A0[0]` |
+| `0x12C + 0x1E·m`, `0x140 + 0x1E·m` and their response ranges | BMS slave polling over the second CAN bus | LTC6811-1 isoSPI chain — see [`BMS_LTC6811.md`](BMS_LTC6811.md) |
+| `0x401 – 0x406` | accumulator temperature RX | isoSPI temperature sweep |
+| `0x40D – 0x412` | charger-mode temperature passthrough (extended) | nothing; there is no second bus to forward from |
+| `0x450` | unsigned 2-byte current | `0x135` (signed deciamps + DCDC in one frame) |
+| `0x600` | start button | TSMS (PF9, level) + DASH_CHG (PF10, momentary edge) |
+| `0x18FF50E7` | charger detect | `0x101` magic-gated charge request + VCU absence |
+
+If the legacy module base really was `0x12C` (see the caveat below), then that
+ID has been **reused**: it is now the pack-wide minimum cell voltage TX frame,
+and an old trace and a new one mean different things by it.
+
+The legacy source files those frames were parsed in (`class_bms.cpp`,
+`class_cpu.cpp`, `class_temperatures.cpp`, `module_state_machine.cpp`) are not
+in this repository, so their exact byte layouts cannot be verified from this
+tree. Earlier revisions of this page reproduced them from memory; those tables
+have been removed rather than left as unverifiable claims.
 
 ---
 
-## Refactor checklist
+## Adding or changing a message
 
-For each TX/RX frame above, the refactor must:
+1. Write or edit the `.def`. That is the whole layout. The compile-time
+   bit-overlap `static_assert` in pass 5 of `can_codecs.hpp` catches a
+   copy-pasted byte index; the per-field width `static_assert` in pass 1
+   catches `FIELD_LE(x, uint8_t, 0, 16, …)`.
+2. Add it to `all_messages.inc` if it is new.
+3. Keep the struct holding **raw wire integers**. Any scaling, clipping,
+   saturation or bit assembly belongs in the adapter
+   (`telemetry_encoders.hpp`, `acu_tx_encoders.hpp`, `pit_diag_emitter.hpp`),
+   never in the `.def`.
+4. Add an ID and a cadence constant to `ams_config.hpp`, and put the send in
+   the right cadence group in `acu_can_task.cpp`. **The `.def` period must
+   match the group you actually send in** — it becomes `GenMsgCycleTime` and
+   other teams size receive timeouts from it.
+5. Regenerate the DBC (command at the top). CI diffs it.
+6. Update this page.
 
-- [ ] Define the ID, DLC, and byte layout as `constexpr` in
-      `Core/Inc/app/ams_config.hpp`.
-- [ ] Implement encode/decode as free functions on `CanFrame` (no
-      class-local state).
-- [ ] Cover encode/decode with unit tests (host CMake, Unity).
-- [ ] Verify byte-compatibility against a captured trace from the legacy
-      firmware on the bench before merging the corresponding feat branch.
+One trap worth knowing: `send_acu` sets `tx.DataLength = dlc` as a **raw byte
+count**. The STM32H7 HAL applies the register shift internally and its
+`FDCAN_DLC_BYTES_N` macros are unshifted — unlike STM32G4's HAL, which
+pre-shifts them. Pre-shifting here puts DLC = 0 on the wire for every frame,
+which is easy to import from G4 code and hard to spot.
 
-Open coordination items with the VCU team:
+---
 
-- [x] ~~Widen `0x450` payload to signed 16-bit mA.~~ Done differently:
-      `0x450` retired, `0x135` carries signed 16-bit deciamps (fix/53).
-- [x] ~~Confirm `0x600` bus assignment.~~ Retired (fix/48); replaced by the
-      TSMS/DASH_CHG GPIOs. The app is FDCAN1-only (FDCAN2 dropped, #388).
-- [x] ~~Confirm `0x401–0x406` bus assignment.~~ Retired; accumulator
-      temperatures now arrive over LTC6811-1 isoSPI, not CAN.
-- [ ] Agree on a new pack-status frame on FDCAN1 at 100 ms cadence with
-      voltage / current / state / fault word packed together (planned for
-      Phase 4, feat/12).
+## Known gaps
+
+- **The discharge interlock has never run end to end.** Both halves exist —
+  this repo's and `IFS08-CE-ECU` `dev`'s — but each is verified only by its own
+  host tests and no bench has had both boards on it. Against ECU `main`, which
+  still sends `0x100` at DLC 2, the interlock is inert by design.
+- **`0x680`/`0x6A0` grids have no `.def`.** Their layout lives in
+  `can_codecs.hpp` `ALL_ARRAYS` because the DSL has no multiplexed-array
+  representation. They do reach the DBC, expanded frame-by-frame.
+- **`0x6D0`/`0x6E8` ADOW grids have no `.def` and no DBC row** and are compiled
+  out of flight builds.
+- **`0x137` `tmax_dcdc` is a fixed stub** (`-32768`); no DCDC temperature
+  sensor is wired.
+- **`0x4A3`, `0x500`, `0x501`, `0x502` are declared IDs with no producer.**
+- **The generated DBC has no `VAL_` tables**, so `fsm_state`, `mode_locked`,
+  `fault_reason`, `reset_cause` and `last_fault` decode as bare integers in any
+  DBC-driven tool. The mappings are in this document and in the headers only.
+- **`0x4A2[3..4]` `dc_bus_voltage` carries no freshness bit** and freezes at its last
+  received value when the VCU goes silent.
+- **`0x4A4` reports commanded coil state, not contactor position.** There is no
+  auxiliary-contact feedback anywhere in this design, so no CAN frame can
+  distinguish a welded contactor from a healthy one.
+- **Fault reasons 6 and 7 (cell under/over temperature) are unreachable**
+  while `config::TempFaultsTrusted` is `false`.
+- **`ams_config.hpp`'s comment on `AcuTxSocId` still calls `0x130` deferred**,
+  and the header comment in `acu_can_task.cpp` says the same. Both are stale —
+  `tx_soc()` is scheduled in the 250 ms group. The scheduler, not the comment,
+  is what runs.
+- **`telemetry_encoders.hpp` labels `encode_relay_status` as `0x4A3`**; it is
+  transmitted on `0x4A4` (`AmsRelayStatusId`). A comment-only error, but it
+  will mislead anyone grepping for an ID.
