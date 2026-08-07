@@ -187,9 +187,10 @@ BO_ 1739 PIT_balance_health: 8 AMS
 BO_ 2033 PitDiag_ack: 1 AMS
  SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
-BO_ 256 VCU_dc_bus_heartbeat: 3 VCU
- SG_ dc_bus_V : 0|16@1+ (1,0) [0|0] "V" Vector__XXX
+BO_ 256 VCU_heartbeat: 3 VCU
+ SG_ dc_bus_voltage : 0|16@1+ (1,0) [0|0] "V" Vector__XXX
  SG_ discharge_engaged : 16|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ dc_bus_valid : 17|1@1+ (1,0) [0|0] "bool" Vector__XXX
 
 BO_ 257 Operator_charge_request: 4 Pit_Tool
  SG_ magic : 7|32@0+ (1,0) [0|0] "magic" Vector__XXX
@@ -628,7 +629,7 @@ BA_ "GenMsgCycleTime" BO_ 1735 1000;
 BA_ "GenMsgCycleTime" BO_ 1736 1000;
 BA_ "GenMsgCycleTime" BO_ 1737 1000;
 BA_ "GenMsgCycleTime" BO_ 1739 1000;
-BA_ "GenMsgCycleTime" BO_ 256 100;
+BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1664 1000;
 BA_ "GenMsgCycleTime" BO_ 1665 1000;
 BA_ "GenMsgCycleTime" BO_ 1666 1000;

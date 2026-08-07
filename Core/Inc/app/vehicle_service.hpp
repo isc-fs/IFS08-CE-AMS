@@ -33,6 +33,22 @@ struct VehicleState {
     // the bleed connected, closing an AIR puts pack current through a resistor
     // rated for transient duty.
     bool          discharge_engaged;
+    // The ECU's statement that dc_bus_V above is a PRESENT-TENSE measurement,
+    // from 0x100 byte 2 bit 1. It relays the inverter's reading, so this frame
+    // arriving on time says nothing about the age of the number inside it: the
+    // ECU emits every cycle regardless, and substitutes 0 V once the inverter
+    // has been quiet. 0 V is the safe direction for the 95 % precharge
+    // criterion, which it fails, and the WRONG direction for the re-arm gate,
+    // which reads a low voltage as a drained link -- hence a separate bit rather
+    // than trusting the value.
+    //
+    // Defaults TRUE, unlike discharge_engaged, and the asymmetry is the same
+    // compatibility rule both times: an ECU that cannot express the fact must
+    // not have its silence read as a reason to change behaviour. Absent byte 2,
+    // the bleed is assumed disconnected and the voltage assumed usable. The
+    // default is never load-bearing on a real bus -- before any 0x100 arrives
+    // last_dc_bus_tick is 0, so every consumer is already gated off freshness.
+    bool          dc_bus_valid = true;
     // Sticky: an 0x100 with DLC >= 3 has been seen, so this ECU publishes the
     // discharge state and is able to drain a stranded link. Until then the AMS
     // does not enforce its own dc_bus re-arm block -- refusing to arm over a

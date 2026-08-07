@@ -35,6 +35,10 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
     cur.filtered_mA      = 1000;
     veh.last_dc_bus_tick = 9950;
     veh.dc_bus_V         = 350;
+    // The memset above wipes the struct's default, so restate it: a nominal
+    // vehicle has an ECU reporting a real inverter measurement. Tests that care
+    // clear it explicitly.
+    veh.dc_bus_valid     = true;
     return { current, bms, cur, veh,
              /*tsms*/false, /*dash_chg_edge*/false,
              /*mode_locked*/ams::fsm::Mode::Undecided,
@@ -488,6 +492,77 @@ extern "C" void test_fsm_start_blocks_while_link_charged(void) {
     // Stale 0x100 is not a discharged link.
     in.dc_bus_fresh = false;
     TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+}
+
+// The failure freshness alone cannot see. The ECU emits 0x100 every cycle
+// whatever the inverter is doing, so the frame stays fresh; when it has no
+// measurement it substitutes 0 V. Read literally that is "the link is drained"
+// -- a permit to arm over a link that may be sitting at pack voltage. The bit is
+// what stops the substituted value being mistaken for a reading.
+extern "C" void test_fsm_start_blocks_on_unmeasured_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = false;
+    veh.dc_bus_V = 0;                      // the ECU's substituted value...
+    veh.dc_bus_valid = false;              // ...announced as not a measurement
+    TEST_ASSERT_TRUE(in.dc_bus_fresh);     // and the frame itself is on time
+
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+
+    // Same voltage, now backed by a real reading -> arms.
+    veh.dc_bus_valid = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// An unmeasured link must not complete a precharge either. The ECU substitutes
+// 0 V, which already fails the 95 % test, so this asserts the property rather
+// than the arithmetic: were the substitution ever to change to a held value,
+// the frozen-high case is exactly PRECHARGE-1 again.
+extern "C" void test_fsm_precharge_holds_on_unmeasured_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;                    // would satisfy 95 % of a 356 V pack
+    veh.dc_bus_valid = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+
+    veh.dc_bus_valid = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, ams::fsm::step(in).next);
+}
+
+// Charger never sees this bit: dc_bus_V is ECU-only and absent during a charge,
+// so gating on it would make Charger unarmable.
+extern "C" void test_fsm_charger_arms_with_unmeasured_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = false;
+    veh.dc_bus_valid = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// An ECU sending DLC 2 cannot express the bit at all. vehicle_service defaults
+// it true for exactly that case, and the re-arm block is gated on
+// ecu_discharge_capable besides -- so an older ECU still arms.
+extern "C" void test_fsm_older_ecu_arms_with_default_validity(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = false;     // never seen DLC >= 3
+    veh.discharge_engaged = false;
+    veh.dc_bus_valid = true;               // what update_from_frame leaves at DLC 2
+    veh.dc_bus_V = 350;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
 
 // An ECU that predates the discharge protocol sends 0x100 with DLC 2, so it can
