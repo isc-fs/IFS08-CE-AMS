@@ -84,12 +84,13 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// BENCH DIAGNOSTIC (config::AdowRawDiag): dump a flat 95-cell uint16 mV grid
-// (the raw ADOW PU or PD readings) with the SAME window layout as the 0x680 cell
-// grid, so the decoder + tooling are identical -- just on AdowDiagPuBaseId /
-// AdowDiagPdBaseId. 0xFFFF = no cell / PEC-skipped this scan.
+// BENCH DIAGNOSTIC: dump any flat 95-cell uint16 mV grid with the SAME window
+// layout as the 0x680 cell grid, so one decoder reads every grid the firmware
+// publishes. Used for the raw ADOW pull-up / pull-down readings
+// (AdowDiagPuBaseId / AdowDiagPdBaseId) and the second-mode sweep
+// (AdcXCheckBaseId). 0xFFFF = no cell / PEC-skipped this scan.
 // ---------------------------------------------------------------------------
-[[nodiscard]] inline Frame encode_adow_grid_frame(const std::uint16_t* grid95,
+[[nodiscard]] inline Frame encode_raw_grid_frame(const std::uint16_t* grid95,
                                                   std::uint8_t frame_idx) noexcept {
     const auto& A = ifs08::ALL_ARRAYS[0];   // reuse 24 x 4-cell BE-u16 window
     if (grid95 == nullptr || frame_idx >= A.frame_count) return Frame{};

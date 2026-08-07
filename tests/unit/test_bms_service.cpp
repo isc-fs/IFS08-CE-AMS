@@ -219,6 +219,38 @@ extern "C" void test_bms_capture_adow_raw_decodes_grids(void) {
     TEST_ASSERT_EQUAL_UINT16(3003, pu_g[0 * config::CellsPerModule + 3]);   // group B still decoded
 }
 
+// Bench-diag capture (config::AdcModeCrossCheck): decode a single RDCV reply into
+// a flat 95-cell grid. Unlike capture_adow_raw there is no second pass to
+// reconcile against, so a PEC glitch must sentinel ONLY the cells of that group.
+extern "C" void test_bms_capture_cell_raw_decodes_grid(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    std::uint16_t g[config::BmsModuleCount * config::CellsPerModule];
+
+    BmsService::capture_cell_raw(resp, RespBytes, g);
+    // build_clean_chain: module m cell s = 3000 + 100*m + s.
+    TEST_ASSERT_EQUAL_UINT16(3000, g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(3008, g[0 * config::CellsPerModule + 8]);   // last upper-LTC cell
+    TEST_ASSERT_EQUAL_UINT16(3009, g[0 * config::CellsPerModule + 9]);   // first lower-LTC cell
+    TEST_ASSERT_EQUAL_UINT16(3418, g[4 * config::CellsPerModule + 18]);  // module 4 last cell
+
+    // PEC glitch on ic0 group A -> module 0 cells 0..2 sentinel, everything else intact.
+    resp[0u * GroupBytes + 0u * Seg + 6u] ^= 0xFFu;
+    BmsService::capture_cell_raw(resp, RespBytes, g);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, g[0 * config::CellsPerModule + 0]);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, g[0 * config::CellsPerModule + 2]);
+    TEST_ASSERT_EQUAL_UINT16(3003, g[0 * config::CellsPerModule + 3]);   // group B still decoded
+    TEST_ASSERT_EQUAL_UINT16(3100, g[1 * config::CellsPerModule + 0]);   // other modules untouched
+
+    // A short or absent reply must sentinel the whole grid rather than leave stale
+    // values -- the reader diffs this against 0x680 and would see a phantom delta.
+    BmsService::capture_cell_raw(resp, RespBytes - 1u, g);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, g[0]);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, g[config::BmsModuleCount * config::CellsPerModule - 1]);
+    BmsService::capture_cell_raw(nullptr, RespBytes, g);
+    TEST_ASSERT_EQUAL_UINT16(0xFFFFu, g[0]);
+}
+
 extern "C" void test_bms_ltc_clean_response_decodes_all_cells(void) {
     std::uint8_t resp[RespBytes];
     build_clean_chain(resp);

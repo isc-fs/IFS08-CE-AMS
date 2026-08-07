@@ -60,6 +60,44 @@ inline constexpr std::uint8_t  OpenWireRetries     = 1;
 // @ AdowDiagPdBaseId, same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid.
 inline constexpr bool          AdowRawDiag         = false;
 
+// BENCH DIAGNOSTIC: re-measure the whole pack in a SECOND ADC mode and dump the
+// result, so a settling-limited tap can be told apart from a genuinely low cell.
+//
+// Each cell input sits behind an RC filter at the LTC pin. Series resistance in
+// the tap conductor -- a cold crimp, a corroded ring terminal, a cracked joint --
+// raises that time constant. A fast conversion then samples before the input has
+// settled and the cell reads LOW; a slow one settles fully and reads true. A cell
+// that is simply discharged reads the same in every mode.
+//
+//   good tap            same value in both modes
+//   resistive tap       fast mode reads low, filtered mode reads true
+//   genuinely low cell  same value in both modes, both low
+//
+// This is the discriminator RDSTATA cannot provide: sum-of-cells is referenced to
+// the same C0 node as cell 1, so an offset there shifts SC and cell 1 by equal
+// amounts and the sum still reconciles. Comparing modes does not depend on C0.
+//
+// Keep FALSE on dev/flight -- the code stays compiled (dead-code-eliminated when
+// false, so CI still type-checks it) but emits nothing. Block: AdcXCheckBaseId,
+// same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid, 0xFFFF = PEC-skipped.
+inline constexpr bool          AdcModeCrossCheck   = false;
+// Mode to compare against config::AdcMode. 3 = Filt26Hz, the datasheet's answer
+// to high source impedance and so the widest contrast against the 7 kHz live
+// mode. 0 (Slow422Hz, 12.8 ms) is the cheap alternative if 26 Hz costs too much
+// poll time on a given chain.
+inline constexpr std::uint8_t  AdcXCheckAdcMode    = 3;   // ltc6811::AdcMode::Filt26Hz
+// Conversion budget for that mode. Filt26Hz needs ~201 ms for all 12 channels;
+// round up for FreeRTOS tick jitter the same way AdcvSettleMs does.
+inline constexpr std::uint32_t AdcXCheckSettleMs   = 210;
+// Polls between cross-check sweeps. The sweep runs AFTER the normal read, so
+// module freshness is never delayed by it -- only the next poll slips, stretching
+// the worst-case gap between fresh readings to about
+// BmsPollVoltMs + AdcXCheckSettleMs. That must stay under BmsStaleMs or the sweep
+// would trip BmsModuleOffline on its own; the static_assert below holds the line.
+// 25 polls = 5 s, often enough to watch a suspect cell over a few minutes without
+// spending a fifth of the task's time in filtered conversions.
+inline constexpr std::uint32_t AdcXCheckPolls      = 25;
+
 // Implausible-cell bounds for the balancing tap-artifact guard (see
 // recompute_summaries_ / BmsState::tap_fault_mask). A real cell in a live pack
 // physically cannot sit outside this window -- a reading beyond it is a
@@ -548,6 +586,11 @@ inline constexpr std::uint32_t PitDiagCellBaseId         = 0x680u;
 // each 24 frames of 4 cells (BE u16 mV), 0xFFFF = PEC-skipped this scan.
 inline constexpr std::uint32_t AdowDiagPuBaseId          = 0x6D0u;
 inline constexpr std::uint32_t AdowDiagPdBaseId          = 0x6E8u;   // = 0x6D0 + 24
+// ADC-mode cross-check grid (config::AdcModeCrossCheck only). 0x700..0x717, the
+// first free block after ADOW fills 0x6D0..0x6FF. Same 24-frame 4-cell BE-u16
+// layout as 0x680, so the same decoder reads it; diff it against 0x680 to see
+// which cells move with conversion time. 0xFFFF = PEC-skipped this sweep.
+inline constexpr std::uint32_t AdcXCheckBaseId           = 0x700u;
 inline constexpr std::uint32_t PitDiagTempBaseId         = 0x6A0u;
 inline constexpr std::uint32_t PitDiagFsmStatusId        = 0x6C0u;
 inline constexpr std::uint32_t PitDiagTimingId           = 0x6C1u;
@@ -879,6 +922,24 @@ inline constexpr std::uint8_t  DiagTxReservedSlots = 6;
 // pair plus a settling allowance.
 inline constexpr std::uint8_t  AdcMode          = 2;   // ams::ltc6811::AdcMode::Norm7kHz
 inline constexpr std::uint32_t AdcvSettleMs     = 3;
+
+// Worst-case gap between two fresh readings when a cross-check sweep runs. The
+// sweep is issued AFTER the live read has already landed, and BmsPollTask is
+// driven by an osTimerPeriodic whose flag stays pending through an overrun -- so
+// a long sweep does not push the schedule out, it just makes the next iteration
+// start late. The gap is therefore one sweep plus one poll body, NOT a full
+// BmsPollVoltMs on top. Cross BmsStaleMs here and the diagnostic would fault the
+// pack it is measuring.
+//
+// The body budget is an allowance, not a measurement: a poll is ADCV + settle +
+// warm-up + four register reads, plus ADOW when CellOpenWireCheck is on. Confirm
+// it against the live last/max V-poll figures on PitDiagTimingId rather than
+// trusting this number.
+inline constexpr std::uint32_t AdcXCheckPollBodyBudgetMs = 40;
+static_assert(AdcXCheckSettleMs + AdcXCheckPollBodyBudgetMs < BmsStaleMs,
+              "ADC cross-check sweep would push a module past BmsStaleMs");
+static_assert(AdcXCheckAdcMode != AdcMode,
+              "cross-check must use a different mode than the live poll");
 
 // Voltage-poll retry budget. A voltage poll is re-attempted up to this many
 // EXTRA times if it does not come back fully PEC-clean, before being counted a
