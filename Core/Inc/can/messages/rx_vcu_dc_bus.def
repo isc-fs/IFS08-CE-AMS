@@ -4,11 +4,11 @@
  * RX (VCU sends; AMS mode-locks on it and gates precharge on it).
  *
  * The message and signal names here MIRROR isc-fs/IFS08-CE-ECU
- * Core/Inc/can/messages/vcu_heartbeat.def, which owns this frame. They were
- * once VCU_dc_bus_heartbeat / dc_bus_V, and the two generated DBCs disagreed
- * about what one ID was called -- so ams.dbc and ecu.dbc could not be loaded
- * into one tool without the name depending on load order. The file keeps this
- * repo's rx_ prefix; a DBC carries message names, not filenames.
+ * Core/Inc/can/messages/vcu_heartbeat.def, which owns this frame. Keep them in
+ * lockstep: a DBC carries message names, so if the two repos disagree about
+ * what one ID is called, ams.dbc and ecu.dbc cannot be loaded into the same
+ * tool without the name depending on load order. The file keeps this repo's
+ * rx_ prefix; a DBC carries message names, not filenames.
  *
  * dc_bus_voltage is a value the ECU RELAYS from the inverter, not one it
  * measures. So this frame's own arrival is no evidence the number in it is
