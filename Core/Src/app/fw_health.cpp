@@ -80,6 +80,13 @@ std::uint32_t min_free_heap() noexcept {
 // C-linkage shim so HardFault_Handler (C, stm32h7xx_it.c) can stamp the
 // last-fault sentinel without pulling in the C++ namespace. Called from
 // exception context: a single backup-register write, no allocation/locks.
+// Generic C-callable stamp for the Cortex-M fault handlers in stm32h7xx_it.c,
+// which are C and must not include the C++ header. A bare backup-register
+// write -- safe from fault context, cannot block or take a lock.
+extern "C" void ams_fw_health_record_fault_c(std::uint8_t reason) {
+    ams::fw_health::record_fault(static_cast<ams::config::LastFault>(reason));
+}
+
 extern "C" void ams_fw_health_record_hardfault(void) {
     ams::fw_health::record_fault(ams::config::LastFault::HardFault);
 }

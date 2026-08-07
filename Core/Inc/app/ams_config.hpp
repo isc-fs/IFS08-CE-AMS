@@ -959,6 +959,11 @@ enum class ResetCause : std::uint8_t {
 // 0 = clean; the rest map the HardFault / RTOS-hook fault classes.
 enum class LastFault : std::uint8_t {
     None = 0u, HardFault = 1u, StackOverflow = 2u, MallocFail = 3u, AssertFail = 4u,
+    // The other spin-forever Cortex-M fault handlers. Distinguishing them costs
+    // one byte on 0x6CA and tells you whether the last crash was a bad pointer
+    // (MemManage/BusFault) or a bad instruction (UsageFault) -- which is the
+    // difference between suspecting the MPU config and suspecting the toolchain.
+    MemManage = 5u, BusFault = 6u, UsageFault = 7u,
 };
 
 // AMS node ID on the stm32-can-bootloader multi-node bus. Must match
