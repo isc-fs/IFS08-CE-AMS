@@ -205,6 +205,8 @@ void test_dispatch_permitted_states_are_ts_down(void);
 
 // test_bootloader.cpp
 void test_bootloader_trigger_exact_match(void);
+void test_bootloader_reboot_only_when_contactors_open(void);
+void test_bootloader_trigger_still_matches_while_energised(void);
 void test_bootloader_trigger_wrong_bus(void);
 void test_bootloader_trigger_wrong_id(void);
 void test_bootloader_trigger_wrong_dlc(void);
@@ -719,6 +721,8 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_dispatch_error_state_is_permitted);
     RUN_TEST(test_dispatch_permitted_states_are_ts_down);
     RUN_TEST(test_bootloader_trigger_exact_match);
+    RUN_TEST(test_bootloader_reboot_only_when_contactors_open);
+    RUN_TEST(test_bootloader_trigger_still_matches_while_energised);
     RUN_TEST(test_bootloader_trigger_wrong_bus);
     RUN_TEST(test_bootloader_trigger_wrong_id);
     RUN_TEST(test_bootloader_trigger_wrong_dlc);

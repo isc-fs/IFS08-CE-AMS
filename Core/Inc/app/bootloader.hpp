@@ -26,6 +26,7 @@
 
 #include "ams_config.hpp"
 #include "can_frame.hpp"
+#include "state_machine.hpp"
 
 #include <cstdint>
 #include <cstring>
@@ -45,6 +46,27 @@ public:
     // True iff a CanFrame matches the boot-request trigger. Pure
     // logic, inlined in the header so the host unit-test build can
     // exercise it without pulling in HAL / FreeRTOS.
+    // States in which honouring the reboot trigger is safe.
+    //
+    // request_reboot() opens all relays and resets. In an energised state that
+    // means opening AIR+ under whatever the inverter is drawing -- which is how
+    // contactors weld -- and dropping the safety supervisor mid-drive on a
+    // 4-byte frame anyone on the accumulator bus can send. Start and Error are
+    // the two states where the contactors are already open, so the reboot costs
+    // nothing that has not already happened.
+    //
+    // Error is not a grudging exception: ErrorLatch is sticky across resets, so
+    // a car that faulted boots back INTO Error. Refusing there would make
+    // reflashing a faulted AMS impossible without first clearing the latch --
+    // exactly when you most want to reflash it.
+    //
+    // Same state set, and the same reasoning, as diag_dispatch's
+    // logfs_allowed_in. Keep them in step: they answer one question, "is the
+    // tractive system quiet enough to interrupt this node?"
+    [[nodiscard]] static bool reboot_allowed_in(fsm::State s) noexcept {
+        return s == fsm::State::Start || s == fsm::State::Error;
+    }
+
     [[nodiscard]] static bool matches_trigger(const CanFrame& f) noexcept {
         if (f.bus != static_cast<std::uint8_t>(CanBus::Acu)) return false;
         if (f.id  != config::BlBootReqCanId)                return false;
