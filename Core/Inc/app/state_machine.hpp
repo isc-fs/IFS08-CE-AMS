@@ -100,6 +100,15 @@ struct Output {
 // ten steps before the fault can open the AIRs again. Freshness has to be part
 // of the criterion, not a separate fault racing it.
 //
+// veh.dc_bus_valid is the second half of the same idea and covers what freshness
+// cannot: the FRAME can be perfectly punctual while the VALUE inside it is a
+// substituted one, because the ECU relays the inverter's reading and emits every
+// cycle regardless. It substitutes 0 V, which fails this test on its own, so this
+// check changes no outcome here today -- it is stated anyway because the property
+// this predicate needs is "the number is a measurement", and depending on the
+// sender's choice of filler to enforce it would be depending on a value the
+// sender is free to change.
+//
 // bus_below_collapse deliberately does NOT take this: it is only consumed in Run,
 // where mode is locked to Car, so vcu_required is true and VcuStale bounds the
 // staleness at 200 ms -- the same 200 ms its own debounce already spends. Both of
@@ -109,6 +118,7 @@ struct Output {
                                                    const VehicleState& veh,
                                                    bool dc_bus_fresh) noexcept {
     if (!dc_bus_fresh) return false;
+    if (!veh.dc_bus_valid) return false;
     // "No data yet" guard: pack_voltage_mV is 0 until BmsPollTask
     // (or the HIL stub) has written at least one cycle. A real pack
     // can never reach 0 mV in-service, so 0 reliably means "no data".
@@ -139,6 +149,15 @@ struct Output {
 // is not a discharged one, while an unknown bleed state is better handled by the
 // AMS's normal fault path than by refusing to arm forever.
 //
+// dc_bus_valid is required for the same reason and is NOT redundant with
+// freshness here -- this is the gate where the distinction has teeth. The ECU
+// emits 0x100 every cycle whatever the inverter is doing, so the frame stays
+// fresh; when it has no measurement it substitutes 0 V. Read literally, 0 V is
+// "the link is drained", which is exactly the conclusion this gate exists to
+// refuse to jump to. Without the bit, an inverter that goes quiet reads as a
+// permit to arm over a link that may be stranded at pack voltage. Unlike in
+// precharge_target_reached, the substituted value points the DANGEROUS way here.
+//
 // Charger is exempt -- the inverter is not in the charge loop and dc_bus_V is
 // VCU-only, absent during a charge, so gating it would make Charger unarmable.
 [[nodiscard]] inline bool rearm_permitted(const VehicleState& veh,
@@ -147,7 +166,8 @@ struct Output {
     if (mode_locked == Mode::Charger) return true;
     if (veh.discharge_engaged) return false;
     if (!veh.ecu_discharge_capable) return true;
-    return dc_bus_fresh && veh.dc_bus_V <= config::DcBusDischargedV;
+    return dc_bus_fresh && veh.dc_bus_valid &&
+           veh.dc_bus_V <= config::DcBusDischargedV;
 }
 
 // DC-bus collapse detector. True when the VCU-measured bus has

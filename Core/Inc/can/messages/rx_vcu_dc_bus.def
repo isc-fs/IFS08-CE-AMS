@@ -3,6 +3,15 @@
  * 0x100 VCU_dc_bus_heartbeat -- DC bus volts + discharge state.
  * RX (VCU sends; AMS mode-locks on it and gates precharge on it).
  *
+ * dc_bus_V is a value the ECU RELAYS from the inverter, not one it measures. So
+ * this frame's own arrival is no evidence the number in it is current: it goes
+ * out every cycle whatever the inverter is doing. dc_bus_valid is the ECU
+ * saying "this is a present-tense measurement". It reads 0 both when the ECU
+ * substitutes a value and when it has none, and the substitution is 0 V -- safe
+ * for the 95 % precharge criterion, which 0 fails, but NOT safe for the re-arm
+ * gate, which reads a low number as a drained link. Treat 0 as "do not use the
+ * voltage in EITHER direction".
+ *
  * discharge_engaged is the ECU's report that the bleed resistor is CONNECTED
  * across the link -- either because the shutdown circuit is open, or because the
  * ECU is securing an interrupted discharge (see acu_discharge_interlock.def).
@@ -11,9 +20,12 @@
  * for transient duty.
  *
  * Byte 2 is OPTIONAL on the wire. A VCU that predates it sends DLC 2 and the AMS
- * reads the bit as 0, so an older ECU behaves exactly as before rather than
- * blocking the car. The AMS latches "this ECU speaks the discharge protocol"
- * the first time it sees DLC >= 3, and only enforces its own dc_bus-based block
+ * reads discharge_engaged as 0 and dc_bus_valid as 1, so an older ECU behaves
+ * exactly as before rather than blocking the car. Note the two defaults point in
+ * opposite directions and both mean "do not let this ECU's silence change
+ * anything": absent, the bleed is assumed disconnected and the voltage is
+ * assumed usable. The AMS latches "this ECU speaks the discharge protocol" the
+ * first time it sees DLC >= 3, and only enforces its own dc_bus-based block
  * after that -- there is no point refusing to arm over a stranded link when the
  * other end has no way to clear it.
  *
@@ -23,4 +35,5 @@
 CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 3, "VCU", 100)
     FIELD_LE_BITS (dc_bus_V,          uint16_t,  0, 16, 1, 0, "V")
     FIELD_LE_BITS (discharge_engaged, uint8_t,  16,  1, 1, 0, "bool")
+    FIELD_LE_BITS (dc_bus_valid,      uint8_t,  17,  1, 1, 0, "bool")
 CAN_MSG_END(VCU_dc_bus_heartbeat)
