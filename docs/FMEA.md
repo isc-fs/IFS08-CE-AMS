@@ -753,7 +753,25 @@ did not.
 
 ---
 
-## 9. CAN: observability, not control
+## 9. CAN: mostly observability, but four IDs are control
+
+Telemetry OUT of the AMS is observability only, and CAN-1 below explains why a
+dropped frame is survivable. Traffic IN is a different matter: four IDs change
+what the node does, and one of them is not state-gated.
+
+| ID | Effect | Gated on |
+|---|---|---|
+| `0x002` | Opens all relays, writes the bootloader magic, resets the MCU | **FSM in Start or Error** (`Bootloader::reboot_allowed_in`) |
+| `0x7E0` LOGFS opcodes | Reads the SD card, can hold the bus for minutes | FSM in Start or Error (`logfs_allowed_in`), NACK `0x15` otherwise |
+| `0x103` `"BALN"` | Forces balancing on in **any** state | magic payload + 5 s freshness only |
+| `0x104` `"BALM"` | Selects which modules may balance | magic payload + 5 s freshness only |
+| `0x7F0` | Arms the pit-diag stream (~50 frames/scan) | magic payload only; adds bus load in any state |
+
+`0x103`/`0x104` are the remaining gap: balancing forced on in `Run` bleeds
+through resistors rated for transient duty while the pack is under load, and
+nothing in firmware refuses it. The magic payload stops bus noise from doing it
+by accident; it does not stop a tool from doing it on purpose at the wrong time.
+
 
 ### CAN-1 — Telemetry drops are silent, and that is survivable · **Accepted**
 

@@ -119,6 +119,10 @@ namespace {
 // Telemetry counters; volatile so a remote-debug session can read.
 volatile std::uint32_t g_acu_rx_dropped_unknown = 0;
 volatile std::uint32_t g_acu_tx_fail            = 0;
+// Reboot triggers (0x002) refused because the FSM was in an energised state.
+// Nonzero means someone tried to flash a live car. TELEMETRY ONLY -- no safety
+// predicate reads it; the refusal itself is the safety action.
+volatile std::uint32_t g_boot_trigger_refused    = 0;
 
 // FDCAN1 Bus-Off recovery counter: incremented once per Stop/Start
 // attempt issued by poll_fdcan1_busoff_recovery(). Surfaced on the
@@ -563,8 +567,20 @@ extern "C" void ams_acu_can_task_run(void *argument) {
                 // returns -- it opens all relays, writes
                 // BL_BOOT_REQ_MAGIC into BKP0R, and resets.
                 if (ams::Bootloader::matches_trigger(frame)) {
-                    ams::Bootloader::request_reboot(
-                        ams::config::JumpReason::CanTrigger);
+                    // State-gated. request_reboot() opens all relays and
+                    // resets; in an energised state that means opening AIR+
+                    // under inverter load, on a 4-byte frame anyone on the
+                    // accumulator bus can send. Refused reboots are counted
+                    // rather than answered -- the trigger is a bare frame with
+                    // no reply channel, so the count on the comms-health frame
+                    // is how an operator learns the car was too live to flash.
+                    if (ams::Bootloader::reboot_allowed_in(
+                            static_cast<ams::fsm::State>(g_state_telemetry))) {
+                        ams::Bootloader::request_reboot(
+                            ams::config::JumpReason::CanTrigger);
+                    } else {
+                        ++g_boot_trigger_refused;
+                    }
                 }
                 // LOGFS rides the same ID the trigger uses once the AMS
                 // is node 2, which is why this must come AFTER the check above.

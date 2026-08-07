@@ -147,14 +147,31 @@ Everything else exists to enforce these:
    and reclosing TSMS could no longer restore the loop. See § 5 for how
    that one hardware fact shapes the whole FSM.
 
-9. **The RTOS fault hooks fail loud, not silent.**
+9. **Every unrecoverable landing opens the contactors before it spins.**
    `vApplicationStackOverflowHook` (`configCHECK_FOR_STACK_OVERFLOW = 2`)
-   and `vApplicationMallocFailedHook` in `Core/Src/freertos.c` both open
-   all relays, set the `ErrorLatch`, capture post-mortem state, and then
-   spin — so the IWDG resets the node within ~100 ms with the latch set,
-   and the next boot comes up in `Error`, observable over CAN. The
-   HardFault handler stamps `BKP3R` before spinning so the same crash is
-   reported on the next boot's health frame.
+   and `vApplicationMallocFailedHook` in `Core/Src/freertos.c` open all
+   relays, set the `ErrorLatch`, capture post-mortem state, and spin — so
+   the IWDG resets the node within ~100 ms with the latch set and the next
+   boot comes up in `Error`, observable over CAN.
+
+   The four Cortex-M fault handlers in `Core/Src/stm32h7xx_it.c`
+   (HardFault, MemManage, BusFault, UsageFault) call `ams_fault_landing()`,
+   which opens the relays and *then* stamps `BKP3R` with the
+   `config::LastFault` reason for the next boot's health frame (`0x6CA`
+   byte 7). Relays first is deliberate: these handlers never return, so
+   until the watchdog fires — nominally ~100 ms, but the LSI is ±47 %, so
+   up to ~190 ms at the slow corner — whatever the contactors were doing
+   when the fault hit is what they keep doing. A fault taken in `Run` would
+   otherwise hold AIR+ and AIR− closed across a live pack with no firmware
+   executing.
+
+   Both calls are safe from fault context: the relay open is a bare
+   `HAL_GPIO_WritePin` → BSRR transaction and the stamp is a
+   backup-register write. Neither blocks, allocates, or takes a lock.
+   Unlike the FreeRTOS hooks these handlers do **not** set the `ErrorLatch`
+   — it is an RTC-domain read-modify-write, which is not something to
+   attempt from a fault whose cause is unknown. The `BKP3R` sentinel is
+   what makes the crash visible on the next boot instead.
 
 > The HIL bench rig drives a real LTC6820/LTC6811 chain via a Pi Pico
 > emulator, so flight and bench run the **same BMS path** — same isoSPI

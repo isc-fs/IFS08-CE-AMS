@@ -52,6 +52,31 @@
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+/* Unrecoverable-fault landing: open the contactors, stamp what happened, and
+ * return so the handler can spin until the IWDG resets us.
+ *
+ * The relays come FIRST, and that ordering is the whole point. These handlers
+ * never return, so until the watchdog fires -- nominally ~100 ms, but the LSI
+ * is +/-47 %, so up to ~190 ms at the slow corner -- whatever the contactors
+ * were doing when the fault hit is what they keep doing. A fault taken in Run
+ * would otherwise hold AIR+ and AIR- closed across a live pack with no firmware
+ * executing. Opening them is the one useful thing left to do.
+ *
+ * Both calls are safe from fault context: ams_relays_open_all_c() is a bare
+ * HAL_GPIO_WritePin -> BSRR transaction and the stamp is a backup-register
+ * write. Neither blocks, allocates or takes a lock.
+ *
+ * Reason codes are ams::config::LastFault, published on 0x6CA byte 7.
+ */
+extern void ams_relays_open_all_c(void);
+extern void ams_fw_health_record_fault_c(uint8_t reason);
+
+static void ams_fault_landing(uint8_t reason)
+{
+  ams_relays_open_all_c();
+  ams_fw_health_record_fault_c(reason);
+}
+
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
@@ -89,8 +114,7 @@ void HardFault_Handler(void)
   /* #411: stamp the last-fault sentinel (RTC BKP3) before we spin, so the
    * next boot's 0x6CA health frame reports the crash. C-linkage shim over the
    * C++ fw_health module; a bare backup-register write, fault-context safe. */
-  extern void ams_fw_health_record_hardfault(void);
-  ams_fw_health_record_hardfault();
+  ams_fault_landing(1u);   /* LastFault::HardFault */
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -105,6 +129,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
+  ams_fault_landing(5u);   /* LastFault::MemManage */
 
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
@@ -120,6 +145,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
+  ams_fault_landing(6u);   /* LastFault::BusFault */
 
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
@@ -135,6 +161,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
+  ams_fault_landing(7u);   /* LastFault::UsageFault */
 
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
