@@ -32,7 +32,19 @@
  * Field macro args (bits): (name, ctype, abs_bit_offset, bit_len, factor, offset, unit)
  */
 
-CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 3, "VCU", 100)
+/*
+ * 10 ms is the ECU's ACTUAL transmit rate -- it posts this frame from its
+ * unconditional ControlTask body, and ControlPeriodMs is 10. It becomes
+ * GenMsgCycleTime in ams.dbc, which is what every other team's tooling sizes a
+ * receive timeout from, so it has to be the sender's rate and nothing else.
+ *
+ * Do NOT "correct" it to VcuStaleMs. That is 200 ms, it is this repo's
+ * TOLERANCE for the frame going quiet, and the two numbers answer different
+ * questions: one is how often it arrives, the other is how long we accept it
+ * not arriving. Twenty missed frames before VcuStale latches is the margin, not
+ * an inconsistency.
+ */
+CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 3, "VCU", 10)
     FIELD_LE_BITS (dc_bus_V,          uint16_t,  0, 16, 1, 0, "V")
     FIELD_LE_BITS (discharge_engaged, uint8_t,  16,  1, 1, 0, "bool")
     FIELD_LE_BITS (dc_bus_valid,      uint8_t,  17,  1, 1, 0, "bool")
