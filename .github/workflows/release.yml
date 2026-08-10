@@ -162,7 +162,7 @@ jobs:
             echo "- \`AMS.elf\` — debug symbols included"
             echo "- \`AMS.bin\` — raw image, flash to \`0x08020000\` (sector 1)"
             echo "- \`AMS.hex\` — Intel HEX with absolute addressing"
-            echo "- \`ams.dbc\` — Vector CAN database (76 messages) emitted from the code-first DSL at this tagged SHA. Use with cantools / Vector CANalyzer / the pit tool. Bound 1:1 to this firmware build."
+            echo "- \`ams.dbc\` — Vector CAN database ($(grep -c '^BO_ ' /tmp/ams.dbc) messages) emitted from the code-first DSL at this tagged SHA. Use with cantools / Vector CANalyzer / the pit tool. Bound 1:1 to this firmware build."
             echo
             echo "## Memory layout"
             echo "- App entry point: \`0x08020000\` (sectors 1-6, 768 KB)"

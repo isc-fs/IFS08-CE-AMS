@@ -66,7 +66,7 @@ triggers on pushes to `feat/**`, `fix/**`, `dev`, `main` and on PRs into
 
 ## Commit messages
 
-- Imperative mood: "add BmsRxTask freshness check", not "added".
+- Imperative mood: "add BmsPollTask freshness check", not "added".
 - First line under 72 characters.
 - The **first commit message** of a new branch is auto-copied into the
   tracking issue's description by `branch-issue.yml`, and only that first
@@ -135,7 +135,7 @@ the reasoning. The short version:
 and `git log` already has it.
 
 **Do write** physical and numerical reasoning
-(`47R || 47R = 23.5 ohm -> 165 mA at 3.85 V`), safety contracts
+(`47R || 47R = 23.5 ohm -> 164 mA at 3.85 V`), safety contracts
 (`TELEMETRY ONLY -- no safety predicate reads this`), non-obvious
 invariants, datasheet pointers (`LTC6811 Table 53`), and honest gaps —
 what is measured, what is assumed, what is untested.
@@ -181,8 +181,10 @@ layout in an encoder header.
 5. Update [`docs/CAN_MAP.md`](docs/CAN_MAP.md).
 6. If the frame talks to the VCU or the ECU, label the PR `protocol` and
    confirm the change with that team before merging. A frame the AMS
-   sends but nobody consumes is worth flagging in the PR as such — the
-   discharge interlock `0x021` is exactly that today.
+   sends but nobody consumes is worth flagging in the PR as such — as is
+   one whose consumer exists only on the other repo's `dev` and has never
+   been proven on a shared bus, which is the discharge interlock `0x021`
+   today.
 
 > The BMS is **not** on CAN. Cell voltages and temperatures reach the AMS
 > only over isoSPI — see the next section.
@@ -284,7 +286,7 @@ layout in an encoder header.
   `CellFaultConfirmTicks` (25 × 10 ms ≈ 250 ms) and BMS staleness over
   `BmsStaleConfirmTicks` (25 ≈ 250 ms). The first rejects a torn snapshot
   read, the second rides out a single dropped isoSPI poll on a far
-  module. Stacked on the 200 ms voltage poll that is ≈ 460 ms worst-case
+  module. Stacked on the 200 ms voltage poll, that is ≈ 460 ms worst-case
   fault response against a < 500 ms budget. **If you change either
   constant, or `BmsPollVoltMs`, redo that arithmetic in the PR** — the
   comments in `ams_config.hpp` carry the working.
@@ -336,7 +338,7 @@ CMake end-to-end — the firmware target pulls the CubeMX source list from
 cmake -B build-tests -S tests/unit
 cmake --build build-tests
 ctest --test-dir build-tests --output-on-failure
-./build-tests/ams_unit_tests        # real case count: "473 Tests 0 Failures"
+./build-tests/ams_unit_tests        # real case count: "476 Tests 0 Failures"
 
 # Firmware (cross-compile)
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake

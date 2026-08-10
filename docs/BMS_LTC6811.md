@@ -150,7 +150,7 @@ Two consequences you must carry into any new code that touches the chain:
   the balancing DCC packing all take `n_cells = 9` for even chain indices
   and `10` for odd ones. Feeding the upper IC's unused RDCVD registers to
   the open-wire detector would false-flag conductors that do not exist.
-- **PEC validity is per IC, not per group.** All four groups of an IC must
+- **PEC validity is per IC, not per group.** All four groups of an IC must be
   PEC-clean; one bad group drops that IC's *entire* slice for the cycle
   (its cell slots keep their previous values) and increments
   `g_ltc_pec_err_count[ic]`. The decode is done in two passes precisely so
@@ -896,7 +896,7 @@ of conversion time, so:
 This is the discriminator `RDSTATA` cannot provide. Sum-of-cells is referenced to
 the same `C0` node as cell 1, so an offset there shifts `SC` and cell 1 by equal
 amounts and the sum still reconciles. Comparing modes does not depend on `C0` —
-which matters, because the bottom cell of each LTC segment (module cells 1 and 10)
+which matters, because the bottom cell of each LTC segment (module cells 0 and 9)
 is exactly where a `C0` problem shows up.
 
 The sweep runs on its own slow cadence (`AdcXCheckPolls`, default 25 polls ≈ 5 s)
