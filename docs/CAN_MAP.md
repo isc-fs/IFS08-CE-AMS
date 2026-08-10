@@ -478,7 +478,7 @@ temp_index = 8 * (id - 0x6A0) + slot;   module = temp_index / 40;  temp = temp_i
 ```
 
 95 cells / 4 = 23 full frames + 3 cells, so the last cell frame's final slot
-pair is the sentinel. 200 NTCs / 8 = 25 exactly, no padding.
+is the sentinel. 200 NTCs / 8 = 25 exactly, no padding.
 
 **`0xFFFF` in a cell slot means "no measurement", and there are three separate
 reasons for it** (`encode_cell_frame`):
@@ -669,7 +669,7 @@ which is a different question and deliberately twenty frames of margin.
 
 | Bytes | Field |
 |---|---|
-| 0–1 | `dc_bus_voltage` — **little-endian** uint16, volts: `(buf[1] << 8) | buf[0]` |
+| 0–1 | `dc_bus_voltage` — **little-endian** uint16, volts: `(buf[1] << 8) \| buf[0]` |
 | 2 bit 0 | `discharge_engaged` |
 | 2 bit 1 | `dc_bus_valid` — `dc_bus_voltage` is a present-tense measurement. `0` = do not use the voltage in **either** direction |
 

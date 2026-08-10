@@ -484,8 +484,8 @@ That protects the selector. Three things it does not protect:
    as the bleed does. The tap-artifact guard in
    `BmsService::recompute_summaries_` does not cover it either: that guard
    needs an intra-pair split of at least `TapArtifactMinSplitMv` = 800 mV
-   *and* one reading outside the implausible-cell window, and 36 mV is three
-   orders of magnitude short of triggering it.
+   *and* one reading outside the implausible-cell window, and 36 mV is more
+   than an order of magnitude short of triggering it.
 2. **The open-wire scan runs under bleed too.** `run_voltage_poll` calls
    `attempt_open_wire_poll()` unconditionally when `CellOpenWireCheck` is
    set, not conditionally on the quiesce having succeeded — and the comment
@@ -757,7 +757,7 @@ did not.
 
 Telemetry OUT of the AMS is observability only, and CAN-1 below explains why a
 dropped frame is survivable. Traffic IN is a different matter: four IDs change
-what the node does, and one of them is not state-gated.
+what the node does, and two of them are not state-gated.
 
 | ID | Effect | Gated on |
 |---|---|---|
