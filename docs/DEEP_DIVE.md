@@ -917,7 +917,7 @@ Method: an EKF over an equivalent-circuit model.
   where the curve is steep and on the integral where it is flat.
 - **Why that matters numerically** — the VTC6 OCV curve is nearly flat
   mid-pack (3.4676 → 3.6551 V spans SoC 0.30 → 0.50, ~9.4 mV per point) and
-  steepens near the top (~2.3 mV per point over 0.90 → 1.00). A millivolt of
+  steepens near the top (~23 mV per point over 0.90 → 1.00). A millivolt of
   measurement error costs ~0.1 SoC points in the middle but ~0.04 near full.
 - **Correction requires trustworthy cells** — the whole chain online and
   `first_full_poll_done`. Without them it keeps predicting, degrading gracefully
@@ -1255,7 +1255,7 @@ ctest --test-dir build-tests --output-on-failure     # reports 1/1 — that is t
 
 `ctest` shows `1/1 Test ... Passed` because there is a single Unity runner
 target. Run the binary directly for the case count; it currently ends
-**`473 Tests 0 Failures 0 Ignored`**.
+**`476 Tests 0 Failures 0 Ignored`**.
 
 | File | Coverage |
 |---|---|
