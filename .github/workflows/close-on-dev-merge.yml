@@ -51,15 +51,36 @@ jobs:
             const anchor       = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
             const continuation = /\s*(?:,\s*and|,|and)\s*#(\d+)/giy;
 
+            /* Negation guard. Neither GitHub's own keyword handling nor the
+               anchor above has any notion of negation, so a body saying
+               "this does NOT fix #123" closes #123 anyway. That is not
+               hypothetical -- in IFS08-CE-ECU a commit reading
+               "Does NOT close #148" closed #148 on merge, twice.
+
+               "not" alone covers "does not" / "will not" / "do not"; the
+               n't form uses a character class so a smart apostrophe
+               (doesn't), which GitHub bodies routinely contain, still
+               matches. */
+            const NEGATION = /(?:\b(?:not|never|cannot|without)|n['\u2019]t)\s*$/i;
+
             const text = `${title}\n${body}`;
             const numbers = new Set();
             let m;
             while ((m = anchor.exec(text)) !== null) {
-              numbers.add(parseInt(m[1], 10));
+              const before = text.slice(Math.max(0, m.index - 40), m.index);
+              const negated = NEGATION.test(before);
+              if (negated) {
+                console.log(`Skipping #${m[1]}: closing keyword is negated ("...${before.trim().slice(-30)}").`);
+              } else {
+                numbers.add(parseInt(m[1], 10));
+              }
+              /* Advance past any "#a, #b and #c" list either way -- a negated
+                 anchor negates the WHOLE list ("does not fix #1, #2 and #3"),
+                 so those must not be collected as if they stood alone. */
               continuation.lastIndex = anchor.lastIndex;
               let cm;
               while ((cm = continuation.exec(text)) !== null) {
-                numbers.add(parseInt(cm[1], 10));
+                if (!negated) numbers.add(parseInt(cm[1], 10));
                 anchor.lastIndex = continuation.lastIndex;
               }
             }
