@@ -229,7 +229,8 @@ Seven threads, created by CubeMX in `main.c`.
 | `SdLoggerTask` | Low (8) | 1024 w | drain loop | lazy SD mount · drain `LogRing` → CSV · rotate/seal · serve LOGFS requests | `sd_logger_task.cpp` |
 
 > **Priority discipline.** Only `SafetyTask` writes relay GPIO and drives
-> AMS_OK. Only `SafetyTask` and `App_InitTask` refresh the IWDG. `SdLoggerTask`
+> AMS_OK. Only `SafetyTask` refreshes the IWDG — nothing else in the system
+> touches it, so the watchdog supervises that one task and no other. `SdLoggerTask`
 > is deliberately at Low so a stalled SD card cannot delay anything that
 > matters.
 

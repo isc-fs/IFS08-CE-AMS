@@ -275,8 +275,8 @@ void SafetyTask::run() noexcept {
             // Stay alive in the latched state: relays already open,
             // ErrorLatch persists across reset, so refreshing the
             // watchdog is safe. Lets the operator read telemetry
-            // and explicitly reset via the bootloader path. See PR
-            // See git history for the loop-bug this avoids.
+            // and explicitly reset via the bootloader path. See git
+            // history for the loop-bug this avoids.
             Watchdog::refresh();
         } else {
             // ---------- DC-bus collapse debounce ----------

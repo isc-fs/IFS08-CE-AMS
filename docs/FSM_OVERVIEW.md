@@ -169,8 +169,8 @@ re-runs precharge — it never inherits the previous decision.
 > stays locked. Consequence: `vcu_required` becomes true one tick later, so the
 > `VcuStale` predicate arms while the car is still idle in Start. If the block
 > was caused by a stale `0x100` in the first place, that latches Error rather
-> than holding in Start. Unreachable today (see §8, `rearm_permitted`) but it is
-> the first thing to check when the ECU half lands.
+> than holding in Start. Reachable now that the ECU half has landed (see §8,
+> `rearm_permitted`) — it is the first thing to check if the car will not arm.
 
 ---
 
@@ -992,7 +992,10 @@ Predicate, debounce, AMS_OK and ErrorLatch logic have their own files
 12. **`fault_reason` distinguishes the two Error origins.** `0..11`, `13`, `14`,
     `16` are predicate faults; `12` (`FsmError`) and `15` (`ChargerTsmsOpen`) are
     FSM-driven and stamped by `MainTask`.
-13. **The DC-link discharge interlock is inert today.** `rearm_permitted` returns
-    `true` unconditionally on a real car because no ECU publishes `0x100` at
-    DLC ≥ 3. The AMS side is complete and unit-tested; the ECU half is not
-    written (§8).
+13. **The DC-link discharge interlock is live, but the pairing is unproven.** Both
+    halves now exist: the AMS side is complete and unit-tested, and the ECU half
+    is implemented on that repo's `dev` branch, which is what the car runs. The
+    gate is therefore whether the ECU on the car actually publishes `0x100` at
+    DLC ≥ 3 — against an ECU built from its `main`, `rearm_permitted` still
+    returns `true` unconditionally and you have no protection. Verify byte 2 on a
+    real bus before relying on it (§8).

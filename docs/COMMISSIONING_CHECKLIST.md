@@ -243,6 +243,6 @@ ECU / VCU map.
 | Commissioned by | `__________` |
 | Date | `__________` |
 | All boxes ticked, host tests green, affected HIL rows re-run | ☐ |
-| Known gaps recorded in the project log (temp faults disarmed; ECU discharge interlock absent; over-current is datasheet-derived) | ☐ |
+| Known gaps recorded in the project log (temp faults disarmed; ECU discharge interlock present but the pairing is unproven on a bench; over-current is datasheet-derived) | ☐ |
 
 After sign-off: tag the release and open the `dev → main` release PR.

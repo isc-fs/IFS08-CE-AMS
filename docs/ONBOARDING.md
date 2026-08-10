@@ -25,7 +25,8 @@ Three things follow, and none of them are negotiable:
 - **A discharged DC-link is not a safe DC-link.** Opening the shutdown
   circuit starts the bleed; closing it again *stops* the bleed part-way
   and strands whatever charge is left. See §5 — the firmware has a whole
-  interlock about this, and the interlock is currently inert.
+  interlock about this, both halves of it now exist, and the pairing has
+  never been proven on a bench. Measure the link yourself regardless.
 - **The firmware is not your personal protective equipment.** Nothing in
   this repo is a substitute for the accumulator's isolation procedure.
   Never work on live HV alone.
@@ -323,7 +324,7 @@ every 20 ms, and it is gated on `vcu_required`, which is false in `Start`.
 So freshness is *part of the criterion*, not a fault racing it
 (`state_machine.hpp`, `precharge_target_reached`).
 
-**2. The DC-link discharge interlock — present, and currently inert.**
+**2. The DC-link discharge interlock — both halves present, pairing unproven.**
 Opening the SDC de-energises a normally-closed discharge relay, so a
 bleed resistor connects and the link drains. Closing the SDC again
 re-energises the relay and the discharge **stops part-way**, stranding the
