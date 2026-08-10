@@ -20,7 +20,7 @@ is the checklist + record.
 ```bash
 cmake --build build
 cmake -B build-tests -S tests/unit && cmake --build build-tests
-./build-tests/ams_unit_tests    # expect "473 Tests 0 Failures 0 Ignored"
+./build-tests/ams_unit_tests    # expect "476 Tests 0 Failures 0 Ignored"
 ```
 
 `ctest` reports `1/1 Test ... Passed` — that is the single Unity *runner*, not
