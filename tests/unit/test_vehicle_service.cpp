@@ -49,6 +49,60 @@ extern "C" void test_update_dc_bus_frame(void) {
 }
 
 // ---------------------------------------------------------------------------
+// 0x100 byte 2: the two bits, and the opposite directions they default in.
+// ---------------------------------------------------------------------------
+extern "C" void test_dc_bus_byte2_bits_decode(void) {
+    // bit 0 = discharge_engaged, bit 1 = dc_bus_valid.
+    const std::uint8_t both[8] = { 0xF4, 0x01, 0x03, 0, 0, 0, 0, 0 };
+    auto f = make_acu_frame(ams::config::AcuRxDcBusId, 3, both);
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    auto s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_TRUE(s.discharge_engaged);
+    TEST_ASSERT_TRUE(s.dc_bus_valid);
+    TEST_ASSERT_TRUE(s.ecu_discharge_capable);
+
+    // Valid measurement, bleed disconnected -- the normal running case.
+    const std::uint8_t valid_only[8] = { 0xF4, 0x01, 0x02, 0, 0, 0, 0, 0 };
+    f = make_acu_frame(ams::config::AcuRxDcBusId, 3, valid_only);
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_FALSE(s.discharge_engaged);
+    TEST_ASSERT_TRUE(s.dc_bus_valid);
+
+    // Byte 2 clear: the ECU is present and reporting that it has no measurement.
+    // Distinct from the byte being absent, below.
+    const std::uint8_t neither[8] = { 0x00, 0x00, 0x00, 0, 0, 0, 0, 0 };
+    f = make_acu_frame(ams::config::AcuRxDcBusId, 3, neither);
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_FALSE(s.discharge_engaged);
+    TEST_ASSERT_FALSE(s.dc_bus_valid);
+}
+
+// An ECU that predates byte 2 sends DLC 2. Both fields fall back to "this ECU's
+// silence changes nothing" -- which is FALSE for the bleed and TRUE for the
+// voltage, because each default has to be the one that does not alter behaviour.
+extern "C" void test_dc_bus_dlc2_defaults_are_asymmetric(void) {
+    // Land in the opposite state first, so the DLC-2 frame has to overwrite both.
+    const std::uint8_t armed[8] = { 0xF4, 0x01, 0x01, 0, 0, 0, 0, 0 };
+    auto f = make_acu_frame(ams::config::AcuRxDcBusId, 3, armed);
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    auto s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_TRUE(s.discharge_engaged);
+    TEST_ASSERT_FALSE(s.dc_bus_valid);
+
+    const std::uint8_t legacy[8] = { 0xF4, 0x01, 0xFF, 0, 0, 0, 0, 0 };
+    f = make_acu_frame(ams::config::AcuRxDcBusId, 2, legacy);
+    TEST_ASSERT_TRUE(ams::VehicleService::instance().update_from_frame(f));
+    s = ams::VehicleService::instance().snapshot();
+    TEST_ASSERT_FALSE(s.discharge_engaged);   // no report -> assume disconnected
+    TEST_ASSERT_TRUE(s.dc_bus_valid);         // no report -> assume usable
+    // Byte 2 was present once, so the capability latch stays set: a mid-session
+    // downgrade is not modelled.
+    TEST_ASSERT_TRUE(s.ecu_discharge_capable);
+}
+
+// ---------------------------------------------------------------------------
 // update_from_frame: wrong-bus frame is rejected.
 // ---------------------------------------------------------------------------
 extern "C" void test_acu_frame_on_wrong_bus_rejected(void) {

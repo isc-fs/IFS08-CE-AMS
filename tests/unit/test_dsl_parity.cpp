@@ -169,14 +169,11 @@ extern "C" void test_dsl_relay_status_matches_handrolled(void) {
 // Registry well-formedness
 // ===========================================================================
 extern "C" void test_dsl_registry_well_formed(void) {
-    // Phase 2a: 3 telemetry. Phase 2b: +9 ECU TX matrix. Phase 2c: +9 fixed
-    // pit-diag + ack + 5 RX = 27. #331: +1 pit-diag comms-health (0x6C9) = 28.
-    // relay-telemetry: +1 AMS_relay_status (0x4A4) = 29.
-    // fw-health (#411): +1 AMS_fw_health (0x6CA, ungated) = 30.
-    // per-module balancing: +1 Operator_balance_modules (0x104) = 31.
-    // SoC (phase 1, Coulomb counting): +1 ACU_soc (0x130) = 32.
-    // balance-quiesce health: +1 PIT_balance_health (0x6CB) = 33.
-    TEST_ASSERT_EQUAL_UINT(33u, ifs08::ALL_MSGS_COUNT);
+    // Total messages in the DSL registry. Pinned so that adding a .def without
+    // including it in all_messages.inc -- or including one without meaning to --
+    // fails here instead of silently changing the wire contract. Bump it
+    // deliberately when you add a message; `git log` has the history.
+    TEST_ASSERT_EQUAL_UINT(34u, ifs08::ALL_MSGS_COUNT);
     // Spot-check the BE field's DBC start_bit convention (8*byte+7).
     bool checked = false;
     for (unsigned i = 0; i < ifs08::ALL_MSGS_COUNT; ++i) {

@@ -60,6 +60,13 @@ extern "C" volatile std::uint8_t g_state_telemetry = 0;
 // the fsm::Mode enum (0=Undecided, 1=Car, 2=Charger).
 extern "C" volatile std::uint8_t g_mode_locked_telemetry = 0;
 
+// TSMS (PF9) level mirror. The shutdown circuit is complete when this is 1 --
+// any open shutdown element pulls it low -- so it is also the AMS's view of
+// whether the discharge relay is energised and the bleed disconnected. Published
+// on 0x021 so the ECU, which cannot see the SDC, can decide whether to secure an
+// interrupted discharge. Same single-writer 8-bit contract as g_state_telemetry.
+extern "C" volatile std::uint8_t g_tsms_telemetry = 0;
+
 // Telemetry TX failure counter, surfaced via a future diag frame.
 extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 
@@ -176,12 +183,21 @@ void SafetyTask::run() noexcept {
         const auto cur_snap = CurrentService::instance().snapshot();
         const auto veh_snap = VehicleService::instance().snapshot();
 
+        // VCU 0x100 freshness for precharge_target_reached. Held to VcuStaleMs,
+        // not the looser VcuFreshMs used for the mode lock: this criterion gates
+        // closing AIR+, so the same staleness that raises VcuStale must also make
+        // dc_bus_V unreadable. A never-seen VCU (tick 0) is not fresh.
+        const bool dc_bus_fresh =
+            veh_snap.last_dc_bus_tick != 0u &&
+            (now - veh_snap.last_dc_bus_tick) <= config::VcuStaleMs;
+
         // Operator-facing GPIO inputs: TSMS (side-of-car external
         // switch, PF9) and DASH_CHG (cockpit dashboard / charger
         // button, PF10). Both active-high, external pull-down on the
         // carrier. Polled every 10 ms; the 20 ms FSM step consumes
         // the latest reading.
         const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
+        g_tsms_telemetry = tsms ? 1u : 0u;
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
 
         // DASH_CHG rising-edge detect + latch. dash_chg stays the
@@ -259,8 +275,8 @@ void SafetyTask::run() noexcept {
             // Stay alive in the latched state: relays already open,
             // ErrorLatch persists across reset, so refreshing the
             // watchdog is safe. Lets the operator read telemetry
-            // and explicitly reset via the bootloader path. See PR
-            // See git history for the loop-bug this avoids.
+            // and explicitly reset via the bootloader path. See git
+            // history for the loop-bug this avoids.
             Watchdog::refresh();
         } else {
             // ---------- DC-bus collapse debounce ----------
@@ -323,6 +339,7 @@ void SafetyTask::run() noexcept {
                     // tick), but it keeps the FSM's Error backstop honest.
                     predicate_fault,
                     bus_collapsed,   // debounced bus-collapse decision
+                    dc_bus_fresh,
                     now, state_entry_tick,
                 };
                 const auto out = fsm::step(fsm_in);

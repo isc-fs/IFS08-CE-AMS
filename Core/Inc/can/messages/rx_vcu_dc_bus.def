@@ -1,5 +1,60 @@
 /* SPDX-License-Identifier: proprietary */
-/* 0x100 VCU_dc_bus_heartbeat -- DC bus volts. RX (VCU sends; AMS mode-locks on it). */
-CAN_MSG(VCU_dc_bus_heartbeat, 0x100, 2, "VCU", 100)
-    FIELD_LE (dc_bus_V, uint16_t, 0, 16, 1, 0, "V")
-CAN_MSG_END(VCU_dc_bus_heartbeat)
+/*
+ * 0x100 VCU_heartbeat -- DC bus volts + discharge state.
+ * RX (VCU sends; AMS mode-locks on it and gates precharge on it).
+ *
+ * The message and signal names here MIRROR isc-fs/IFS08-CE-ECU
+ * Core/Inc/can/messages/vcu_heartbeat.def, which owns this frame. Keep them in
+ * lockstep: a DBC carries message names, so if the two repos disagree about
+ * what one ID is called, ams.dbc and ecu.dbc cannot be loaded into the same
+ * tool without the name depending on load order. The file keeps this repo's
+ * rx_ prefix; a DBC carries message names, not filenames.
+ *
+ * dc_bus_voltage is a value the ECU RELAYS from the inverter, not one it
+ * measures. So this frame's own arrival is no evidence the number in it is
+ * current: it goes out every cycle whatever the inverter is doing, and its
+ * DLC-2 predecessor kept broadcasting a held reading forever. dc_bus_valid is
+ * the ECU
+ * saying "this is a present-tense measurement". It reads 0 both when the ECU
+ * substitutes a value and when it has none, and the substitution is 0 V -- safe
+ * for the 95 % precharge criterion, which 0 fails, but NOT safe for the re-arm
+ * gate, which reads a low number as a drained link. Treat 0 as "do not use the
+ * voltage in EITHER direction".
+ *
+ * discharge_engaged is the ECU's report that the bleed resistor is CONNECTED
+ * across the link -- either because the shutdown circuit is open, or because the
+ * ECU is securing an interrupted discharge (see acu_discharge_interlock.def).
+ * The AMS must not close a contactor while it is set: with the SDC closed and
+ * the bleed connected, closing an AIR puts pack current through a resistor rated
+ * for transient duty.
+ *
+ * Byte 2 is OPTIONAL on the wire. A VCU that predates it sends DLC 2 and the AMS
+ * reads discharge_engaged as 0 and dc_bus_valid as 1, so an older ECU behaves
+ * exactly as before rather than blocking the car. Note the two defaults point in
+ * opposite directions and both mean "do not let this ECU's silence change
+ * anything": absent, the bleed is assumed disconnected and the voltage is
+ * assumed usable. The AMS latches "this ECU speaks the discharge protocol" the
+ * first time it sees DLC >= 3, and only enforces its own dc_bus-based block
+ * after that -- there is no point refusing to arm over a stranded link when the
+ * other end has no way to clear it.
+ *
+ * Field macro args (bits): (name, ctype, abs_bit_offset, bit_len, factor, offset, unit)
+ */
+
+/*
+ * 10 ms is the ECU's ACTUAL transmit rate -- it posts this frame from its
+ * unconditional ControlTask body, and ControlPeriodMs is 10. It becomes
+ * GenMsgCycleTime in ams.dbc, which is what every other team's tooling sizes a
+ * receive timeout from, so it has to be the sender's rate and nothing else.
+ *
+ * Do NOT "correct" it to VcuStaleMs. That is 200 ms, it is this repo's
+ * TOLERANCE for the frame going quiet, and the two numbers answer different
+ * questions: one is how often it arrives, the other is how long we accept it
+ * not arriving. Twenty missed frames before VcuStale latches is the margin, not
+ * an inconsistency.
+ */
+CAN_MSG(VCU_heartbeat, 0x100, 3, "VCU", 10)
+    FIELD_LE_BITS (dc_bus_voltage,    uint16_t,  0, 16, 1, 0, "V")
+    FIELD_LE_BITS (discharge_engaged, uint8_t,  16,  1, 1, 0, "bool")
+    FIELD_LE_BITS (dc_bus_valid,      uint8_t,  17,  1, 1, 0, "bool")
+CAN_MSG_END(VCU_heartbeat)

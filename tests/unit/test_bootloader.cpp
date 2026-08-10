@@ -86,3 +86,41 @@ extern "C" void test_bootloader_trigger_trailing_bytes_ignored(void) {
     f.data[7] = 0xFF;
     TEST_ASSERT_TRUE(ams::Bootloader::matches_trigger(f));
 }
+
+// The reboot trigger opens all relays and resets. Honouring it in an energised
+// state means opening AIR+ under inverter load -- how contactors weld -- on a
+// 4-byte frame anyone on the accumulator bus can send.
+extern "C" void test_bootloader_reboot_only_when_contactors_open(void) {
+    using ams::Bootloader;
+    using S = ams::fsm::State;
+
+    // Contactors already open -> the reboot costs nothing new.
+    TEST_ASSERT_TRUE(Bootloader::reboot_allowed_in(S::Start));
+
+    // Error is the case that matters most, not a grudging exception: ErrorLatch
+    // is sticky across resets, so a faulted car boots back INTO Error. Refusing
+    // here would make reflashing a faulted AMS impossible without first
+    // clearing the latch -- exactly when you most want to reflash it.
+    TEST_ASSERT_TRUE(Bootloader::reboot_allowed_in(S::Error));
+
+    // Every energised state refuses.
+    TEST_ASSERT_FALSE(Bootloader::reboot_allowed_in(S::Precharge));
+    TEST_ASSERT_FALSE(Bootloader::reboot_allowed_in(S::Transition));
+    TEST_ASSERT_FALSE(Bootloader::reboot_allowed_in(S::Run));
+    TEST_ASSERT_FALSE(Bootloader::reboot_allowed_in(S::Charge));
+}
+
+// The gate is orthogonal to payload matching: a valid trigger frame stays valid
+// in Run, it just must not be acted on. Keeping these separate means a future
+// change to one cannot silently disable the other.
+extern "C" void test_bootloader_trigger_still_matches_while_energised(void) {
+    ams::CanFrame f{};
+    f.bus = static_cast<std::uint8_t>(ams::CanBus::Acu);
+    f.id  = ams::config::BlBootReqCanId;
+    f.dlc = ams::config::BlBootReqDlc;
+    for (std::uint8_t i = 0; i < ams::config::BlBootReqDlc; ++i) {
+        f.data[i] = ams::config::BlBootReqPayload[i];
+    }
+    TEST_ASSERT_TRUE(ams::Bootloader::matches_trigger(f));
+    TEST_ASSERT_FALSE(ams::Bootloader::reboot_allowed_in(ams::fsm::State::Run));
+}

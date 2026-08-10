@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: proprietary
 //
-// Realtime-priority safety supervisor. See docs/ARCHITECTURE.md §6 for
+// Realtime-priority safety supervisor. See docs/ARCHITECTURE.md §3 for
 // the full contract; in short:
 //
 //   - Runs at 10 ms cadence.

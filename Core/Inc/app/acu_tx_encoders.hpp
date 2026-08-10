@@ -66,6 +66,20 @@ encode_ok_precharge(std::uint8_t fsm_state) noexcept {
     return detail::to_array(buf);
 }
 
+// 0x021 discharge interlock — the two facts only the AMS can observe, so the
+// ECU can decide whether to secure an interrupted DC-link discharge. Raw
+// observations, not a request: the ECU owns the decision because it owns the
+// dc_bus measurement that decides it.
+[[nodiscard]] inline std::array<std::uint8_t, 1>
+encode_discharge_interlock(std::uint8_t fsm_state, bool tsms) noexcept {
+    ifs08::ACU_discharge_interlock_t in{};
+    in.fsm_in_start = static_cast<std::uint8_t>(fsm_state == 0u /*Start*/ ? 1u : 0u);
+    in.tsms         = static_cast<std::uint8_t>(tsms ? 1u : 0u);
+    std::uint8_t buf[1] = {0};
+    ifs08::encode_ACU_discharge_interlock(in, buf);
+    return detail::to_array(buf);
+}
+
 // 0x130 SoC % — Coulomb counting anchored on the VTC6 OCV curve
 // (soc_estimator.hpp), produced by CurrentSensorTask.
 //

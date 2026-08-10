@@ -28,6 +28,20 @@ bool VehicleService::update_from_frame(const CanFrame& f) noexcept {
         if (f.dlc < 2) return false;
         state_.dc_bus_V         = decode_dc_bus_V(f.data);
         state_.last_dc_bus_tick = f.timestamp_ms;
+        // Byte 2 is optional on the wire: a VCU that predates it sends DLC 2 and
+        // the AMS behaves exactly as it did before rather than blocking the car.
+        // The two absent-byte defaults point opposite ways on purpose -- bleed
+        // disconnected, voltage usable -- because both mean "an ECU that cannot
+        // state this must not have its silence change anything". Seeing the byte
+        // once latches ecu_discharge_capable.
+        if (f.dlc >= 3) {
+            state_.ecu_discharge_capable = true;
+            state_.discharge_engaged     = (f.data[2] & 0x01u) != 0u;
+            state_.dc_bus_valid          = (f.data[2] & 0x02u) != 0u;
+        } else {
+            state_.discharge_engaged     = false;
+            state_.dc_bus_valid          = true;
+        }
         return true;
     }
 

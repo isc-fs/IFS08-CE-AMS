@@ -35,11 +35,16 @@ ams::fsm::Inputs make_inputs(ams::fsm::State current,
     cur.filtered_mA      = 1000;
     veh.last_dc_bus_tick = 9950;
     veh.dc_bus_V         = 350;
+    // The memset above wipes the struct's default, so restate it: a nominal
+    // vehicle has an ECU reporting a real inverter measurement. Tests that care
+    // clear it explicitly.
+    veh.dc_bus_valid     = true;
     return { current, bms, cur, veh,
              /*tsms*/false, /*dash_chg_edge*/false,
              /*mode_locked*/ams::fsm::Mode::Undecided,
              /*predicate_fault*/false,
              /*bus_collapsed*/false,
+             /*dc_bus_fresh*/true,
              /*now*/10000, /*entry*/9800 };
 }
 
@@ -379,4 +384,216 @@ extern "C" void test_fsm_precharge_holds_within_deadline(void) {
     veh.dc_bus_V = 0;   // not reached yet, but still within the deadline
     in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs - 1;
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// A stale dc_bus_V frozen at pack voltage must NOT satisfy the precharge-complete
+// criterion. VehicleState holds the last received value, so a VCU that stops
+// publishing leaves the number sitting at whatever it last was -- and frozen high
+// it would close AIR+ onto a link that has since bled to zero. VcuStale catches
+// the dead VCU only after 200 ms and only once mode is locked to Car, while the
+// FSM steps every 20 ms, so it loses that race by an order of magnitude.
+extern "C" void test_fsm_precharge_rejects_stale_bus_reading(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;              // clears the 95 % bar on its face
+
+    // Fresh -> proceeds, closing AIR+.
+    in.dc_bus_fresh = true;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+
+    // Same reading, now stale -> holds in Precharge, AIR+ stays open. It will
+    // time out at PrechargeMaxMs into Error, which is the correct outcome.
+    in.dc_bus_fresh = false;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::CloseAirP);
+}
+
+// Transition re-checks the same criterion before committing to Run, so a reading
+// that goes stale between the two steps must not be trusted there either.
+extern "C" void test_fsm_transition_rejects_stale_bus_reading(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::OpenAirP);
+}
+
+// Charger does not consume dc_bus_V at all -- it proceeds on 0x101 freshness,
+// because the VCU is absent by definition during a charge. Staleness here must
+// not block it.
+extern "C" void test_fsm_charger_precharge_unaffected_by_stale_bus(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.last_charge_req_tick = 9950;   // fresh 0x101
+    veh.dc_bus_V = 0;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+}
+
+// ---------------------------------------------------------------------------
+// Re-arm gate. Opening the shutdown circuit de-energises the discharge relay
+// (NC) so the bleed connects; closing it again re-energises the relay and the
+// discharge STOPS part-way. What is left on the link is then not something the
+// AMS can infer, so it waits for the ECU's report instead.
+// ---------------------------------------------------------------------------
+extern "C" void test_fsm_start_blocks_while_bleed_connected(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = true;
+    veh.dc_bus_V = 0;                      // link is down...
+    veh.discharge_engaged = true;          // ...but the bleed is still connected
+
+    // Hard interlock: closing a contactor now would put pack current through a
+    // resistor rated for transient duty. Blocked regardless of the voltage.
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_EQUAL_UINT32(0u, out.safety_flags);
+
+    veh.discharge_engaged = false;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::ClosePrecharge);
+}
+
+extern "C" void test_fsm_start_blocks_while_link_charged(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = false;
+
+    // Above threshold -> a precharge here would be a no-op, since the 95 %
+    // completion criterion is already satisfied on entry.
+    veh.dc_bus_V = static_cast<std::uint16_t>(ams::config::DcBusDischargedV + 1u);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+
+    // At the threshold -> arms.
+    veh.dc_bus_V = ams::config::DcBusDischargedV;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+
+    // Stale 0x100 is not a discharged link.
+    in.dc_bus_fresh = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+}
+
+// The failure freshness alone cannot see. The ECU emits 0x100 every cycle
+// whatever the inverter is doing, so the frame stays fresh; when it has no
+// measurement it substitutes 0 V. Read literally that is "the link is drained"
+// -- a permit to arm over a link that may be sitting at pack voltage. The bit is
+// what stops the substituted value being mistaken for a reading.
+extern "C" void test_fsm_start_blocks_on_unmeasured_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = false;
+    veh.dc_bus_V = 0;                      // the ECU's substituted value...
+    veh.dc_bus_valid = false;              // ...announced as not a measurement
+    TEST_ASSERT_TRUE(in.dc_bus_fresh);     // and the frame itself is on time
+
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, ams::fsm::step(in).next);
+
+    // Same voltage, now backed by a real reading -> arms.
+    veh.dc_bus_valid = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// An unmeasured link must not complete a precharge either. The ECU substitutes
+// 0 V, which already fails the 95 % test, so this asserts the property rather
+// than the arithmetic: were the substitution ever to change to a held value,
+// the frozen-high case is exactly PRECHARGE-1 again.
+extern "C" void test_fsm_precharge_holds_on_unmeasured_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;                    // would satisfy 95 % of a 356 V pack
+    veh.dc_bus_valid = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+
+    veh.dc_bus_valid = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, ams::fsm::step(in).next);
+}
+
+// Charger never sees this bit: dc_bus_V is ECU-only and absent during a charge,
+// so gating on it would make Charger unarmable.
+extern "C" void test_fsm_charger_arms_with_unmeasured_link(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = false;
+    veh.dc_bus_valid = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// An ECU sending DLC 2 cannot express the bit at all. vehicle_service defaults
+// it true for exactly that case, and the re-arm block is gated on
+// ecu_discharge_capable besides -- so an older ECU still arms.
+extern "C" void test_fsm_older_ecu_arms_with_default_validity(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = false;     // never seen DLC >= 3
+    veh.discharge_engaged = false;
+    veh.dc_bus_valid = true;               // what update_from_frame leaves at DLC 2
+    veh.dc_bus_V = 350;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// An ECU that predates the discharge protocol sends 0x100 with DLC 2, so it can
+// neither report the bleed state nor drain a stranded link. Enforcing the
+// voltage block against it would brick the car rather than protect it.
+extern "C" void test_fsm_start_not_blocked_by_older_ecu(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Car;
+    veh.ecu_discharge_capable = false;     // never seen DLC >= 3
+    veh.discharge_engaged = false;
+    veh.dc_bus_V = 350;                    // charged, but nothing can clear it
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// Charger is exempt: the inverter is not in the charge loop and dc_bus_V is
+// VCU-only, absent during a charge, so gating it would make Charger unarmable.
+extern "C" void test_fsm_charger_arms_regardless_of_discharge_state(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Start, bms, cur, veh);
+    in.tsms = true;
+    in.dash_chg_edge = true;
+    in.mode_locked = ams::fsm::Mode::Charger;
+    veh.ecu_discharge_capable = true;
+    veh.discharge_engaged = true;
+    veh.dc_bus_V = 350;
+    in.dc_bus_fresh = false;
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirN);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ClosePrecharge);
 }

@@ -12,6 +12,7 @@
 //
 //    50 ms: 0x135 currents (i16 deciamps; accu, dcdc)
 //   100 ms: 0x020 ok_precharge
+//           0x021 discharge_interlock (fsm_in_start + tsms, for the ECU)
 //           0x12C v_cell_min (pack-wide min cell mV)
 //           0x131/0x132 vmin_module  (5 modules over two frames)
 //           0x133/0x134 vmax_module
@@ -58,6 +59,9 @@ extern "C" osMessageQueueId_t acu_rx_queueHandle;
 // FSM state mirror maintained by safety_task.cpp; used here for
 // ok_precharge (= 1 iff state in {Run=3, Charge=4}).
 extern "C" volatile std::uint8_t g_state_telemetry;
+// TSMS (PF9) level from SafetyTask: 1 = shutdown circuit complete. Published on
+// 0x021 for the ECU's discharge decision -- see acu_discharge_interlock.def.
+extern "C" volatile std::uint8_t g_tsms_telemetry;
 
 // Pit-diag needs read-only visibility into a handful of locals
 // owned by other TUs. SafetyTask writes g_mode_locked_telemetry on the
@@ -84,6 +88,9 @@ extern "C" std::uint16_t g_adow_diag_pu[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule];
 extern "C" std::uint16_t g_adow_diag_pd[ams::config::BmsModuleCount *
                                         ams::config::CellsPerModule];
+// Second-mode cell grid (config::AdcModeCrossCheck only), written by BmsPollTask.
+extern "C" std::uint16_t g_adc_xcheck_mv[ams::config::BmsModuleCount *
+                                         ams::config::CellsPerModule];
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
 // Balance-quiesce health: successful DCC clears before a measurement vs polls
@@ -115,6 +122,10 @@ namespace {
 // Telemetry counters; volatile so a remote-debug session can read.
 volatile std::uint32_t g_acu_rx_dropped_unknown = 0;
 volatile std::uint32_t g_acu_tx_fail            = 0;
+// Reboot triggers (0x002) refused because the FSM was in an energised state.
+// Nonzero means someone tried to flash a live car. TELEMETRY ONLY -- no safety
+// predicate reads it; the refusal itself is the safety action.
+volatile std::uint32_t g_boot_trigger_refused    = 0;
 
 // FDCAN1 Bus-Off recovery counter: incremented once per Stop/Start
 // attempt issued by poll_fdcan1_busoff_recovery(). Surfaced on the
@@ -245,6 +256,11 @@ inline void send_or_fail_blocking(std::uint32_t id,
 void tx_ok_precharge() noexcept {
     send_or_fail(ams::config::AcuTxOkPrechargeId,
                  ams::acu_tx::encode_ok_precharge(g_state_telemetry));
+}
+void tx_discharge_interlock() noexcept {
+    send_or_fail(ams::config::AcuTxDischargeInterlockId,
+                 ams::acu_tx::encode_discharge_interlock(
+                     g_state_telemetry, g_tsms_telemetry != 0u));
 }
 void tx_min_voltage(const ams::BmsState& b) noexcept {
     send_or_fail(ams::config::AcuTxMinVoltId,        ams::acu_tx::encode_min_voltage(b));
@@ -399,9 +415,20 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     if (ams::config::AdowRawDiag) {
         for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
             send_or_fail_blocking(ams::config::AdowDiagPuBaseId + i,
-                                  ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pu, i));
+                                  ams::pit_diag::encode_raw_grid_frame(g_adow_diag_pu, i));
             send_or_fail_blocking(ams::config::AdowDiagPdBaseId + i,
-                                  ams::pit_diag::encode_adow_grid_frame(g_adow_diag_pd, i));
+                                  ams::pit_diag::encode_raw_grid_frame(g_adow_diag_pd, i));
+        }
+    }
+
+    // BENCH DIAGNOSTIC (config::AdcModeCrossCheck): the pack re-measured in a
+    // second ADC mode, on AdcXCheckBaseId with the 0x680 grid layout. Diff it
+    // against 0x680: a cell that moves with conversion time has a settling-limited
+    // tap, one that does not is genuinely at that voltage.
+    if (ams::config::AdcModeCrossCheck) {
+        for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
+            send_or_fail_blocking(ams::config::AdcXCheckBaseId + i,
+                                  ams::pit_diag::encode_raw_grid_frame(g_adc_xcheck_mv, i));
         }
     }
 }
@@ -554,8 +581,20 @@ extern "C" void ams_acu_can_task_run(void *argument) {
                 // returns -- it opens all relays, writes
                 // BL_BOOT_REQ_MAGIC into BKP0R, and resets.
                 if (ams::Bootloader::matches_trigger(frame)) {
-                    ams::Bootloader::request_reboot(
-                        ams::config::JumpReason::CanTrigger);
+                    // State-gated. request_reboot() opens all relays and
+                    // resets; in an energised state that means opening AIR+
+                    // under inverter load, on a 4-byte frame anyone on the
+                    // accumulator bus can send. Refused reboots are counted
+                    // rather than answered -- the trigger is a bare frame with
+                    // no reply channel, so the count on the comms-health frame
+                    // is how an operator learns the car was too live to flash.
+                    if (ams::Bootloader::reboot_allowed_in(
+                            static_cast<ams::fsm::State>(g_state_telemetry))) {
+                        ams::Bootloader::request_reboot(
+                            ams::config::JumpReason::CanTrigger);
+                    } else {
+                        ++g_boot_trigger_refused;
+                    }
                 }
                 // LOGFS rides the same ID the trigger uses once the AMS
                 // is node 2, which is why this must come AFTER the check above.
@@ -600,6 +639,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         }
         if (now2 - last_mid_tx >= ams::config::EcuMidTxMs) {
             tx_ok_precharge();
+            tx_discharge_interlock();
             tx_min_voltage(bms);
             tx_vmin_module_a(bms);
             tx_vmin_module_b(bms);

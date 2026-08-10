@@ -7,7 +7,7 @@
 // at LSI_min, ~190 ms at LSI_max. SafetyTask period is 10 ms and the
 // refresh happens once per period on the clean path, so we have at
 // least 5× margin even at the worst LSI corner. See docs/ARCHITECTURE.md
-// §1 invariant 4 and §6 (SafetyTask).
+// §1 invariant 4 and §3 (task architecture).
 //
 // Init runs in CubeMX-generated code (MX_IWDG1_Init() in main.c)
 // before osKernelStart, so the watchdog is already alive when the
@@ -22,10 +22,18 @@ namespace ams {
 class Watchdog {
 public:
     // Refresh the down-counter. Must be called at least every ~50 ms
-    // (worst-case LSI fast corner). SafetyTask calls this once per
-    // 10 ms cycle on the clean path; on the fault path it deliberately
-    // does not, so the hardware reset fires within one watchdog window
-    // and the GPIO init path re-opens the relays.
+    // (worst-case LSI fast corner). MainTask calls this once per 10 ms
+    // cycle on BOTH paths -- clean and latched-fault. Refreshing in the
+    // latched state is deliberate: the relays are already open and
+    // ErrorLatch survives a reset, so a reset would buy no extra safety
+    // and would cost the operator the telemetry that says why the car
+    // stopped. Resetting out of a latched fault would also just boot
+    // straight back into Error.
+    //
+    // So the IWDG covers exactly ONE failure: MainTask stopping. It does
+    // NOT cover a MainTask that keeps looping while computing wrong
+    // answers, and it does not supervise any other task -- nothing else
+    // in the system refreshes it. See FMEA WATCHDOG-2.
     static void refresh() noexcept { ams_watchdog_refresh(); }
 };
 
