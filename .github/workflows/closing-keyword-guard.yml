@@ -1,0 +1,124 @@
+name: Closing-keyword guard
+
+# Blocks a NEGATED GitHub closing keyword from entering a commit message or a
+# PR body -- "this does not fix #123", "Does NOT close #148".
+#
+# WHY THIS EXISTS, and why the close-on-dev-merge negation guard is not enough.
+#
+# There are two separate mechanisms that close issues from keywords, and only
+# one of them is ours:
+#
+#   1. close-on-dev-merge.yml -- ours. Fires on merge to `dev`, reads the PR
+#      title and body. It skips negated keywords, so it is already safe.
+#   2. GitHub's NATIVE handling -- not ours, and cannot be disabled. Fires when
+#      commits are pushed to the DEFAULT branch (`main`), and it reads COMMIT
+#      MESSAGES as well as PR bodies. It has no notion of negation and there is
+#      no setting, label or API to make it acquire one.
+#
+# Mechanism 2 is what actually bit IFS08-CE-ECU. A commit message on that repo
+# read:
+#
+#     Does NOT close #148 -- the root cause is still unknown [...]
+#
+# written specifically so nobody would mistake the revert for a fix. #148 was
+# closed on merge anyway -- twice, once when the commit reached `dev` and again
+# months later when the season-end release carried it to `main`. Each time it
+# had to be spotted and reopened by hand.
+#
+# A commit message is immutable once merged, so mechanism 2 cannot be fixed
+# after the fact -- the only defence is to never write the sentence. Hence a
+# PR-time check rather than a merge-time one.
+#
+# THE FIX IS ALWAYS TRIVIAL: use a verb GitHub does not treat as a keyword.
+#   "does not fix #148"   ->  "does not address #148"
+#   "Does NOT close #148" ->  "This is not a fix for #148"
+#   "doesn't resolve #12" ->  "leaves #12 open"
+# Referencing the issue as a bare `#148` is always safe; only the nine closing
+# verbs are magic.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    branches: [dev, main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reject negated closing keywords
+        uses: actions/github-script@v7
+        with:
+          script: |
+            /* GitHub's nine closing keywords, followed by an optional colon
+               and `#N`. Kept deliberately identical to the pattern in
+               close-on-dev-merge.yml -- if one learns a new form, so must
+               the other. */
+            const ANCHOR = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)/gi;
+
+            /* "not" alone covers "does not" / "will not" / "do not"; the n't
+               form uses a character class so a smart apostrophe (doesn’t),
+               which GitHub bodies routinely contain, still matches. */
+            const NEGATION = /(?:\b(?:not|never|cannot|without)|n['’]t)\s*$/i;
+
+            const scan = (text) => {
+              const hits = [];
+              if (!text) return hits;
+              for (const m of text.matchAll(ANCHOR)) {
+                const before = text.slice(Math.max(0, m.index - 40), m.index);
+                if (NEGATION.test(before)) {
+                  hits.push({ issue: m[1], quote: (before + m[0]).trim().slice(-70) });
+                }
+              }
+              return hits;
+            };
+
+            const pr = context.payload.pull_request;
+            const findings = [];
+
+            for (const h of scan(`${pr.title}\n${pr.body || ''}`)) {
+              findings.push({ where: 'PR title/body', ...h });
+            }
+
+            /* Commit messages are the ones that matter most: the PR body can
+               be edited after the fact, a merged commit message cannot. */
+            const commits = await github.paginate(github.rest.pulls.listCommits, {
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+            for (const c of commits) {
+              for (const h of scan(c.commit.message)) {
+                findings.push({ where: `commit ${c.sha.slice(0, 8)}`, ...h });
+              }
+            }
+
+            if (findings.length === 0) {
+              core.info(`No negated closing keywords in the PR body or its ${commits.length} commit(s).`);
+              return;
+            }
+
+            for (const f of findings) {
+              core.error(
+                `Negated closing keyword for #${f.issue} in ${f.where}: "...${f.quote}". ` +
+                `GitHub will close #${f.issue} anyway when this reaches the default branch.`,
+              );
+            }
+
+            core.setFailed(
+              `${findings.length} negated closing keyword(s) found.\n\n` +
+              `GitHub's native issue-closing has no notion of negation, it reads COMMIT MESSAGES ` +
+              `as well as PR bodies, and it cannot be turned off. So "does not fix #N" closes #N.\n\n` +
+              `Rephrase with a verb GitHub does not treat as magic:\n` +
+              `  "does not fix #N"   -> "does not address #N"\n` +
+              `  "Does NOT close #N" -> "This is not a fix for #N"\n` +
+              `  "doesn't resolve #N" -> "leaves #N open"\n\n` +
+              `A bare "#N" reference is always safe. If the finding is in a commit message you ` +
+              `will need to amend or rebase -- which is exactly the point, because once it is ` +
+              `merged the message is immutable and the issue will be closed on every release ` +
+              `that carries it to the default branch.`,
+            );
