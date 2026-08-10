@@ -1,5 +1,3 @@
-![ISC Logo](http://iscracingteam.com/wp-content/uploads/2022/03/Picture5.jpg)
-
 # IFS08 - CE_AMS
 
 Embedded firmware for the **Accumulator Management System (AMS)** of the
@@ -30,15 +28,15 @@ Three things are worth knowing before you read anything else:
   predicates and the BMS-stale predicate are debounced over 25
   consecutive ticks (≈ 250 ms) so a torn read of the lock-free cell
   snapshot cannot latch a spurious `Error`. Stacked on the 200 ms
-  voltage poll that is ≈ 460 ms worst case, sized against a < 500 ms
+  voltage poll, that is ≈ 460 ms worst case, sized against a < 500 ms
   budget. Immediate-danger predicates (module offline, current
   over-limit, VCU stale, forced error) latch on the first tick.
-- **The DC-link discharge interlock is half-built, on purpose.** The
-  bleed relay is normally-closed and wired into the SDC with no software
-  control: opening the SDC drains the link, but closing it again stops
-  the discharge part-way and strands the link at an unpredictable
-  voltage. The AMS cannot restart it (see the `AMS_OK` latch above), so
-  it publishes the two facts only it can see — `0x021`
+- **The DC-link discharge interlock is split between the AMS and the
+  ECU, on purpose.** The bleed relay is normally-closed and wired into
+  the SDC with no software control: opening the SDC drains the link, but
+  closing it again stops the discharge part-way and strands the link at
+  an unpredictable voltage. The AMS cannot restart it (see the `AMS_OK`
+  latch above), so it publishes the two facts only it can see — `0x021`
   `ACU_discharge_interlock` (`fsm_in_start`, `tsms`) — and refuses to
   leave `Start` while the ECU reports `discharge_engaged` in `0x100`
   byte 2 bit 0. **The ECU half exists**, on `IFS08-CE-ECU` `dev`: it
@@ -84,7 +82,7 @@ flowchart LR
 
 ### Cadences
 
-Everything below is a `constexpr` in
+Everything below except the watchdog is a `constexpr` in
 [`Core/Inc/app/ams_config.hpp`](Core/Inc/app/ams_config.hpp) — that file,
 not this table, is the source of truth. If you change one, redo the
 fault-response arithmetic above; the comments there carry it.
@@ -139,7 +137,7 @@ cmake --build build-hil
 not the case count. For the real total run the binary directly:
 
 ```bash
-./build-tests/ams_unit_tests    # ends with "473 Tests 0 Failures 0 Ignored"
+./build-tests/ams_unit_tests    # ends with "476 Tests 0 Failures 0 Ignored"
 ```
 
 `CMakePresets.json` also offers Ninja-based `Debug` / `Release` presets
@@ -247,7 +245,7 @@ than trusting a link here.
    the production one). Switch before doing anything: `git checkout dev`.
    All work branches off `dev`.
 4. Install `arm-none-eabi-gcc` 14.x and CMake ≥ 3.22.
-5. Run the host test build (step 1 under [Build](#build)). If `473 Tests
+5. Run the host test build (step 1 under [Build](#build)). If `476 Tests
    0 Failures` comes out, your toolchain is good — you can do most
    logic work from here without touching hardware.
 6. Read [`docs/ONBOARDING.md`](docs/ONBOARDING.md), then
@@ -303,6 +301,38 @@ The DBC is regenerated at the tag on purpose, so a consumer downloading
 the image and the database from one release knows they describe the same
 wire bytes. The version string comes from the `VERSION` file; bump it in
 its own commit before tagging.
+
+---
+
+## For whoever picks this up next
+
+> *"For a successful technology, reality must take precedence over public
+> relations, for Nature cannot be fooled."*
+>
+> — Richard Feynman, closing his appendix to the Challenger inquiry
+
+He wrote that about a launch decision made by people who wanted the answer to
+be yes. It is here because this repository is one long argument with the same
+temptation.
+
+You will find, throughout these documents, sentences that admit something is
+unmeasured, unproven, or only assumed. Constants marked `COMMISSION` that are
+still guesses. An `FMEA.md` that lists faults nobody has fixed. Comments that
+say *this has never run on hardware*. None of that is an apology — it is the
+most valuable thing here. A number nobody has checked is not knowledge, and a
+pack does not care how confident its firmware was.
+
+So when you change something in this repo: measure it, and write down what you
+did **not** measure. When a document and the code disagree, the code is right
+and the document is a bug. When a test passes, ask whether it would have failed
+had you broken the thing on purpose — several here would not have, and that is
+recorded too.
+
+The accumulator holds enough energy to kill you. It is patient, it is not
+malicious, and it will never be impressed by a deadline. Treat it accordingly,
+and it is just engineering.
+
+Good luck. Build something you would sit behind.
 
 ---
 

@@ -185,8 +185,9 @@ Everything else exists to enforce these:
 
 ## 2. Build model
 
-CubeMX 6.17 generates a **CMake-based** project (not Eclipse-managed-
-make). The boundary between generated and hand-written code:
+CubeMX 6.17 generates a **CMake-based** project (not
+Eclipse-managed-make). The boundary between generated and hand-written
+code:
 
 ```mermaid
 flowchart LR
@@ -462,7 +463,7 @@ flowchart TD
 (orange) · queues, event groups and rings (amber) · shared state (blue) ·
 tasks (green) · `MainTask` (red, the only realtime-priority task).
 
-Arrows are direction of value flow.
+Arrows are the direction of value flow.
 
 **Who may write a safety GPIO.** `MainTask` (relays + `AMS_OK` + watchdog),
 `App_InitTask` (one-shot `Relays::open_all()` if LTC chain discovery
@@ -784,7 +785,7 @@ inline by `MainTask` via `apply_relay_actions`):
 - **The FSM consumes an already-debounced fault decision.** `MainTask` is
   the single fault authority: it runs the predicate set, applies the
   debounces, and passes the result in as `predicate_fault`. The FSM does
-  **not** re-run the predicates — doing so bypassed the debounce. On a
+  **not** re-run the predicates — doing so would bypass the debounce. On a
   fault tick `MainTask` latches and skips the FSM step entirely; the
   any-state→`Error` branch inside `fsm::step` is a kept backstop.
 - **`AMS_OK` (PB4) tracks the live safety state**, driven separately every

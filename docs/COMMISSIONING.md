@@ -1,7 +1,7 @@
 # AMS commissioning procedure
 
-Finalises every calibration constant that placeholder values in
-`Core/Inc/app/ams_config.hpp` ship with. **Every item marked
+Finalises every calibration constant that ships with a placeholder
+value in `Core/Inc/app/ams_config.hpp`. **Every item marked
 `COMMISSION` in the source must be measured and updated before the
 car runs on track.**
 
@@ -120,7 +120,7 @@ Nominal (ideal) calibration:
 > A DAC injection verified at exactly 5 mV/A measured the firmware
 > reading a stable **0.924× (7.6 % low)** with a **+0.6 A** zero. Folding
 > that effective ADC/VREF gain into the COMMISSION constants gives
-> **`CurrentMvPerAmpe1 = 46`** (50 / 0.924, residual +0.4 %). The shipped
+> **`CurrentMvPerAmpe1 = 46`** (50 × 0.924, residual +0.4 %). The shipped
 > **`CurrentZeroCount = 2054`** is the flight carrier's zero; the HIL
 > bench carrier read 2050 on the same firmware.
 >
@@ -648,8 +648,8 @@ near `BalanceDeltaMv` toggles on and off continuously — selected, bleeds
 a little, drops below the single threshold, dropped, recovers, selected
 again. The bleed is real but the duty is a fraction of what the operator
 sees on the mask, and the DCC pattern is unreadable on the bench. The
-20 mV stop against a 50 mV start gives a 30 mV band, comfortably wider
-than the 9–36 mV harness-IR artifact a bled cell shows against its
+20 mV stop against a 50 mV start gives a 30 mV band, the same order as
+the 9–36 mV harness-IR artifact a bled cell shows against its
 neighbours.
 
 Why the floor is the **second**-lowest cell and not the minimum: a
@@ -812,7 +812,7 @@ because `BmsModuleOffline` pre-empts it. 250 ms still spans more than one
 
 ## 5. Watchdog window
 
-The IWDG runs at LSI ~32 Hz with ±47 % tolerance. Values in `main.c`:
+The IWDG runs at LSI ~32 kHz with ±47 % tolerance. Values in `main.c`:
 
 - `prescaler = 32` (`IWDG_PRESCALER_32`)
 - `reload    = 100`

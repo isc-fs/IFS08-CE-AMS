@@ -17,7 +17,8 @@ the precharge contactor, and holds the shutdown circuit closed via `AMS_OK`.
 set and drives the relays inline, but the cell voltage/temperature branches
 are debounced (`CellFaultConfirmTicks` = 25 ≈ 250 ms) on top of a 200 ms
 voltage poll — worst case ≈ 460 ms, sized against the < 500 ms budget.
-Immediate-danger predicates (BMS module offline/stale, current over-limit,
+`BmsStale` is debounced too (`BmsStaleConfirmTicks` = 25 ≈ 250 ms).
+Immediate-danger predicates (BMS module offline, current over-limit,
 VCU stale) latch on the first tick. If you change either number, redo that
 arithmetic; the comments in `ams_config.hpp` carry it.
 
@@ -30,7 +31,7 @@ cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-
 
 `ctest` reports `1/1 Test ... Passed` — that is the single Unity *runner*, not
 the case count. Run `./build-tests/ams_unit_tests` directly for the real
-total: it ends `473 Tests 0 Failures 0 Ignored`.
+total: it ends `476 Tests 0 Failures 0 Ignored`.
 
 ```bash
 # Cross-compile the firmware.
@@ -53,10 +54,12 @@ on every boot; it must never reach a flight image (see `docs/HIL_BUILD.md`).
 ## Git & PR conventions
 
 - **Branch off `dev`**; never commit directly to `dev` or `main`. Name
-  branches `feat/<n>-<short-title>` or `fix/<n>-<short-title>` (independent
-  counters; next = last of that type + 1). `branch-issue.yml` parses `<n>`
-  out of the branch name, opens the tracking issue, and warns on the PR if
-  the number is not the expected next one.
+  branches `feat/<short-slug>` or `fix/<short-slug>` — recent branches on
+  `dev` are slug-only. `branch-issue.yml` opens the tracking issue from the
+  branch name; it `parseInt`s the second field looking for a
+  `feat/<n>-<slug>` counter, so a slug-only branch parses to `NaN` and the
+  auto-opened issue carries a numbering warning. That warning is expected
+  noise, not a problem to fix (`CONTRIBUTING.md`).
 - **Always open PRs with `gh pr create --base dev`.** The default branch is
   `main`, so omitting `--base dev` mis-targets a release branch. `dev → main`
   is a *release* only, gated on the HIL acceptance plan.
@@ -84,9 +87,10 @@ repo. History lives in `git log`, PRs and `docs/` — not in the source.
 
 **Do write:**
 
-- Physical and numerical reasoning: `47R || 47R = 23.5 ohm -> 165 mA at 3.85 V`
-- Safety contracts: *"TELEMETRY ONLY -- no safety predicate reads this"*
-  (`soc_estimator.hpp` opens with exactly this — SoC never reaches the FSM)
+- Physical and numerical reasoning: `47R || 47R = 23.5 ohm -> 164 mA at 3.85 V`
+- Safety contracts: *"SAFETY CONTRACT: SoC is TELEMETRY ONLY. No safety
+  predicate reads it"* (`soc_estimator.hpp` opens on this — SoC never
+  reaches the FSM)
 - Non-obvious invariants and conventions: the LTC cell split (`LTC_1` carries
   module cells 0..8, `LTC_2` carries 9..18 — `CellsPerLtcUpper` = 9,
   `CellsPerLtcLower` = 10), `+ current = discharge`, single-writer ownership

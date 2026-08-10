@@ -203,8 +203,8 @@ struct Inputs {
   The edge is cleared right after `fsm::step` runs — one press, at most one
   transition. Run/Charge do **not** look at it; releasing it does not fault.
 - **`predicate_fault`** is `MainTask`'s already-debounced fault decision. The FSM
-  must **not** re-evaluate predicates itself — doing so bypassed the cell V/T
-  debounce and latched `Error` at the boot-grace edge. `MainTask` only calls
+  must **not** re-evaluate predicates itself — doing so would bypass the cell V/T
+  debounce and latch `Error` at the boot-grace edge. `MainTask` only calls
   `step()` on a no-fault tick, so this is `false` in normal operation; the
   any-state→Error branch in the FSM is a kept backstop.
 - **`bus_collapsed`** is likewise pre-debounced, and `MainTask` only ever computes
@@ -454,7 +454,7 @@ touch-safe DC limit from the rulebook and does not scale with pack voltage. It
 must sit at or above the ECU's own release threshold, or the two ends disagree
 about the boundary and the AMS waits on a link the ECU stopped draining.
 
-Two escape hatches, both deliberate:
+Three escape hatches, all deliberate:
 
 - **The voltage block is only enforced once `ecu_discharge_capable` latches** —
   set the first time an `0x100` arrives with DLC ≥ 3. An ECU that predates the
@@ -893,7 +893,7 @@ dash_chg / tsms / balance_override, byte 3 AMS_OK GPIO, bytes 4-5 PEC error tota
 
 All tests run host-side (Unity), no FreeRTOS/HAL dependency. Running
 `./build-tests/ams_unit_tests` directly prints the real total — currently
-**473 Tests 0 Failures 0 Ignored**. (`ctest` reports `1/1 Test ... Passed`;
+**476 Tests 0 Failures 0 Ignored**. (`ctest` reports `1/1 Test ... Passed`;
 that is the single Unity *runner*, not the case count.)
 
 ### `tests/unit/test_state_machine.cpp`

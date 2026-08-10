@@ -20,9 +20,9 @@ usable capacity — about 6 kWh with no fuse fast enough to save you.
 Three things follow, and none of them are negotiable:
 
 - **DC at these voltages does not let go.** There is no zero crossing.
-  Treat every conductor downstream of the AIRs as live until *you*
+  Treat every conductor downstream of the AIRs as live until *you* have
   measured it dead, with your own meter, on the actual conductor.
-- **A discharged DC-link is not a safe DC-link.** Opening the shutdown
+- **A bled DC-link is not a discharged DC-link.** Opening the shutdown
   circuit starts the bleed; closing it again *stops* the bleed part-way
   and strands whatever charge is left. See §5 — the firmware has a whole
   interlock about this, both halves of it now exist, and the pairing has
@@ -92,12 +92,17 @@ Two honest consequences a newcomer must internalise:
    not this one. Read the comment on `CurrentMaxMa`; it does the
    arithmetic for you.
 
-### Two contexts, decided once per power cycle
+### Two contexts, decided once per arm
 
 | Context | Locked when | What it means |
 |---|---|---|
 | **Car** | anything that is not Charger — including a car with a dead VCU | Precharge through the resistor; completes on `dc_bus_V ≥ 95 %` of pack **and** a fresh `0x100` |
 | **Charger** | a fresh operator `0x101` "CHRG" request **and** VCU `0x100` silent | **Skips the resistor** — closes only AIR− on entry, AIR+ on the proceed; proceeds while `0x101` is still fresh |
+
+The lock is set at `Start → Precharge` and **cleared on every return to
+`Start`**, so a re-arm after a TSMS drop or a bus collapse re-decides
+Car/Charger from scratch and re-runs precharge — it never inherits the
+previous decision.
 
 Charger mode is deliberately hard to enter: it needs a *positive*
 assertion (`0x101`), not merely VCU absence. A car whose VCU died sends
@@ -127,8 +132,8 @@ contactors open, nothing latched, and the driver re-arms with another
 press. That is load-bearing for the FS rule that a driver must be able to
 stop and restart the tractive system unaided — and it works only because
 `AMS_OK` is health-only. `AMS_OK` sits *upstream* of TSMS in the loop, so
-if a TSMS drop latched `Error` it would drop `AMS_OK`, open the upstream
-relay, and re-closing TSMS could no longer restore the loop. **Charger
+if a TSMS drop latched `Error` it would drop `AMS_OK`, opening the
+upstream relay, and re-closing TSMS could no longer restore the loop. **Charger
 mode is the exception**: there, a TSMS drop *does* latch `Error`, because
 the scrutineering sheet forbids re-activating a charger output once the
 SDC has opened.
@@ -232,7 +237,7 @@ Three ideas do most of the work:
    (AcuCanTask). Each has exactly one writer and many readers; no mutex
    is taken. **Do not read this as "reads are atomic."** Individual
    32-bit aligned words are atomic on the Cortex-M7, but
-   `BmsService::snapshot()` returns a copy of a ~620-byte struct while
+   `BmsService::snapshot()` returns a copy of a ~690-byte struct while
    the writer may be part-way through updating it, so a reader *can*
    observe a mid-update mix — a torn read. The design
    tolerates it deliberately: telemetry only ever looks stale, and the
@@ -250,9 +255,9 @@ Three ideas do most of the work:
    yourself needing a HAL call in one of those headers, you are putting
    it in the wrong file.
 
-**The first 2 seconds are different.** `SafetyBootGraceMs` = 2000 ms after
-`osKernelStart`, the freshness / data-presence predicates are suppressed
-and `AMS_OK` is held **LOW**. Both halves matter. Without the suppression
+**The first 2 seconds are different.** For `SafetyBootGraceMs` = 2000 ms
+after `osKernelStart`, the freshness / data-presence predicates are
+suppressed and `AMS_OK` is held **LOW**. Both halves matter. Without the suppression
 the very first supervisor iteration would fault (every service's
 `last_*_tick` is still 0), withhold the watchdog refresh, and IWDG-reset
 the chip in ~100 ms — before BmsPollTask has polled once. And `AMS_OK`
@@ -464,15 +469,18 @@ Full detail is in [`README.md`](../README.md) and
 [`CONTRIBUTING.md`](../CONTRIBUTING.md); the essentials:
 
 - **Branch off `dev`**, never commit to `dev` or `main` directly.
-  Naming: `feat/<n>` or `fix/<n>`, optionally with a slug —
-  `feat/3-bms-rx-task`. The two types have independent counters.
+  Naming: `feat/<short-slug>` or `fix/<short-slug>` —
+  `feat/balance-spatial-spread`. Recent branches on `dev` are slug-only.
 - **Pushing a *new* branch auto-opens a tracking issue**
-  (`.github/workflows/branch-issue.yml`). The bot picks the expected
-  number by scanning **all** issues carrying that type's label — open
-  *and* closed — and taking the highest + 1. A mismatched number does not
-  block anything; it just adds a warning block to the issue asking you to
-  recreate the branch. Note the number is consumed either way, so do not
-  push throwaway branches to "see what happens".
+  (`.github/workflows/branch-issue.yml`). The bot still expects the legacy
+  numeric form (`feat/<n>-<slug>`): it `parseInt`s the second field of the
+  branch name and compares it against the highest number seen in an
+  existing issue title carrying that label — open *and* closed — plus 1.
+  A slug-only branch parses to `NaN`, so the comparison always fails and
+  the issue carries a warning block telling you to rename. The issue is
+  still created, still labelled, and still closes on merge — **that
+  warning is expected noise, not a problem to fix.** An issue is opened
+  either way, so do not push throwaway branches to "see what happens".
 - Your **first commit message on the branch** is auto-copied into the
   tracking issue's description — make it a real sentence.
 - **PRs target `dev`** (`gh pr create --base dev`; the repo default is
@@ -486,10 +494,9 @@ Full detail is in [`README.md`](../README.md) and
   removed or changed, attach a captured SIL FSM-transition trace as
   evidence, and confirm the `ARCHITECTURE.md` §1 invariants still hold.
   See [`CONTRIBUTING.md`](../CONTRIBUTING.md) § "Modifying the safety
-  supervisor". **Review count is ambiguous in that file** — its PR
-  checklist says one approving review, its safety-supervisor section says
-  two, explicitly "not one". Ask a lead which governs before you rely on
-  either.
+  supervisor". **These PRs need two approving reviews**, not the one an
+  ordinary PR needs. It is a team convention, not a branch-protection
+  rule, so it is on you to go and ask for the second reviewer.
 - **Comments and docs describe the code as it is now.** No issue/PR
   numbers, no dates, no version stamps, no "was 2 / fixed in" narrative —
   git has that. Do write the physics, the safety contract, the
@@ -515,7 +522,7 @@ Full detail is in [`README.md`](../README.md) and
 - [ ] You've read `ams_config.hpp` end to end, know what `COMMISSION`
       means, and can name three constants that are still placeholders.
 - [ ] You've read `.github/workflows/branch-issue.yml` and can predict
-      what happens when you push `feat/<n>`.
+      what happens when you push `feat/<short-slug>`.
 
 When the boxes are checked, pick up a `good first issue` or ask a lead
 what's unblocked. Welcome aboard.
