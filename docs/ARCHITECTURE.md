@@ -835,7 +835,7 @@ sequenceDiagram
     Main->>Main: boot in Error if ErrorLatch::is_set (relays open, AMS_OK low)
     Note over Main: For t < SafetyBootGraceMs (2 s)<br/>data-presence/freshness/range predicates suppressed<br/>and AMS_OK is held LOW.<br/>A sticky ErrorLatch still boots into Error.
     loop every 10 ms (osDelayUntil)
-      Main->>Main: snapshot bms/current/vehicle; read TSMS/DASH_CHG
+      Main->>Main: snapshot bms/current/vehicle, read TSMS/DASH_CHG
       alt fault detected
         Main->>HW: latch (Relays::open_all + AMS_OK low + ErrorLatch::set)
         Main->>HW: HAL_IWDG_Refresh (stay alive for diagnosis)
