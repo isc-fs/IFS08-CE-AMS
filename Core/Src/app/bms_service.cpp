@@ -37,15 +37,15 @@ BmsService::BmsService() {
     state_.min_tempC   = std::numeric_limits<std::int16_t>::max();
     state_.max_tempC   = std::numeric_limits<std::int16_t>::min();
 
-    // Seed every cell-temp slot to the NO-READING sentinel, not to a plausible
-    // temperature. This used to be 25 degC "so unpopulated NTC slots can't
-    // dominate the max/min" -- but that inverted the problem: an unpopulated or
-    // mis-muxed channel then reported comfortable room temperature forever, so
-    // max_tempC looked healthy whatever the pack did, and every threshold built
-    // on it was defeated no matter how accurate the conversion was.
+    // Seed every cell-temp slot to the NO-READING sentinel, never to a
+    // plausible temperature. Seeding 25 degC looks like it stops unpopulated
+    // slots dominating the max/min, but it inverts the problem: an unpopulated
+    // or mis-muxed channel then reports comfortable room temperature forever,
+    // max_tempC looks healthy whatever the pack is doing, and every threshold
+    // built on it is defeated no matter how accurate the conversion is.
     //
-    // recompute_summaries_ now skips sentinels and counts what remains in
-    // valid_temp_channels, so "no data" is visible instead of disguised.
+    // recompute_summaries_ skips sentinels and counts what remains in
+    // valid_temp_channels, so "no data" stays visible instead of disguised.
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
         for (std::uint8_t t = 0; t < config::TempsPerModule; ++t) {
             state_.cell_tempC[m][t] = config::NtcNoReading;

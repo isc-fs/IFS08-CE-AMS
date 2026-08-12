@@ -121,7 +121,7 @@ public:
     static BmsService& instance() noexcept;
 
     // ------------------------------------------------------------------
-    // Active data path (v1.2.0+): one call per polling cycle of
+    // Active data path: one call per polling cycle of
     // BmsPollTask. Walks 4 register groups (RDCVA + RDCVB + RDCVC +
     // RDCVD), LtcChainLength ICs each, 8 bytes per IC (6 data + 2
     // PEC). Expected buffer layout, all 4 groups concatenated in

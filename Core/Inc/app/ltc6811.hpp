@@ -120,13 +120,17 @@ enum class AuxSel   : std::uint8_t { All = 0, Gpio1 = 1, Gpio2 = 2, Gpio3 = 3,
 // Two conversions (PUP=1 then PUP=0), each read back with the normal RDCV*
 // groups, feed ams::open_wire::detect_open_conductors().
 //
-// HARDWARE-CONFIRMED (bench, feat/adow-raw-diagnostic): the previous encoding
-// used base 0x0248 with PUP<<5, i.e. PUP and the fixed bit5 were SWAPPED. That
-// left the PUP=1 pass correct by coincidence (0x0368) but emitted 0x0348 for
-// PUP=0 -- b6 set (still pull-UP) and the fixed b5 clear -- which the LTC does
-// not accept, so no second conversion ran and RDCV re-returned the pull-up
-// result. The raw diag dump showed PU == PD bit-for-bit on all 95 cells, making
-// the PU-PD delta identically 0 and CellOpenWire impossible to trigger.
+// HARDWARE-CONFIRMED on a real chain.
+//
+// PUP sits at bit 6 and bit 5 is a FIXED part of the base. Swapping the two is
+// the trap here, because it fails silently in one direction: the PUP=1 command
+// still comes out correct by coincidence, while PUP=0 emits a command the LTC
+// rejects, so the second conversion never runs and RDCV returns the pull-up
+// result again.
+//
+// The signature, if you ever see it: PU == PD bit-for-bit on all 95 cells, so
+// the PU-PD delta is identically 0 and CellOpenWire can never trigger. Dump the
+// raw grids (config::AdowRawDiag) before suspecting the detector itself.
 [[nodiscard]] inline std::uint16_t adow_cmd(AdcMode mode, bool pull_up,
                                             bool discharge_permit,
                                             CellSel cell = CellSel::All) noexcept {

@@ -15,12 +15,10 @@
 //   3. Writes the magic into RTC->BKP0R
 //   4. Calls NVIC_SystemReset -- never returns
 //
-// Trigger surface (v1.2.0+): a single dedicated CAN frame on FDCAN1
-// (the accumulator bus). It was previously on FDCAN2;
-// retired BmsRxTask the only listener on FDCAN2 was the bootloader-
-// reboot frame -- moving it to FDCAN1 lets MingoCAN talk to the
-// AMS over the same bus it already uses for VCU telemetry. See
-// docs/CAN_MAP.md and ams_config.hpp::BlBootReqCanId.
+// Trigger surface: one dedicated CAN frame on FDCAN1, the accumulator bus --
+// the same bus MingoCAN already uses for VCU telemetry, so the flashing tool
+// needs only one connection. See docs/CAN_MAP.md and
+// ams_config.hpp::BlBootReqCanId.
 
 #pragma once
 

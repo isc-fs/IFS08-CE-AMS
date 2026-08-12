@@ -110,9 +110,8 @@ bool send_telem(std::uint32_t id, const telemetry::Frame& payload) noexcept {
 }
 
 // Drive the relay actions encoded in the FSM's safety_flags bitmask.
-// Inline replacement for the old osEventFlags(safety_eventsHandle,...)
-// ping-pong that used to hand the bits off to SafetyTask. Now both
-// producer and consumer live in the same timeline so we just act.
+// Producer and consumer live in the same timeline, so the bits are applied
+// directly here rather than posted to an event group and picked up later.
 void apply_relay_actions(std::uint32_t flags) noexcept {
     if (flags & events::safety::CloseAirN)      Relays::close_air_negative();
     if (flags & events::safety::CloseAirP)      Relays::close_air_positive();
@@ -334,7 +333,7 @@ void SafetyTask::run() noexcept {
                     state, bms_snap, cur_snap, veh_snap,
                     tsms, dash_chg_edge_pending, mode_locked,
                     // Pass the already-debounced fault decision;
-                    // the FSM no longer re-evaluates the predicate. This
+                    // the FSM does not re-evaluate the predicate itself. This
                     // is false here (step() only runs on a no-fault
                     // tick), but it keeps the FSM's Error backstop honest.
                     predicate_fault,
@@ -389,13 +388,15 @@ void SafetyTask::run() noexcept {
         }
 
         // ---------------- AMS_OK / SDC enable (every 10 ms) ----------------
-        // Drive PB4 to track the live safety state: HIGH only once the
-        // boot grace has passed AND no ERROR is latched; LOW during grace
-        // (predicates suppressed) and LOW the moment a fault latches. The
-        // firmware previously never drove this pin, so the SDC enable was
-        // never asserted in a healthy state and never deasserted on a
-        // fault -- it just decayed from its boot-default level. error_latched_
-        // already reflects this tick's fault/FSM decision above.
+        // Drive PB4 to track the live safety state: HIGH only once the boot
+        // grace has passed AND no ERROR is latched; LOW during grace
+        // (predicates are suppressed there) and LOW the moment a fault
+        // latches.
+        //
+        // It must be driven EVERY tick, not just on transitions: a pin left
+        // undriven decays from its boot-default level, which means the SDC
+        // enable is neither asserted when healthy nor deasserted on a fault.
+        // error_latched_ already reflects this tick's fault/FSM decision.
         Relays::set_ams_ok(safety::ams_ok_asserted(now, error_latched_));
 
         // ---------------- Telemetry (every 500 ms, regardless of state) ----------------

@@ -54,8 +54,8 @@ inline constexpr std::uint8_t  OpenWireRetries     = 1;
 // pit-diag so the ADOW encoding + conversion timing can be debugged on a real
 // chain (compare PU vs PD on a known open). Runs its own two-pass ADOW scan in
 // BmsPollTask INDEPENDENT of CellOpenWireCheck, so you can debug it while live
-// detection stays off. `true` on the feat/adow-raw-diagnostic branch; keep FALSE
-// on dev/flight -- the code stays compiled (dead-code-eliminated when false, so
+// detection stays off. Keep FALSE on dev and flight builds -- the code stays
+// compiled (dead-code-eliminated when false, so
 // CI still type-checks it) but emits nothing. Blocks: PU @ AdowDiagPuBaseId, PD
 // @ AdowDiagPdBaseId, same 24-frame 4-cell BE-u16 layout as the 0x680 cell grid.
 inline constexpr bool          AdowRawDiag         = false;
@@ -162,7 +162,7 @@ inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor st
 // crossed at the 2nd voltage poll after loss (~400 ms) + a 10 ms safety tick
 // ~= 410 ms. 350 > BmsPollVoltMs (200 ms) so ONE missed poll is tolerated (age
 // 200 <= 350); two consecutive misses (400 ms) trip it. SAFE ONLY with bounded
-// poll jitter -- the temp sweep no longer head-of-line-blocks the voltage poll
+// poll jitter -- the temp sweep does not head-of-line-block the voltage poll
 // (see run_temperature_poll's yield-to-PollVDue). COMMISSION: confirm no
 // nuisance trips + the exact margin on the HIL bench before flight.
 inline constexpr std::uint32_t BmsStaleMs     = 350;   // any BMS module silent (< 500 ms fault-response)
@@ -263,7 +263,7 @@ inline constexpr std::uint32_t AcuHeartbeatMs    = 100;
 // spans > one poll for glitch immunity; at 250 ms that floored detection at
 // ~500 ms. 200 ms poll + CellFaultConfirmTicks (~250 ms) = ~460 ms worst case.
 // Minor knock-on: balance updates run ~1.25 Hz (BalanceUpdatePolls x 200 ms) and
-// LogSamplePeriodMs (250) no longer exactly matches a poll -- both non-safety.
+// LogSamplePeriodMs (250) does not exactly match a poll -- both non-safety.
 inline constexpr std::uint32_t BmsPollVoltMs     = 200;
 // 500 -> 250 ms: a disconnected temp sensor must fault in < 500 ms (FS rule).
 // With TempDisconnectPolls = 1 the worst-case detect is one sweep cadence +
@@ -306,7 +306,7 @@ inline constexpr std::uint32_t LogSyncPeriodMs   = 1000;
 // files make LOGFS listing / CRC / resume / "only new logs" tractable.
 // Size cap per file. A real 314-column row is ~1.35 kB (76 B of scalars +
 // 95 cells + 200 temps), so at 4 Hz the card takes ~5.3 KiB/s and 4 MiB is
-// ~13 MINUTES of logging -- not the ~4 min this comment used to claim.
+// ~13 MINUTES of logging.
 inline constexpr std::uint32_t LogFileMaxBytes   = 4u * 1024u * 1024u;  // 4 MiB (~13 min/file at full per-cell rows)
 
 // Time cap per file. Without this, a file is only sealed to.CSV on the size
@@ -667,10 +667,8 @@ inline constexpr std::uint16_t DcBusDischargedV       = 60;   // COMMISSION (rul
 // bipolar +/- 5 mV/A differential signal (250 A nominal, 500 A max
 // unclipped, output clips at +/- 2.62 V, common-mode ~1.44 V).
 //
-// HW revision (feat/current-sensor-diff): the external carrier diff amp
-// (old MCP6001R, gain x4, Vref/2 bias) is REMOVED. OUT_P and OUT_N now
-// wire straight to the STM32 and the ADC reads them in DIFFERENTIAL
-// mode:
+// OUT_P and OUT_N wire straight to the STM32; the ADC reads them in
+// DIFFERENTIAL mode, with no carrier-side amplifier in between:
 //   OUT_P = PF7 = ADC3_INP3   (positive input)
 //   OUT_N = PF8 = ADC3_INN3   (negative input, hardware-paired to INP3)
 //
@@ -683,18 +681,18 @@ inline constexpr std::uint16_t DcBusDischargedV       = 60;   // COMMISSION (rul
 //   V(INP) - V(INN) = 5 mV/A * I        (discharge -> +, charge -> -)
 //   raw            ~= 2048 + (V_diff / LSB_diff),  LSB_diff = 2*Vref/4095
 //
-// Net sensitivity is now the bare sensor 5 mV/A (no x4 gain), so
-// CurrentMvPerAmpe1 drops from 200 (20 mV/A) to 50 (5 mV/A). Zero
-// current reads code ~2048 (CurrentZeroCount), NOT a mid-rail voltage:
-// the natural reference in differential mode is the mid code, so the
-// zero point is a COMMISSION *count* offset rather than a voltage.
+// Net sensitivity is the bare sensor's 5 mV/A, hence
+// CurrentMvPerAmpe1 = 50. Zero current reads code ~2048
+// (CurrentZeroCount), NOT a mid-rail voltage: in differential mode the
+// natural reference is the mid CODE, so the zero point is a COMMISSION
+// *count* offset rather than a voltage. Getting that wrong is the easy
+// mistake here.
 //
-// Observable range: the differential pair spans ~+/- Vref, i.e. well
-// beyond the sensor's own +/- 2.62 V (~+/-524 A) clip and beyond the
-// rail headroom set by the 1.44 V common-mode. Unlike the old x4 +
-// 1.65 V single-ended front-end (which clipped firmware-side at only
-// +/- 82.5 A, below the 200 A safety threshold), the CurrentMaxMa
-// over-current check is now genuinely reachable.
+// Observable range: the differential pair spans ~+/- Vref, well beyond
+// the sensor's own +/- 2.62 V (~+/- 524 A) clip. The CurrentMaxMa
+// over-current threshold is therefore inside the measurable range --
+// check that still holds if you change the front end, because a
+// threshold above the clip point can never fire.
 //
 // DCDC supply current uses an Allegro ACS758 Hall-effect sensor (a
 // different part from the pack SSA-2) on PC1 = ADC3_INP11 (was PF8),
@@ -715,19 +713,15 @@ inline constexpr std::uint16_t DcBusDischargedV       = 60;   // COMMISSION (rul
 //
 // COMMISSION: CurrentZeroCount and CurrentMvPerAmpe1 (pack), and
 // DcdcCurrentZeroMv / DcdcCurrentMvPerAmpe1 (DCDC), MUST be calibrated
-// per docs/COMMISSIONING.md §2. The pack values below are the HIL-bench
-// commissioned figures: a DAC
-// injection verified at exactly 5 mV/A measured the firmware reading a
-// stable 0.924x (7.6 % low) with a +0.6 A zero. Folding that effective
-// gain into the (COMMISSION) sensitivity gives CurrentMvPerAmpe1 = 46
-// (50 / 0.924, residual +0.4 %) and the zero into CurrentZeroCount =
-// 2050 (raw at 0 A). The nominal ideal would be 50 / 2048; the converter
-// math is unchanged -- this just absorbs the measured ADC/VREF gain.
+// per docs/COMMISSIONING.md §2. The values below are measured, not
+// nominal: a DAC injection at exactly 5 mV/A read back 0.924x (7.6 %
+// low), so the sensitivity absorbs that ADC/VREF gain error --
+// CurrentMvPerAmpe1 = 46 rather than the ideal 50, residual +0.4 %.
 //
-// Flight-carrier re-cal: on the assembled-car AMS the zero
-// measured 2054 (HIL carrier was 2050) -- the offset tracks VREF+, so it
-// is board-specific. The 46 gain read back EXACT against an aux-PSU known
-// current, so only the zero moved. Re-measure per carrier.
+// The ZERO IS BOARD-SPECIFIC and must be re-measured per carrier: it
+// tracks VREF+, and two assembled boards differed by 4 counts. The gain
+// did not move between them. If you fit a new carrier, re-measure the
+// zero and leave the gain alone.
 inline constexpr std::uint16_t AdcVrefMv          = 3300;
 inline constexpr std::uint16_t AdcMaxCount        = 4095;
 // Pack channel (differential ADC3_INP3/INN3 = PF7/PF8). HIL-commissioned.
@@ -900,7 +894,7 @@ inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
 // FDCAN1 TX FIFO slots kept free for the flight telemetry matrix while a LOGFS
 // reply is being shipped.
 //
-// A pull is a MULTI-MINUTE operation. pump_diag_tx() used to fill the 16-deep
+// A pull is a MULTI-MINUTE operation. An unthrottled pump_diag_tx() fills the 16-deep
 // FIFO to zero free slots, and it runs before the telemetry scheduler in the
 // same loop pass -- so for the whole transfer the flight matrix found no slots
 // and send_or_fail dropped pack currents / voltages / temps SILENTLY (the only
@@ -1038,7 +1032,7 @@ enum class LastFault : std::uint8_t {
 // collided with the ECU. The AMS moves to 0x02. The flight board's BL
 // MUST be re-provisioned to node 2 (-DBL_NODE_ID=2 and/or NVM provision)
 // before flashing this firmware -- both halves change together. Bench
-// (feat/bms-stub-charge) already runs at 0x02.
+// already runs at 0x02.
 inline constexpr std::uint32_t AmsNodeId = 0x02u;
 
 // Application flash base. Must match STM32H733XG_FLASH.ld's FLASH
@@ -1131,8 +1125,8 @@ static_assert(NtcOpenMv < NtcVrefMv, "open threshold must sit below VREF2");
 // Sentinel stored in cell_tempC for a channel that has never produced a valid
 // reading -- unpopulated mux input, open/shorted NTC, or a PEC-failed poll.
 //
-// This used to be a seeded 25 degC, which is the single most dangerous value it
-// could have been: unpopulated channels read as comfortably room temperature,
+// Seeding 25 degC would be the single most dangerous choice here:
+// unpopulated channels would read as comfortably room temperature,
 // so max_tempC looked healthy no matter what the pack was doing, and every
 // threshold built on it was defeated regardless of how accurate the conversion
 // was. A sentinel makes "no data" distinguishable from "cool".
@@ -1184,7 +1178,7 @@ inline constexpr std::uint8_t TempDisconnectPolls     = 1;
 // repaired -- that is the intended behaviour, but it means the harness must be
 // healthy for the pack to arm. Validate on the bench before flight.
 //
-// Slot 0 is safe to require: the ADG731 first-select drop that used to make
+// Slot 0 is safe to require: the ADG731 first-select drop that would otherwise make
 // temp 1 read open on the first sweep is absorbed by the mux warm-up (the
 // throwaway select to unpopulated S32 in BmsPollTask) -- without that warm-up,
 // requiring slot 0 would false-fault every module at boot.
