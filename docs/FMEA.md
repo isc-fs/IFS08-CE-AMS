@@ -23,7 +23,7 @@ engineering judgement and says so:
 | **Accepted** | Understood, currently lived with, and the reason is recorded here. Re-read the reason before you rely on it. |
 | **Latent** | Real but needs an unlikely precondition. Listed so nobody rediscovers it from scratch. |
 
-### The Open items, at a glance
+## The Open items, at a glance
 
 | ID | One line |
 |---|---|
