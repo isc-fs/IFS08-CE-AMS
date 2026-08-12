@@ -894,11 +894,11 @@ inline constexpr std::uint32_t BalanceQuiesceMs   = 2;
 // FDCAN1 TX FIFO slots kept free for the flight telemetry matrix while a LOGFS
 // reply is being shipped.
 //
-// A pull is a MULTI-MINUTE operation. An unthrottled pump_diag_tx() fills the 16-deep
-// FIFO to zero free slots, and it runs before the telemetry scheduler in the
-// same loop pass -- so for the whole transfer the flight matrix found no slots
-// and send_or_fail dropped pack currents / voltages / temps SILENTLY (the only
-// evidence being g_acu_tx_fail, which is itself best-effort). Diag also wins
+// A pull is a MULTI-MINUTE operation. An unthrottled pump_diag_tx() fills the
+// 16-deep FIFO to zero free slots, and it runs before the telemetry scheduler
+// in the same loop pass -- so for the whole transfer the flight matrix finds no
+// slots and send_or_fail drops pack currents / voltages / temps SILENTLY, the
+// only evidence being g_acu_tx_fail, which is itself best-effort. Diag also wins
 // arbitration: 0x011/0x012 out-prioritise every AMS telemetry ID.
 //
 // It fails safe -- a dropped ok_precharge means no R2D, never a spurious one --
@@ -1125,11 +1125,11 @@ static_assert(NtcOpenMv < NtcVrefMv, "open threshold must sit below VREF2");
 // Sentinel stored in cell_tempC for a channel that has never produced a valid
 // reading -- unpopulated mux input, open/shorted NTC, or a PEC-failed poll.
 //
-// Seeding 25 degC would be the single most dangerous choice here:
-// unpopulated channels would read as comfortably room temperature,
-// so max_tempC looked healthy no matter what the pack was doing, and every
-// threshold built on it was defeated regardless of how accurate the conversion
-// was. A sentinel makes "no data" distinguishable from "cool".
+// Seeding 25 degC would be the single most dangerous choice here: unpopulated
+// channels would read as comfortably room temperature, max_tempC would look
+// healthy no matter what the pack was doing, and every threshold built on it
+// would be defeated however accurate the conversion was. A sentinel keeps
+// "no data" distinguishable from "cool".
 inline constexpr std::int16_t NtcNoReading = -32768;   // INT16_MIN
 
 // Temperature-sensor DISCONNECT fault (FS rule: a disconnected temp sensor must
