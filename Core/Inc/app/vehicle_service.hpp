@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: proprietary
 //
-// State the AMS receives from the wider vehicle on FDCAN1 (the
-// "accumulator bus"). Currently a single signal: VCU DC-bus voltage
-// heartbeat (0x100, standard). The 0x600 start-button and 0x18FF50E7
-// charger-detect frames were retired in fix/48 -- their roles are now
-// owned by the TSMS_Pin / DASH_CHG_Pin GPIOs read directly by
-// SafetyTask. AMS firmware is standard-frame-only on FDCAN1
-// follow-up; the HW filter drops extended frames at the gate.
-// last_dc_bus_tick is load-bearing: SafetyTask uses its freshness
-// against VcuFreshMs to decide Car-vs-Charger mode at the moment of
-// Start->Precharge.
+// State the AMS receives from the wider vehicle on FDCAN1 (the "accumulator
+// bus"): the VCU DC-bus heartbeat (0x100) plus the operator charge-mode
+// (0x101) and balancing (0x103 / 0x104) requests. Cockpit inputs are NOT
+// here -- TSMS_Pin / DASH_CHG_Pin are GPIOs read directly by SafetyTask.
+// The retired 0x600 start-button and 0x18FF50E7 charger-detect frames are
+// gone with them -- if you see either on the wire, nothing here consumes it.
+// Standard frames only; the hardware filter drops extended IDs at the gate.
+//
+// last_dc_bus_tick is load-bearing: SafetyTask checks its freshness against
+// VcuFreshMs to pick Car-vs-Charger mode at Start->Precharge.
 //
 // Single-writer: AcuCanTask. Many readers: MainTask.
 // Synchronisation: docs/ARCHITECTURE.md §7.
@@ -28,48 +28,47 @@ struct VehicleState {
     std::uint32_t last_dc_bus_tick;
     // ECU report that the bleed resistor is CONNECTED across the DC link, from
     // 0x100 byte 2 bit 0. Set while the shutdown circuit is open, and while the
-    // ECU is securing a discharge that the SDC closing again had interrupted.
-    // The AMS must close no contactor while it is set: with the SDC closed and
-    // the bleed connected, closing an AIR puts pack current through a resistor
-    // rated for transient duty.
+    // ECU is securing a discharge that the SDC closing again interrupted. The
+    // AMS must close no contactor while it is set: with the SDC closed and the
+    // bleed connected, closing an AIR puts pack current through a resistor
+    // rated for transient duty only.
     bool          discharge_engaged;
     // The ECU's statement that dc_bus_V above is a PRESENT-TENSE measurement,
-    // from 0x100 byte 2 bit 1. It relays the inverter's reading, so this frame
-    // arriving on time says nothing about the age of the number inside it: the
-    // ECU emits every cycle regardless, and substitutes 0 V once the inverter
-    // has been quiet. 0 V is the safe direction for the 95 % precharge
-    // criterion, which it fails, and the WRONG direction for the re-arm gate,
-    // which reads a low voltage as a drained link -- hence a separate bit rather
-    // than trusting the value.
+    // from 0x100 byte 2 bit 1. The ECU relays the inverter's reading and emits
+    // every cycle regardless, substituting 0 V once the inverter has gone
+    // quiet -- so an on-time frame says nothing about the age of the number
+    // inside it. 0 V is safe for the 95 % precharge criterion (it fails it)
+    // and WRONG for the re-arm gate, which reads a low voltage as a drained
+    // link. Hence a separate bit instead of trusting the value.
     //
-    // Defaults TRUE, unlike discharge_engaged, and the asymmetry is the same
-    // compatibility rule both times: an ECU that cannot express the fact must
-    // not have its silence read as a reason to change behaviour. Absent byte 2,
-    // the bleed is assumed disconnected and the voltage assumed usable. The
-    // default is never load-bearing on a real bus -- before any 0x100 arrives
-    // last_dc_bus_tick is 0, so every consumer is already gated off freshness.
+    // Defaults TRUE where discharge_engaged defaults false; both follow one
+    // compatibility rule -- an ECU that cannot express the fact must not have
+    // its silence change AMS behaviour. Absent byte 2, the bleed is assumed
+    // disconnected and the voltage usable. Neither default is load-bearing on
+    // a real bus: before the first 0x100, last_dc_bus_tick is 0 and every
+    // consumer is already gated on freshness.
     bool          dc_bus_valid = true;
     // Sticky: an 0x100 with DLC >= 3 has been seen, so this ECU publishes the
-    // discharge state and is able to drain a stranded link. Until then the AMS
-    // does not enforce its own dc_bus re-arm block -- refusing to arm over a
-    // link the other end has no way to drain would brick the car against an
-    // older ECU. Never cleared; a mid-session downgrade is not worth modelling.
+    // discharge state and can drain a stranded link. Until then the AMS does
+    // not enforce its own dc_bus re-arm block -- refusing to arm over a link
+    // the other end cannot drain would brick the car against an older ECU.
+    // Never cleared; a mid-session downgrade is not worth modelling.
     bool          ecu_discharge_capable;
     // Tick of the last valid (magic-matched) operator charge-mode request
-    // frame (ChargeModeReqId). 0 = never seen. SafetyTask reads its
-    // freshness at the Start->Precharge mode lock.
+    // (ChargeModeReqId). 0 = never seen. SafetyTask reads its freshness at the
+    // Start->Precharge mode lock.
     std::uint32_t last_charge_req_tick;
-    // Operator balance-control override (BalanceOverrideReqId 0x103).
-    // last_balance_override_tick: 0 = never seen. balance_cmd: the last command
-    // seen -- Off ("BALO"), On ("BALN"), or Auto ("BALX"). BmsPollTask resolves
-    // the two through effective_balance_cmd() (dead-man -> Off) each window.
+    // Operator balance-control override (BalanceOverrideReqId 0x103). Tick
+    // 0 = never seen; balance_cmd is the last command -- Off ("BALO"), On
+    // ("BALN") or Auto ("BALX"). BmsPollTask resolves the pair through
+    // effective_balance_cmd() (dead-man -> Off) each window.
     std::uint32_t     last_balance_override_tick;
     config::BalanceCmd balance_cmd;
 
-    // Per-module balancing enable (0x104). last_balance_modules_tick: 0 = never
-    // seen. balance_modules_mask: last decoded 5-bit mask (bit m = module m
-    // enabled). BmsPollTask resolves the two through effective_balance_modules_-
-    // mask() (dead-man -> all enabled) each window.
+    // Per-module balancing enable (0x104). Tick 0 = never seen;
+    // balance_modules_mask is the last decoded 5-bit mask (bit m = module m
+    // enabled). BmsPollTask resolves the pair through
+    // effective_balance_modules_mask() (dead-man -> all enabled) each window.
     std::uint32_t     last_balance_modules_tick;
     std::uint8_t      balance_modules_mask;
 };
@@ -78,8 +77,8 @@ class VehicleService {
 public:
     static VehicleService& instance() noexcept;
 
-    // Returns true if the frame matched a known accumulator-bus ID
-    // and the state was updated. False -> caller may telemeter the drop.
+    // True if the frame matched a known accumulator-bus ID and the state was
+    // updated. False -> the caller may telemeter the drop.
     bool update_from_frame(const CanFrame& f) noexcept;
 
     [[nodiscard]] VehicleState snapshot() const noexcept;
@@ -92,21 +91,21 @@ public:
     [[nodiscard]] static bool charge_requested(std::uint32_t now_tick,
                                                std::uint32_t last_req_tick) noexcept;
 
-    // Effective operator balancing command right now. Applies the
-    // dead-man: if the last 0x103 is stale (older than BalanceOverrideFreshMs)
-    // or was never seen (last_override_tick == 0), returns BalanceCmd::Off so a
-    // dead WarioCharger link never leaves the pack bleeding; otherwise returns
-    // the last command as-is. Pure; future-tick safe.
+    // Effective operator balancing command right now, with the dead-man: a
+    // last 0x103 that is stale (older than BalanceOverrideFreshMs) or never
+    // seen (last_override_tick == 0) gives BalanceCmd::Off, so a dead
+    // WarioCharger link never leaves the pack bleeding. Otherwise the last
+    // command as-is. Pure; future-tick safe.
     [[nodiscard]] static config::BalanceCmd effective_balance_cmd(
         std::uint32_t      now_tick,
         std::uint32_t      last_override_tick,
         config::BalanceCmd last_cmd) noexcept;
 
-    // Effective per-module balancing enable mask right now. Dead-man: if the
-    // last 0x104 is stale (> BalanceModulesFreshMs) or was never seen
-    // (last_modules_tick == 0), returns BalanceModulesDefaultMask (all modules
-    // enabled) so the pack behaves as global-only; otherwise returns the last
-    // mask (low 5 bits). Pure; future-tick safe.
+    // Effective per-module balancing enable mask right now, with the dead-man:
+    // a last 0x104 that is stale (> BalanceModulesFreshMs) or never seen
+    // (last_modules_tick == 0) gives BalanceModulesDefaultMask (all modules
+    // enabled), so the pack behaves as global-only. Otherwise the last mask
+    // (low 5 bits). Pure; future-tick safe.
     [[nodiscard]] static std::uint8_t effective_balance_modules_mask(
         std::uint32_t now_tick,
         std::uint32_t last_modules_tick,
