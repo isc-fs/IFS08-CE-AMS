@@ -1,23 +1,19 @@
 // SPDX-License-Identifier: proprietary
 //
-// MainTask — the collapsed SafetyTask + StateTask + TelemetryTask body
-// from refactor/19 phase 3. Single 10 ms cadence loop that owns:
+// MainTask — one 10 ms loop owning safety, the FSM, the relays and
+// telemetry. Every iteration it:
 //
-//   * Service snapshots (BMS / current / vehicle) once per iteration
-//   * Safety predicate evaluation every 10 ms (SafetyPeriodMs)
-//   * FSM step every 20 ms (StatePeriodMs)
-//   * Telemetry emit every 500 ms (TelemetryPeriodMs)
-//   * IWDG refresh on every iteration (gated by the fault path)
-//   * AMS_OK / SDC-enable GPIO drive (PB4) every iteration: HIGH only
-//     past boot grace with no ERROR latched, LOW otherwise
+//   * snapshots the BMS / current / vehicle services once,
+//   * evaluates the safety predicates (SafetyPeriodMs, 10 ms),
+//   * steps the FSM every 20 ms (StatePeriodMs),
+//   * emits telemetry every 500 ms (TelemetryPeriodMs),
+//   * refreshes the IWDG, on the fault path as well as the clean one,
+//   * drives AMS_OK / SDC-enable (PB4): HIGH only past boot grace with
+//     no ERROR latched, LOW otherwise.
 //
-// The CubeMX-generated thread is still called "SafetyTask" in main.c +
-// AMS.ioc. That cosmetic rename ships in a later phase to keep this
-// commit free of CubeMX churn. The behavioural collapse is here.
-//
-// The relay-action ping-pong via osEventFlags between the old
-// StateTask (producer) and SafetyTask (consumer) is gone: the FSM's
-// output bitmask is consumed inline within this task.
+// The CubeMX thread is still named "SafetyTask" in main.c + AMS.ioc;
+// this file is its body. The FSM's relay-action bitmask is consumed
+// inline here, not handed off through osEventFlags.
 
 #include "safety_task.hpp"
 
@@ -54,26 +50,26 @@ extern osThreadId_t BmsPollTaskHandle;
 // Updated on every transition.
 extern "C" volatile std::uint8_t g_state_telemetry = 0;
 
-// Mode locked at Start->Precharge, mirrored here so the pit-diag stream
-// in AcuCanTask can surface it without taking a snapshot mutex.
-// Same 8-bit volatile read pattern as g_state_telemetry. Values match
-// the fsm::Mode enum (0=Undecided, 1=Car, 2=Charger).
+// Mode locked at Start->Precharge, mirrored here so the pit-diag stream in
+// AcuCanTask can read it without taking a snapshot mutex. Same single-writer
+// 8-bit contract as g_state_telemetry. Values match the fsm::Mode enum
+// (0=Undecided, 1=Car, 2=Charger).
 extern "C" volatile std::uint8_t g_mode_locked_telemetry = 0;
 
-// TSMS (PF9) level mirror. The shutdown circuit is complete when this is 1 --
-// any open shutdown element pulls it low -- so it is also the AMS's view of
-// whether the discharge relay is energised and the bleed disconnected. Published
-// on 0x021 so the ECU, which cannot see the SDC, can decide whether to secure an
+// TSMS (PF9) level mirror. 1 = the shutdown circuit is complete; any open
+// shutdown element pulls it low. It is therefore also the AMS's view of whether
+// the discharge relay is energised and the bleed disconnected. Published on
+// 0x021 so the ECU, which cannot see the SDC, can decide whether to secure an
 // interrupted discharge. Same single-writer 8-bit contract as g_state_telemetry.
 extern "C" volatile std::uint8_t g_tsms_telemetry = 0;
 
 // Telemetry TX failure counter, surfaced via a future diag frame.
 extern "C" volatile std::uint32_t g_telemetry_tx_fail = 0;
 
-// Predicate branch that latched ERROR, surfaced on pit-diag 0x6C0[6]
-// (reason) and 0x6C0[7] (detail) for bench fault localisation.
-// Written once, on the first transition into the latched state;
-// values match ams::safety::FaultReason (12 == FSM-driven Error path).
+// Which branch latched ERROR, on pit-diag 0x6C0[6] (reason) and 0x6C0[7]
+// (detail) for bench fault localisation. Written once, on the first transition
+// into the latched state. Values match ams::safety::FaultReason
+// (12 == FSM-driven Error path).
 extern "C" volatile std::uint8_t g_fault_reason_telemetry = 0;
 extern "C" volatile std::uint8_t g_fault_detail_telemetry = 0;
 
@@ -110,9 +106,6 @@ bool send_telem(std::uint32_t id, const telemetry::Frame& payload) noexcept {
 }
 
 // Drive the relay actions encoded in the FSM's safety_flags bitmask.
-// Inline replacement for the old osEventFlags(safety_eventsHandle,...)
-// ping-pong that used to hand the bits off to SafetyTask. Now both
-// producer and consumer live in the same timeline so we just act.
 void apply_relay_actions(std::uint32_t flags) noexcept {
     if (flags & events::safety::CloseAirN)      Relays::close_air_negative();
     if (flags & events::safety::CloseAirP)      Relays::close_air_positive();
@@ -126,14 +119,13 @@ void apply_relay_actions(std::uint32_t flags) noexcept {
 
 void SafetyTask::run() noexcept {
     // ---------------- One-shot init ----------------
-    // ErrorLatch bring-up. ErrorLatch::init is idempotent;
-    // App_InitTask has almost certainly already called it. Fan PWM
-    // retired in fix/48 (fan is wired permanently on; see main.c).
+    // Idempotent; App_InitTask has almost certainly called it already.
+    // Nothing to start for the fan: it is wired permanently on (main.c).
     ErrorLatch::init();
 
-    // Boot in ERROR if the previous run latched it. App_InitTask
-    // clears the latch under -DAMS_HIL_CLEAR_ERROR_LATCH, so on the
-    // bench we come up clean unless the latch was set this session.
+    // Boot in ERROR if a previous run latched it. The bench build
+    // (-DAMS_HIL_CLEAR_ERROR_LATCH) has App_InitTask clear the latch, so
+    // there we come up clean unless it was set this session.
     const bool boot_in_error = ErrorLatch::is_set();
     if (boot_in_error) {
         Relays::open_all();
@@ -153,19 +145,15 @@ void SafetyTask::run() noexcept {
     std::uint32_t last_log_tick       = last_wake;
     std::uint8_t  heartbeat           = 0;
 
-    // DASH_CHG (PF10) is a MOMENTARY press button -- edge-detect it.
-    // Track the previous level at the 10 ms cadence and latch a
-    // rising edge until the 20 ms FSM step consumes it, so a press that
-    // lands between FSM steps is never lost. Seed prev from the live
-    // level so a button held at boot doesn't fire a spurious edge.
+    // DASH_CHG (PF10) is a MOMENTARY button, so edge-detect it: sample the
+    // level every 10 ms and latch a rising edge until the 20 ms FSM step
+    // consumes it, so a press landing between FSM steps is never lost. Seed
+    // prev from the live level so a button held at boot fires no edge.
     bool prev_dash_chg =
         (HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET);
     bool dash_chg_edge_pending = false;
 
-    // DC-bus collapse debounce. Counts consecutive 10 ms ticks where
-    // we are in Run (Car) and the VCU bus has collapsed below pack -- the
-    // signature of the AIRs being opened externally (cockpit SDC shutdown
-    // the AMS can't sense). When it confirms, the FSM de-energises to Start.
+    // Consecutive 10 ms ticks of DC-bus collapse; see the debounce below.
     std::uint16_t bus_collapse_count = 0;
 
     for (;;) {
@@ -191,11 +179,10 @@ void SafetyTask::run() noexcept {
             veh_snap.last_dc_bus_tick != 0u &&
             (now - veh_snap.last_dc_bus_tick) <= config::VcuStaleMs;
 
-        // Operator-facing GPIO inputs: TSMS (side-of-car external
-        // switch, PF9) and DASH_CHG (cockpit dashboard / charger
-        // button, PF10). Both active-high, external pull-down on the
-        // carrier. Polled every 10 ms; the 20 ms FSM step consumes
-        // the latest reading.
+        // Operator GPIO inputs, both active-high with an external pull-down
+        // on the carrier: TSMS (side-of-car switch, PF9) and DASH_CHG
+        // (cockpit / charger button, PF10). Polled every 10 ms; the 20 ms
+        // FSM step consumes the latest reading.
         const bool tsms    = HAL_GPIO_ReadPin(TSMS_GPIO_Port, TSMS_Pin)       == GPIO_PIN_SET;
         g_tsms_telemetry = tsms ? 1u : 0u;
         const bool dash_chg = HAL_GPIO_ReadPin(DASH_CHG_GPIO_Port, DASH_CHG_Pin) == GPIO_PIN_SET;
@@ -208,17 +195,13 @@ void SafetyTask::run() noexcept {
 
         // ---------------- Safety predicate (every 10 ms) ----------------
         constexpr bool force_error_set = false;  // no live setter
-        // VCU staleness is only a fault once committed to Car mode; in
-        // Charger mode (and pre-lock Undecided) the VCU is expected
-        // absent, so its absence must not latch ERROR. mode_locked
-        // holds the previous tick's value -- the FSM lock below updates
-        // it, so VcuStale arms one tick after the Car lock, which is
-        // fine (the VCU is fresh at the moment of a Car lock anyway).
+        // A heartbeat is required only once committed to its mode: VCU 0x100
+        // in Car, charger 0x101 in Charger. Before the lock (Undecided) both
+        // are legitimately absent and must not latch ERROR. mode_locked still
+        // holds the previous tick's value here -- the FSM lock below updates
+        // it -- so each check arms one tick after its lock. That is fine: the
+        // frame is fresh at the moment of the lock anyway.
         const bool vcu_required = (mode_locked == fsm::Mode::Car);
-        // Mirror for the charge side: the charger heartbeat (0x101) is required
-        // only once committed to Charger mode. Same one-tick arm lag as
-        // vcu_required (the FSM lock below updates mode_locked afterward), which
-        // is fine -- 0x101 is fresh at the moment of a Charger lock.
         const bool charger_required = (mode_locked == fsm::Mode::Charger);
         const safety::Inputs pred_in = {
             bms_snap, cur_snap, veh_snap,
@@ -229,24 +212,21 @@ void SafetyTask::run() noexcept {
         };
         const auto fault_res = safety::evaluate_fault_detail(pred_in);
 
-        // Debounce the cell V/T range predicates. A single
-        // transient sub-threshold sample -- a torn read of the lock-free
-        // BmsState snapshot, or an unsettled first poll / emulator-default
-        // value at boot -- must not latch the sticky ERROR. The cell V/T
-        // checks fault only after CellFaultConfirmTicks (~300 ms, > one
-        // 250 ms voltage poll) consecutive evaluations report the SAME
-        // reason; a transient that clears on the next poll never reaches
-        // the count. Immediate-danger predicates (force-error, BMS
-        // offline/stale, current-over-limit, VCU-stale) are NOT debounced
-        // -- they latch on the first tick exactly as before.
-        // Both debounces are driven every tick and self-gate on the reason:
-        // cell V/T ranges via cell_debounce_, BmsStale via bms_stale_debounce_.
-        // BmsStale is confirmed over BmsStaleConfirmTicks so a
-        // far module that flickers just past the stale window on a brief EMI
-        // burst -- then reports on its next poll -- doesn't spuriously latch;
-        // a sustained loss still latches, just BmsStaleConfirmTicks later. All
-        // other immediate-danger predicates (force-error, BMS offline, current
-        // over-limit/stale, VCU-stale) latch on the first tick as before.
+        // Debounce the slow-by-nature faults so one bad sample -- a torn read
+        // of the lock-free BmsState snapshot, or an unsettled first poll at
+        // boot -- cannot latch the sticky ERROR:
+        //   cell V/T ranges -> cell_debounce_      / CellFaultConfirmTicks
+        //   BmsStale        -> bms_stale_debounce_ / BmsStaleConfirmTicks
+        // Both run every tick and self-gate on the reason: the count advances
+        // only while consecutive evaluations report the SAME reason, so a
+        // transient that clears on the next poll never reaches it.
+        // CellFaultConfirmTicks = 25 x 10 ms = ~250 ms, spanning more than one
+        // 200 ms BmsPollVoltMs cycle; with the poll that is ~460 ms worst case,
+        // inside the < 500 ms fault-response budget. Debouncing BmsStale keeps
+        // a far module that flickers just past the stale window on an EMI burst
+        // from latching; a sustained loss still latches, ~250 ms later.
+        // Every other predicate -- force-error, BMS module offline, current
+        // over-limit/stale, VCU-stale -- latches on the FIRST tick.
         const bool cell_confirmed =
             cell_debounce_.update(fault_res.reason, config::CellFaultConfirmTicks);
         const bool bms_stale_confirmed =
@@ -260,9 +240,8 @@ void SafetyTask::run() noexcept {
 
         if (fault) {
             if (!error_latched_) {
-                // Capture the branch that latched us before doing
-                // anything else, so the bench can read it off pit-diag
-                // 0x6C0[6]/[7].
+                // Capture the branch that latched us before anything else,
+                // so the bench can read it off pit-diag 0x6C0[6]/[7].
                 g_fault_reason_telemetry =
                     static_cast<std::uint8_t>(fault_res.reason);
                 g_fault_detail_telemetry = fault_res.detail;
@@ -272,17 +251,16 @@ void SafetyTask::run() noexcept {
                 state_entry_tick = now;
                 g_state_telemetry = static_cast<std::uint8_t>(state);
             }
-            // Stay alive in the latched state: relays already open,
-            // ErrorLatch persists across reset, so refreshing the
-            // watchdog is safe. Lets the operator read telemetry
-            // and explicitly reset via the bootloader path. See git
-            // history for the loop-bug this avoids.
+            // Refresh the watchdog here too, deliberately. The relays are
+            // already open and ErrorLatch survives a reset, so staying alive
+            // is safe, and it lets the operator read telemetry and reset
+            // explicitly via the bootloader path.
             Watchdog::refresh();
         } else {
             // ---------- DC-bus collapse debounce ----------
-            // Only meaningful in Run (Car mode): the bus tracks the pack
-            // there, so a sustained collapse means the AIRs opened externally
-            // (a cockpit SDC shutdown the AMS can't sense). Count consecutive
+            // Only meaningful in Run (Car): the bus tracks the pack there, so
+            // a sustained collapse means the AIRs were opened externally (a
+            // cockpit SDC shutdown the AMS can't sense). Count consecutive
             // collapsed ticks; the FSM consumes the confirmed flag and falls
             // back to Start so a re-arm re-runs precharge. Any non-qualifying
             // tick resets the count.
@@ -303,11 +281,9 @@ void SafetyTask::run() noexcept {
             if (now - last_state_tick >= config::StatePeriodMs) {
                 last_state_tick = now;
 
-                // Lock the Car-vs-Charger mode at the EXACT iteration
-                // that's about to take us out of Start. Captured here
-                // (before fsm::step) so the FSM body sees a
-                // self-consistent input snapshot. Read VCU 0x100
-                // freshness via the snapshot already taken this tick.
+                // Lock Car-vs-Charger on the EXACT iteration about to leave
+                // Start, before fsm::step, so the FSM body sees a
+                // self-consistent input snapshot.
                 if (state == fsm::State::Start &&
                     mode_locked == fsm::Mode::Undecided &&
                     tsms && dash_chg_edge_pending) {
@@ -315,12 +291,11 @@ void SafetyTask::run() noexcept {
                         veh_snap.last_dc_bus_tick != 0u &&
                         (now - veh_snap.last_dc_bus_tick) <=
                             config::VcuFreshMs;
-                    // Charger mode requires BOTH the operator's explicit
-                    // charge-mode request AND VCU absence. A car
-                    // with a dead VCU does NOT send the request, so it
-                    // locks Car and faults on VcuStale instead of
-                    // silently charging; a stray charge request while the
-                    // VCU is live cannot flip a running car into Charger.
+                    // Charger mode needs BOTH an explicit charge request AND
+                    // an absent VCU. A car with a dead VCU sends no request,
+                    // so it locks Car and faults on VcuStale rather than
+                    // silently charging; a stray request while the VCU is
+                    // live cannot flip a running car into Charger.
                     const bool charge_req = VehicleService::charge_requested(
                         now, veh_snap.last_charge_req_tick);
                     mode_locked = (charge_req && !vcu_fresh)
@@ -333,10 +308,9 @@ void SafetyTask::run() noexcept {
                 const fsm::Inputs fsm_in = {
                     state, bms_snap, cur_snap, veh_snap,
                     tsms, dash_chg_edge_pending, mode_locked,
-                    // Pass the already-debounced fault decision;
-                    // the FSM no longer re-evaluates the predicate. This
-                    // is false here (step() only runs on a no-fault
-                    // tick), but it keeps the FSM's Error backstop honest.
+                    // The already-debounced decision; the FSM does not
+                    // re-evaluate. Always false here (step() runs only on a
+                    // no-fault tick) but keeps the FSM's Error backstop honest.
                     predicate_fault,
                     bus_collapsed,   // debounced bus-collapse decision
                     dc_bus_fresh,
@@ -344,9 +318,9 @@ void SafetyTask::run() noexcept {
                 };
                 const auto out = fsm::step(fsm_in);
 
-                // The DASH_CHG edge is one-shot: consume it now that the
-                // FSM (and the mode lock above) have seen it, so a single
-                // press drives at most one transition.
+                // One-shot: consume the edge now that the FSM and the mode
+                // lock have seen it, so one press drives at most one
+                // transition.
                 dash_chg_edge_pending = false;
 
                 apply_relay_actions(out.safety_flags);
@@ -356,28 +330,28 @@ void SafetyTask::run() noexcept {
                     state_entry_tick  = now;
                     g_state_telemetry = static_cast<std::uint8_t>(state);
 
-                    // Persist ERROR across resets even when the FSM
-                    // got there without a predicate fault (e.g.
-                    // precharge timeout, or DASH_CHG dropped mid-Run).
+                    // Persist ERROR across resets even when the FSM got there
+                    // without a predicate fault: precharge timeout, a failed
+                    // contactor swap in Transition, or a TSMS drop in
+                    // Charger mode.
                     if (state == fsm::State::Error) {
                         ErrorLatch::set();
                         error_latched_ = true;
-                        // Distinguish FSM-driven Error (precharge
-                        // timeout / fault) from a predicate fault on
-                        // pit-diag 0x6C0[6]. 12 == FsmError, or the
-                        // dedicated ChargerTsmsOpen (15) when a TSMS drop
-                        // latched us in Charger mode (scrutineering: the
-                        // charge output must not be re-activatable).
+                        // Distinguish FSM-driven Error from a predicate fault
+                        // on pit-diag 0x6C0[6]: 12 == FsmError, or 15 ==
+                        // ChargerTsmsOpen when a TSMS drop latched us in
+                        // Charger mode (scrutineering: the charge output must
+                        // not be re-activatable).
                         if (g_fault_reason_telemetry == 0u) {
                             g_fault_reason_telemetry = safety::fsm_error_reason(
                                 mode_locked == fsm::Mode::Charger, tsms);
                         }
                     }
 
-                    // Fell back to idle -- a TSMS drop de-energised us
-                    // without latching, or any other return to
-                    // Start. Clear the mode lock so the re-arm re-locks
-                    // Car/Charger and re-runs precharge from scratch.
+                    // Any return to Start -- a TSMS drop de-energising us
+                    // without latching, or anything else -- clears the mode
+                    // lock, so the re-arm re-locks Car/Charger and re-runs
+                    // precharge from scratch.
                     if (state == fsm::State::Start) {
                         mode_locked = fsm::Mode::Undecided;
                         g_mode_locked_telemetry =
@@ -389,13 +363,10 @@ void SafetyTask::run() noexcept {
         }
 
         // ---------------- AMS_OK / SDC enable (every 10 ms) ----------------
-        // Drive PB4 to track the live safety state: HIGH only once the
-        // boot grace has passed AND no ERROR is latched; LOW during grace
-        // (predicates suppressed) and LOW the moment a fault latches. The
-        // firmware previously never drove this pin, so the SDC enable was
-        // never asserted in a healthy state and never deasserted on a
-        // fault -- it just decayed from its boot-default level. error_latched_
-        // already reflects this tick's fault/FSM decision above.
+        // Drive PB4 to the live safety state: HIGH only once the boot grace
+        // (SafetyBootGraceMs) has passed AND no ERROR is latched; LOW during
+        // the grace, where predicates are suppressed, and LOW the moment a
+        // fault latches. error_latched_ already reflects this tick's decision.
         Relays::set_ams_ok(safety::ams_ok_asserted(now, error_latched_));
 
         // ---------------- Telemetry (every 500 ms, regardless of state) ----------------
@@ -406,15 +377,13 @@ void SafetyTask::run() noexcept {
                 (HAL_GPIO_ReadPin(AMS_OK_GPIO_Port, AMS_OK_Pin) == GPIO_PIN_SET)
                     ? 1u : 0u;
 
-            // Three telemetry frames. Diagnostic surfaces previously
-            // gated behind a HIL build flag now live on the pit-diag
-            // stream (0x6C0..0x6C8) which carries strictly more info.
+            // Three telemetry frames; deeper diagnostics live on the
+            // pit-diag stream (0x6C0..0x6C8).
             const std::uint8_t tx_fail_lo = static_cast<std::uint8_t>(
                 g_telemetry_tx_fail & 0xFFu);
 
-            // Cockpit byte at 0x4A2[5]: always-on cockpit-input snapshot.
-            //   bit 7    1 (sentinel; distinguishes "live byte" from
-            //              "byte got elided by an older firmware")
+            // Cockpit-input byte at 0x4A2[5]:
+            //   bit 7    1 (sentinel: a live byte, not an elided one)
             //   bits 3:2 mode_locked (00=Undecided, 01=Car, 10=Charger)
             //   bit 1    TSMS readback (PF9)
             //   bit 0    DASH_CHG readback (PF10)
@@ -437,11 +406,11 @@ void SafetyTask::run() noexcept {
             ++heartbeat;  // 8-bit wraparound is intentional
         }
 
-        // 0x4A4 AMS_relay_status -- always-on contactor + AMS_OK GPIO
-        // read-back snapshot on its own cadence (RelayStatusPeriodMs), so an
-        // external logger can watch the AIR / precharge sequence without
-        // arming pit-diag. ODR read-backs: confirm what we drive the coils
-        // to, not that the contactor physically closed.
+        // 0x4A4 AMS_relay_status -- contactor + AMS_OK read-back on its own
+        // cadence (RelayStatusPeriodMs), so an external logger can watch the
+        // AIR / precharge sequence without arming pit-diag. These are ODR
+        // read-backs: what we drive the coils to, NOT proof that a contactor
+        // physically closed.
         if (now - last_relay_tick >= config::RelayStatusPeriodMs) {
             last_relay_tick = now;
             const bool ams_ok_pin =
@@ -456,11 +425,11 @@ void SafetyTask::run() noexcept {
         }
 
         // ---------------- Datalogging sample (every LogSamplePeriodMs) ----------------
-        // Best-effort hand-off to SdLoggerTask via the wait-free ring, built
-        // from THIS tick's already-taken snapshots. sd_log_push() never blocks
-        // and never faults -- a full ring (SD stall / log-pull) just drops
-        // the record. Off the safety path entirely; the only cost on the 10 ms
-        // loop is a bounded ~590 B struct copy at 4 Hz.
+        // Best-effort hand-off to SdLoggerTask over the wait-free ring, built
+        // from THIS tick's snapshots. sd_log_push() never blocks and never
+        // faults -- a full ring (SD stall / log-pull) just drops the record.
+        // Off the safety path; the only cost on the 10 ms loop is a bounded
+        // ~590 B struct copy at 4 Hz.
         if (now - last_log_tick >= config::LogSamplePeriodMs) {
             last_log_tick = now;
             // Static scratch: keep the 632 B record off the SafetyTask stack
