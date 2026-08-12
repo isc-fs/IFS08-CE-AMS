@@ -1,20 +1,14 @@
 // SPDX-License-Identifier: proprietary
 //
-// Realtime-priority safety supervisor. See docs/ARCHITECTURE.md §3 for
-// the full contract; in short:
+// Realtime-priority safety supervisor. Full contract in
+// docs/ARCHITECTURE.md §3; every 10 ms it:
 //
-//   - Runs at 10 ms cadence.
-//   - Reads the latest sensor snapshots (BMS, current, vehicle).
-//   - Evaluates all safety predicates.
-//   - On fault: opens all relays, drops AMS_OK, and latches ERROR in the
-//     backup register so the fault survives a power cycle.
-//   - Refreshes the IWDG on BOTH paths, clean and latched. Staying alive in
-//     the latched state is deliberate: the relays are already open and the
-//     latch survives a reset, so resetting would buy no safety and would cost
-//     the operator the telemetry that says why the car stopped.
-//
-// The predicate set itself lives in safety_predicates.hpp; this file is the
-// loop that feeds it, debounces its answer, and acts on it.
+//   - snapshots the BMS / current / vehicle services,
+//   - evaluates the safety predicates,
+//   - on fault: opens all relays, drops AMS_OK, latches ERROR in the
+//     RTC backup register,
+//   - refreshes the IWDG -- on the fault path too, deliberately; see
+//     the refresh site in safety_task.cpp for why.
 
 #pragma once
 
@@ -33,20 +27,20 @@ public:
 private:
     SafetyTask() = default;
 
-    // True once latch_error_ has fired; once latched the loop continues
-    // running (so other tasks see the FORCE_ERROR bit) but the watchdog
-    // is never refreshed again, guaranteeing a hardware reset within
-    // ~100 ms even if the FSM tries to be clever.
+    // True once latch_error_ has fired. Sticky for the rest of the run:
+    // the loop keeps stepping and keeps refreshing the watchdog so
+    // telemetry stays readable, and AMS_OK is held LOW while it is set.
     bool error_latched_ = false;
 
-    // Cell V/T range debounce. Requires a cell-range fault to
-    // persist for config::CellFaultConfirmTicks consecutive evaluations
-    // before it latches; pure + unit-tested in safety_predicates.hpp.
+    // A fault must persist for N consecutive evaluations before it
+    // latches: config::CellFaultConfirmTicks for the cell V/T ranges,
+    // config::BmsStaleConfirmTicks for BmsStale. Both are pure and
+    // unit-tested in safety_predicates.hpp.
     safety::CellFaultDebounce cell_debounce_{};
     safety::BmsStaleDebounce  bms_stale_debounce_{};
 
-    // Open all relays, set the backup-register magic, mark this
-    // instance as latched. Idempotent.
+    // Open all relays, drop AMS_OK, set the backup-register magic, mark
+    // this instance latched. Idempotent.
     void latch_error_() noexcept;
 };
 
