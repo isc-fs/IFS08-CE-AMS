@@ -6,14 +6,15 @@
 //   - Runs at 10 ms cadence.
 //   - Reads the latest sensor snapshots (BMS, current, vehicle).
 //   - Evaluates all safety predicates.
-//   - On fault: opens all relays, latches ERROR in the backup register,
-//     and DOES NOT refresh the watchdog -> HW reset within ~100 ms.
-//   - On clean path: refreshes the IWDG.
+//   - On fault: opens all relays, drops AMS_OK, and latches ERROR in the
+//     backup register so the fault survives a power cycle.
+//   - Refreshes the IWDG on BOTH paths, clean and latched. Staying alive in
+//     the latched state is deliberate: the relays are already open and the
+//     latch survives a reset, so resetting would buy no safety and would cost
+//     the operator the telemetry that says why the car stopped.
 //
-// This skeleton is the framing of the loop. The full predicate set
-// (cell V/T ranges, BMS module-online mask, current freshness, SDC
-// state) lands in feat/7-safety-predicates once the corresponding
-// services exist.
+// The predicate set itself lives in safety_predicates.hpp; this file is the
+// loop that feeds it, debounces its answer, and acts on it.
 
 #pragma once
 

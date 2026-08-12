@@ -9,8 +9,6 @@
 //   PB4 AMS_OK              (SDC enable; HIGH = AMS healthy, drive LOW
 //                            to open the shutdown circuit)
 //
-// (The contactors previously lived on GPIOD as PD3/4/5; the daughterboard
-// re-route moved them to GPIOB -- see relay_driver.cpp for the history.)
 // All pins are active-high (drive HIGH to energise / assert).
 // CubeMX-generated MX_GPIO_Init drives them to PIN_RESET (open / SDC
 // disabled) BEFORE configuring them as outputs, so the pack is
