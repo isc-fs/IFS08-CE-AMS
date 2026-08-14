@@ -1000,10 +1000,9 @@ inline constexpr std::uint8_t  TempMuxChannelsUsed = 20;  // of 32 on ADG731
 // From pcbs/BMS_LITE/LTC_1.kicad_sch: NTC_1..NTC_10 sit on S1..S10,
 // NTC_11..NTC_20 on S17..S26, with S11..S16 and S27..S31 unpopulated. The
 // 0-indexed channel passed to pack_adg731_select is one less than the
-// schematic's "S<n>" pin number. LTC_2's mux (U5) mirrors this map -- some
-// channels may be physically unconnected on the current BMS_LITE revision, in
-// which case cell_tempC slots 20..39 read open-circuit; see
-// docs/COMMISSIONING.md §3.
+// schematic's "S<n>" pin number. LTC_2's mux (U5) mirrors this map and its
+// twenty channels ARE populated, so cell_tempC slots 20..39 carry real
+// readings -- an open there is a fault, not an empty socket.
 inline constexpr std::uint8_t Adg731ChannelMap[TempsPerLtc] = {
     0,  1,  2,  3,  4,  5,  6,  7,  8,  9,    // S1..S10  -> NTC_1..NTC_10
     16, 17, 18, 19, 20, 21, 22, 23, 24, 25,   // S17..S26 -> NTC_11..NTC_20
@@ -1125,12 +1124,12 @@ inline constexpr std::uint8_t RequiredTempSlots[]   = {
 // COMMISSION: deliberately LOW. Its job today is to catch a completely dead
 // temperature path, not to guarantee coverage -- setting it above the number of
 // channels actually populated would silently disable balancing, the exact
-// failure mode this area keeps producing. The board has up to 200 channels
-// (5 modules x 40) but how many are fitted is unknown, and the LTC_2 half may
-// not be wired at all.
+// failure mode this area keeps producing. All 200 channels (5 modules x 40)
+// are fitted, LTC_2's half included, so the floor is far below what a healthy
+// pack reports.
 //
-// RAISE THIS to the measured populated count once a bench sweep establishes it.
-// BmsState::valid_temp_channels is what to read.
+// RAISE THIS toward the populated count once a bench sweep measures what the
+// harness actually returns. BmsState::valid_temp_channels is what to read.
 inline constexpr std::uint16_t BalanceMinValidTempCh = 5;
 
 inline constexpr std::int16_t NtcMinValidC = -40;
