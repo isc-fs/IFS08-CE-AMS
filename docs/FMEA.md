@@ -35,7 +35,7 @@ engineering judgement and says so:
 | [SEASON-1](#season-1--a-nuisance-trip-in-run-ends-the-session--open) | **A nuisance trip in `Run` ends the session — no documented way to restart the car.** |
 | [SEASON-2](#season-2--maintask-has-no-automated-coverage--open) | `MainTask` is in no test; the SIL harness is a second, divergent copy of it. |
 | [SEASON-3](#season-3--0x1030x104-force-balancing-in-any-state--open) | Balancing can be forced on in `Run`, through resistors rated for transient duty. |
-| [SEASON-4](#season-4--three-blocks-disagree-on-whether-ltc_2s-temps-are-wired--open) | Three blocks disagree on whether LTC_2's temps are wired; one arms a boot-time ERROR. |
+| [SEASON-4](#season-4--stale-comments-claimed-ltc_2s-temps-might-be-unwired--closed) | *(Closed)* All 200 NTC channels are fitted; two comments that said otherwise are corrected. |
 | [SEASON-5](#season-5--no-stack-or-wcet-budget-exists--open) | No stack or WCET budget; `MainTask` is the tightest consumer and unmeasured. |
 | [SEASON-6](#season-6--the-accumulators-safety-topology-is-unlearnable-from-a-clone--open) | The shutdown-circuit topology cannot be learned from this repo. |
 | [SEASON-7](#season-7--hil-acceptance-never-ran--open) | Two HIL acceptance items were raised and never executed. |
@@ -904,36 +904,27 @@ Precedent gates exist and are one-liners: `logfs_allowed_in` and
 condition may express the requirement better than a state list** — what makes it
 unsafe is load, not state.
 
-### SEASON-4 — Three blocks disagree on whether LTC_2's temps are wired · **Open**
+### SEASON-4 — Stale comments claimed LTC_2's temps might be unwired · **Closed**
 
-`Adg731ChannelMap` says those channels "may be physically unconnected";
-`RequiredTempSlots` asserts all 40 slots are populated **and enforces it**, so an
-open channel latches ERROR at boot; `BalanceMinValidTempCh` says the LTC_2 half
-"may not be wired at all". One of these arms a safety fault.
+All 200 NTC channels are fitted, LTC_2's half included. Confirmed by the team
+that built the harness.
 
-Left contradictory on purpose rather than silently harmonised — **it is a
-continuity-meter question**, and picking an answer in an editor would be guessing
-about hardware. Resolve before trusting `RequiredTempSlots`.
+Two source comments said otherwise — `Adg731ChannelMap` allowed that some
+channels "may be physically unconnected", and `BalanceMinValidTempCh` said "the
+LTC_2 half may not be wired at all". Both are corrected. `RequiredTempSlots`,
+which lists all 40 slots and enforces them, was the one that had it right.
 
-**This is not theoretical, and it is the first thing to check next season.**
-`v3.0.0` ships `RequiredTempSlots` listing **all 40 slots** with
-`TempSensorPresenceCheck = true`, so every one of them must read valid or the
-pack latches ERROR at boot and will not arm. If LTC_2's channels (slots 20..39)
-are not wired — which two of the three blocks above allow for — **the released
-firmware cannot arm the car at all.**
+Recorded because of what the contradiction nearly caused, not because the
+hardware is in doubt. Reading only the source, the safe-looking conclusion was
+that `v3.0.0` might latch ERROR at boot on an unwired channel and refuse to arm —
+`ErrorLatch` being sticky, it would then boot back into Error until someone
+reached `RST_BMS`. That conclusion was wrong, and it was wrong because two
+comments described an uncertainty that no longer existed.
 
-It has already happened once on a narrower map: with only slot 0 required, an
-open channel on one module produced an immediate boot Error that masked a
-scrutineering demo entirely. The map has since been widened to all 40, which can
-only make that more likely, not less.
-
-Before flashing `v3.0.0` to a car: put a meter on LTC_2's NTC channels, or set
-`RequiredTempSlots` to the slots you have actually confirmed. **The FS-rule
-protection does not depend on this list** — a sensor that reads valid and then
-opens is caught by the seen-valid disconnect path either way, so an empty or
-partial map loses nothing that scrutineering requires. What the list adds is a
-boot-time presence check, and a presence check against an unvalidated map is a
-boot trap, not a protection.
+**The residual lesson:** an open reading on slots 20..39 is a genuine fault, not
+an empty socket, and should be treated as a harness repair. `BalanceMinValidTempCh`
+is still set to 5 against a populated count of 200 — raise it once a bench sweep
+measures what the harness actually returns (`BmsState::valid_temp_channels`).
 
 ### SEASON-5 — No stack or WCET budget exists · **Open**
 

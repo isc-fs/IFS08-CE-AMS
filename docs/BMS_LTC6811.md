@@ -221,12 +221,14 @@ the harness: if a channel is genuinely unpopulated in copper, the pack
 will refuse to arm until it is either wired or removed from
 `RequiredTempSlots`.
 
-> **Unresolved.** The comment on `config::BalanceMinValidTempCh` still says
-> the fitted channel count is unknown and "the LTC_2 half may not be wired
-> at all", which contradicts `RequiredTempSlots`' claim that all 40 are
-> populated. Only a bench sweep settles it — see
-> [`COMMISSIONING.md`](COMMISSIONING.md) §3b. Until then, treat the count
-> as measured-by-nobody.
+> **Settled: all 200 channels are fitted**, LTC_2's half included, so
+> `RequiredTempSlots` enforcing all 40 is correct and an open reading on
+> slots 20..39 is a harness fault rather than an empty socket. Two source
+> comments used to allow for those channels being unwired; both are
+> corrected. What is still unmeasured is how many channels a healthy pack
+> actually returns at once — `config::BalanceMinValidTempCh` sits at 5
+> against a populated count of 200, and wants a bench sweep to raise it
+> (see [`COMMISSIONING.md`](COMMISSIONING.md) §3b).
 
 ### Mux first-select warm-up — do not remove
 
