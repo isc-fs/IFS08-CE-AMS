@@ -915,6 +915,26 @@ Left contradictory on purpose rather than silently harmonised — **it is a
 continuity-meter question**, and picking an answer in an editor would be guessing
 about hardware. Resolve before trusting `RequiredTempSlots`.
 
+**This is not theoretical, and it is the first thing to check next season.**
+`v3.0.0` ships `RequiredTempSlots` listing **all 40 slots** with
+`TempSensorPresenceCheck = true`, so every one of them must read valid or the
+pack latches ERROR at boot and will not arm. If LTC_2's channels (slots 20..39)
+are not wired — which two of the three blocks above allow for — **the released
+firmware cannot arm the car at all.**
+
+It has already happened once on a narrower map: with only slot 0 required, an
+open channel on one module produced an immediate boot Error that masked a
+scrutineering demo entirely. The map has since been widened to all 40, which can
+only make that more likely, not less.
+
+Before flashing `v3.0.0` to a car: put a meter on LTC_2's NTC channels, or set
+`RequiredTempSlots` to the slots you have actually confirmed. **The FS-rule
+protection does not depend on this list** — a sensor that reads valid and then
+opens is caught by the seen-valid disconnect path either way, so an empty or
+partial map loses nothing that scrutineering requires. What the list adds is a
+boot-time presence check, and a presence check against an unvalidated map is a
+boot trap, not a protection.
+
 ### SEASON-5 — No stack or WCET budget exists · **Open**
 
 `MainTask` has a 512-word (2 KB) stack and takes a ~620 B snapshot by value
