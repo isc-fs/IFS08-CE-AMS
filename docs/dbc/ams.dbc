@@ -123,6 +123,7 @@ BO_ 1728 PIT_fsm_status: 8 AMS
  SG_ dash_chg : 16|1@1+ (1,0) [0|0] "bool" Vector__XXX
  SG_ tsms : 17|1@1+ (1,0) [0|0] "bool" Vector__XXX
  SG_ balance_override : 18|1@1+ (1,0) [0|0] "bool" Vector__XXX
+ SG_ boot_trigger_refused : 19|1@1+ (1,0) [0|0] "bool" Vector__XXX
  SG_ ams_ok_gpio : 24|8@1+ (1,0) [0|0] "bool" Vector__XXX
  SG_ pec_err_total : 39|16@0+ (1,0) [0|0] "count" Vector__XXX
  SG_ fault_reason : 48|8@1+ (1,0) [0|0] "enum" Vector__XXX

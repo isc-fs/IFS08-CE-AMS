@@ -372,6 +372,7 @@ void test_telem_field_independence(void);
 // test_pit_diag_emitter.cpp
 void test_pit_diag_cell_frame_zero_indexes_module0(void);
 void test_pit_diag_cell_frame_spans_module_boundary(void);
+void test_pit_fsm_status_publishes_refused_reboot(void);
 void test_pit_diag_cell_frame_last_has_sentinels(void);
 void test_pit_diag_cell_frame_out_of_range_returns_zeros(void);
 void test_pit_diag_temp_frame_first_byte_is_module0_temp0(void);
@@ -881,6 +882,7 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
 
     RUN_TEST(test_pit_diag_cell_frame_zero_indexes_module0);
     RUN_TEST(test_pit_diag_cell_frame_spans_module_boundary);
+    RUN_TEST(test_pit_fsm_status_publishes_refused_reboot);
     RUN_TEST(test_pit_diag_cell_frame_last_has_sentinels);
     RUN_TEST(test_pit_diag_cell_frame_out_of_range_returns_zeros);
     RUN_TEST(test_pit_diag_temp_frame_first_byte_is_module0_temp0);
