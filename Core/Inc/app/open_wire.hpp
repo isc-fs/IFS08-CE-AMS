@@ -1,72 +1,73 @@
 // SPDX-License-Identifier: proprietary
 //
-// LTC6811 open-wire (ADOW) detection -- pure logic, HAL-free so it is
-// host-tested without a chain. Implements the datasheet "Open Wire Check
-// (ADOW Command)" algorithm on the two conversion passes.
+// LTC6811 open-wire (ADOW) detection -- the decision only. Pure logic, HAL-free,
+// so it is host-tested without a chain. The measurement side (adow_cmd, the two
+// RDCV passes, settling) is HAL and lives in bms_poll_task; this file owns the
+// part that must be provably correct. Gated at the call site by
+// config::CellOpenWireCheck.
 //
-// Method (per LTC6811-1 datasheet):
-//   1. Run ADOW with PUP=1 (pull-UP current) a couple of times, read all cell
-//      voltages -> CELL_PU(n).
-//   2. Run ADOW with PUP=0 (pull-DOWN current), read all cell voltages ->
-//      CELL_PD(n).
-//   3. An open on the conductor between two cells collapses the affected
-//      reading differently under pull-up vs pull-down:
-//        - for interior conductor n (1..N-1):  CELL_PU(n+1) - CELL_PD(n+1) < -threshold
-//        - conductor 0 (bottom):               CELL_PU(1)  == 0
-//        - conductor N (top):                  CELL_PD(N)  == 0
+// Method (datasheet "Open Wire Check (ADOW Command)"):
+//   1. Run ADOW with PUP=1 (pull-UP current), read all cells -> CELL_PU(n).
+//   2. Run ADOW with PUP=0 (pull-DOWN current), read all cells -> CELL_PD(n).
+//   3. An open conductor collapses the affected reading differently under
+//      pull-up than pull-down:
+//        - interior conductor n (1..N-1):  CELL_PU(n+1) - CELL_PD(n+1) < -threshold
+//        - conductor 0 (bottom):           CELL_PU(1)  == 0
+//        - conductor N (top):              CELL_PD(N)  == 0
 //
 // `pu` / `pd` are the per-cell readings in mV, index 0 == CELL(1). `n_cells` is
 // the number of cells on THIS IC (9 or 10 here, not the datasheet's 12). The
 // returned mask has bit k set when conductor C(k) (k in 0..n_cells) is open --
 // any non-zero value means this IC has at least one broken cell-sense wire.
 //
-// The measurement/encoding side (adow_cmd, the two RDCV passes, settling) is
-// HAL and lives in bms_poll_task; this file owns only the decision, which is
-// the part that must be provably correct. Gated at the call site behind
-// config::CellOpenWireCheck until validated on the HIL chain.
+// GAP: only the interior rule is hardware-validated. Both endpoint rules test
+// for EXACT zero and have never run on hardware, so an endpoint open reading a
+// few mV instead of 0 is missed -- that is the 2 endpoint conductors of the 10
+// or 11 on every IC.
 
 #pragma once
 
 #include <cstdint>
 
 // ---------------------------------------------------------------------------
-// POLL-INTEGRATION CONTRACT (for the HIL follow-up that wires ADOW live).
-// Keep in lockstep with bms_service.cpp's RDCV decode + the BMS_LITE schematic;
-// an off-by-one here silently mis-detects open wires.
+// POLL-INTEGRATION CONTRACT. BmsPollTask implements this (attempt_open_wire_poll
+// / adow_pass); keep it in lockstep with bms_service.cpp's RDCV decode and the
+// BMS_LITE schematic. An off-by-one here silently mis-detects open wires.
 //
 // CELL COUNT IS PER-LTC, NOT UNIFORM:
 //   * Upper IC (chain index EVEN, LTC_1): 9 cells  -> module cells 0..8
 //       RDCVA->0,1,2   RDCVB->3,4,5   RDCVC->6,7,8    (RDCVD UNUSED -- ignore)
 //   * Lower IC (chain index ODD,  LTC_2): 10 cells -> module cells 9..18
 //       RDCVA->9,10,11 RDCVB->12,13,14 RDCVC->15,16,17 RDCVD[0]->18
-//   Call detect_open_conductors(pu, pd, n_cells,...) with n_cells = 9 for
-//   upper ICs and 10 for lower ICs. Decode ONLY those valid cells -- feeding
-//   the upper IC's unused RDCVD registers would false-flag conductors C(9..12).
-//   OR an upper-IC open into module cells 0..8, a lower-IC open into 9..18.
+//   Call detect_open_conductors(pu, pd, n_cells,...) with n_cells = 9 for upper
+//   ICs and 10 for lower ICs, and decode ONLY those valid cells: feeding an
+//   upper IC's unused RDCVD registers false-flags conductors C(9..12). OR an
+//   upper-IC open into module cells 0..8, a lower-IC open into 9..18.
 //
 // TEMP-side note (same board): the ADG731 mux carries NTC_1..20 (LTC_1) /
 // NTC_21..40 (LTC_2) on S1..S10 + S17..S26 -> Adg731ChannelMap {0..9,16..25};
 // firmware slots 0..19 (upper) / 20..39 (lower). All 40 are populated and
 // required (config::RequiredTempSlots), so slot 0 MUST NOT false-open -- which
-// is exactly what the mux warm-up guarantees (see WARM-UP below).
+// is what the mux warm-up below guarantees.
 //
-// WARM-UP (mirror the existing LTC settling precedents -- do not skip):
-//   * ADOW: run the conversion TWICE per PUP setting before RDCV so the pull-
-//     up/down current settles (datasheet "Open Wire Check"). This is the cell-
-//     domain twin of the ADG731 first-select warm-up (a throwaway
-//     select to UNPOPULATED S32 absorbs the mux first-select drop so temp slot 0
-//     latches instead of reading open).
-//   * RDCV warm-up: issue a no-op RDCFGA before the first RDCV after the
-//     ADOW+settle idle, as attempt_voltage_poll() does, or stale MOSI fails PEC
-//     on RDCVA for every IC.
-//   * Quiesce balancing (DCP=0 + BalanceQuiesceMs) before ADOW, like the voltage
-//     poll -- bleed current corrupts the open-wire delta.
+// WARM-UP (the existing LTC settling precedents -- do not skip):
+//   * ADOW: run the conversion TWICE per PUP setting before RDCV so the
+//     pull-up/down current settles (datasheet "Open Wire Check"). Cell-domain
+//     twin of the ADG731 first-select warm-up, where a throwaway select to
+//     UNPOPULATED S32 absorbs the mux first-select drop so temp slot 0 latches
+//     instead of reading open.
+//   * RDCV: issue a no-op RDCFGA before the first RDCV after the ADOW+settle
+//     idle, as attempt_voltage_poll() does, or stale MOSI fails PEC on RDCVA for
+//     every IC.
+//   * Quiesce balancing (DCP=0 + BalanceQuiesceMs) before ADOW, as the voltage
+//     poll does -- bleed current corrupts the open-wire delta.
 //
 // TIMING (same < 500 ms rule as the temp path): a cell open-wire must fault in
-// under 500 ms. Run the ADOW pass at a <= 250 ms cadence (e.g. fold it into the
-// BmsPollVoltMs 250 ms voltage poll) and latch on the FIRST confirmed open, so
-// worst-case detect = cadence + conversion + a 10 ms safety tick stays < 500 ms.
-// Do NOT hide it behind a multi-poll debounce that pushes the window past 500 ms.
+// under 500 ms. Run the ADOW pass at a <= 250 ms cadence -- it is folded into
+// the BmsPollVoltMs (200 ms) voltage poll -- and latch on the FIRST confirmed
+// open, so worst-case detect = cadence + conversion + a 10 ms safety tick stays
+// < 500 ms. Do NOT hide it behind a multi-poll debounce that pushes the window
+// past 500 ms.
 // ---------------------------------------------------------------------------
 
 namespace ams::open_wire {

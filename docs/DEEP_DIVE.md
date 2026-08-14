@@ -172,7 +172,7 @@ sequenceDiagram
     end
     init->>init: progress 7 → osThreadExit (TCB + stack back to heap)
   and
-    ST->>ST: ErrorLatch::init; boot straight into Error if ErrorLatch::is_set
+    ST->>ST: ErrorLatch::init, boot straight into Error if ErrorLatch::is_set
     Note over ST: while now < SafetyBootGraceMs (2000):<br/>data-presence predicates suppressed, AMS_OK held LOW
     loop every 10 ms (osDelayUntil)
       ST->>ST: snapshot bms/current/vehicle · fw_health::poke(MainStepped)

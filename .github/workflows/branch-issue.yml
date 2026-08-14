@@ -55,20 +55,26 @@ jobs:
               });
             }
 
-            const issues = await github.rest.issues.listForRepo({
+            /* PAGINATE. A single listForRepo call returns at most 100 issues,
+               and the `fix` label passed 100 long ago (121 at the 2026 season
+               close), so a bare call silently stopped seeing the oldest ones.
+               Sorting newest-first hid it: branch numbers grow with time, so
+               the max was usually still in the first page and the truncation
+               only bit for a high number created out of order -- a wrong
+               "next number" warning with nothing indicating why.
+               Two pages today; the cost is one extra API call. */
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner: context.repo.owner,
               repo:  context.repo.repo,
               labels: type,
               state: 'all',
-              sort: 'created',
-              direction: 'desc',
               per_page: 100,
             });
             /* Accepts both bare `[feat/N]` titles and titled branches
                like `[feat/N-short-title]`. */
             const regex = new RegExp(`^\\[${type}/(\\d+)(?:-[^\\]]*)?\\]`);
             let maxNumber = 0;
-            for (const issue of issues.data) {
+            for (const issue of issues) {
               const match = issue.title.match(regex);
               if (match) maxNumber = Math.max(maxNumber, parseInt(match[1], 10));
             }
@@ -156,12 +162,19 @@ jobs:
 
             const firstMessage = commits[0].message.trim();
 
-            const { data: issues } = await github.rest.issues.listForRepo({
+            /* PAGINATE here too. This is a LOOKUP for one specific tracker,
+               so a cap does not degrade it gracefully -- it just fails to find
+               the issue and logs "no open issue found for this branch", which
+               reads exactly like the legitimate case where no tracker exists.
+               A silent skip of the description auto-fill is the mildest
+               possible symptom of a truncated list, which is why it could sit
+               here unnoticed. */
+            const issues = await github.paginate(github.rest.issues.listForRepo, {
               owner:    context.repo.owner,
               repo:     context.repo.repo,
               labels:   type,
               state:    'open',
-              per_page: 50,
+              per_page: 100,
             });
 
             const branchIssue = issues.find(i => i.title.startsWith(`[${branch}]`));

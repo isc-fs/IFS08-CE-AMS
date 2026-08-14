@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: proprietary
 //
-// Pure-logic encoders for the runtime-toggleable pit-side diagnostic
-// stream. Header-only so the host unit-test build exercises the
-// byte layouts without HAL / FreeRTOS.
+// Pure-logic encoders for the runtime-toggleable pit-side diagnostic stream.
+// Header-only so the host unit-test build exercises the byte layouts without
+// HAL / FreeRTOS.
 //
-// Frames are dispatched by AcuCanTask when the runtime flag is set;
-// the flag transitions are owned there too. This file only owns wire
-// format. See ams_config.hpp for the ID range and enable contract.
+// This file owns wire format only. AcuCanTask owns the runtime flag and
+// dispatches the frames. ID range and enable contract: ams_config.hpp.
 
 #pragma once
 
@@ -23,13 +22,12 @@ namespace ams::pit_diag {
 
 using Frame = std::array<std::uint8_t, 8>;
 
-// The fixed-layout frames (0x6C0..0x6C8) are now thin adapters over the
-// generated ifs08::encode_PIT_* -- the byte layout lives once in
-// Core/Inc/can/messages/pit_*.def. The parameterised cell/temp grid
-// frames (encode_cell_frame / encode_temp_frame) stay hand-rolled until
-// the DSL grows a multiplexed-array representation. Value
-// transforms (saturation, bit assembly) stay here at the adapter; the
-// hardcoded-byte tests in test_pit_diag_emitter.cpp are the parity gate.
+// The fixed-layout frames (0x6C0..0x6C8) are thin adapters over the generated
+// ifs08::encode_PIT_* -- their byte layout lives once, in
+// Core/Inc/can/messages/pit_*.def. The cell/temp grid frames stay hand-rolled
+// until the DSL grows a multiplexed-array representation. Value transforms
+// (saturation, bit assembly) stay here in the adapter; the hardcoded-byte
+// tests in test_pit_diag_emitter.cpp are the parity gate.
 namespace detail {
 [[nodiscard]] inline Frame to_frame(const std::uint8_t (&b)[8]) noexcept {
     Frame f{};
@@ -39,16 +37,15 @@ namespace detail {
 }  // namespace detail
 
 // ---------------------------------------------------------------------------
-// Cell-voltage frame. Each frame carries 4 cells (BE u16 mV) of the
-// flattened cell_mV[5][19] grid. frame_idx in [0, PitDiagCellFrames=24);
-// out-of-range indices return a zero-filled frame (caller bug). The
-// last frame (idx=23) only has 3 real cells (cell_indices 92..94); the
-// remaining 2 bytes are PitDiagCellSentinel (0xFFFF).
+// Cell-voltage frame: 4 cells (BE u16 mV) of the flattened cell_mV[5][19]
+// grid. frame_idx in [0, PitDiagCellFrames=24); out of range returns a
+// zero-filled frame (caller bug). The last frame (idx=23) holds only 3 real
+// cells (92..94); its remaining 2 bytes are PitDiagCellSentinel (0xFFFF).
 //
-// Decoder side: cell_index = 4 * frame_idx + slot;
-//               module = cell_index / config::CellsPerModule (= 19),
-//               cell   = cell_index % config::CellsPerModule.
-// Any byte-pair == 0xFFFF means "no cell at this slot" -- skip.
+// Decoder: cell_index = 4 * frame_idx + slot;
+//          module = cell_index / config::CellsPerModule (= 19),
+//          cell   = cell_index % config::CellsPerModule.
+// A byte-pair of 0xFFFF means "no cell here" -- skip it.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_cell_frame(const BmsState& bms,
                                              std::uint8_t    frame_idx) noexcept {
@@ -61,19 +58,19 @@ namespace detail {
         [&](unsigned flat) -> std::uint64_t {
             const std::uint8_t m = static_cast<std::uint8_t>(flat / config::CellsPerModule);
             const std::uint8_t c = static_cast<std::uint8_t>(flat % config::CellsPerModule);
-            // A module past its freshness window (isoSPI silent) keeps its last
-            // good voltages in cell_mV. Emit the no-cell sentinel instead so a
-            // disconnected chain reads as "no data", never a frozen value.
+            // A module past its freshness window (isoSPI silent) still holds
+            // its last good voltages in cell_mV. Emit the sentinel instead, so
+            // a dead chain reads as "no data" and never as a frozen value.
             if ((bms.module_online_mask & (1u << m)) == 0u) {
                 return config::PitDiagCellSentinel;
             }
-            // Cells straddling an ADOW-confirmed open tap: the shared node is
-            // floating, so BOTH readings are displaced (one high, one low) and
-            // neither is recoverable -- only their sum survives. Emit "no data"
-            // rather than a number that looks like a measurement and is not.
-            // cell_mV keeps the raw split; recompute_summaries_ still uses it for
-            // the pair average, and the raw values remain visible on the ADOW
-            // diagnostic grid (0x6D0/0x6E8) when config::AdowRawDiag is on.
+            // Cells straddling an ADOW-confirmed open tap: the shared node
+            // floats, so BOTH readings are displaced (one high, one low) and
+            // only their sum survives. Emit "no data" rather than a number
+            // that looks like a measurement and is not. cell_mV keeps the raw
+            // split for recompute_summaries_'s pair average, and the raw
+            // values stay on the ADOW grid (0x6D0/0x6E8) under
+            // config::AdowRawDiag.
             if ((bms.cell_open_cells[m] & (1u << c)) != 0u) {
                 return config::PitDiagCellSentinel;
             }
@@ -84,9 +81,9 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// BENCH DIAGNOSTIC: dump any flat 95-cell uint16 mV grid with the SAME window
+// BENCH DIAGNOSTIC: dump any flat 95-cell uint16 mV grid in the SAME window
 // layout as the 0x680 cell grid, so one decoder reads every grid the firmware
-// publishes. Used for the raw ADOW pull-up / pull-down readings
+// publishes. Used by the raw ADOW pull-up / pull-down readings
 // (AdowDiagPuBaseId / AdowDiagPdBaseId) and the second-mode sweep
 // (AdcXCheckBaseId). 0xFFFF = no cell / PEC-skipped this scan.
 // ---------------------------------------------------------------------------
@@ -104,16 +101,16 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// NTC-temp frame. Each frame carries 8 NTC samples (i8 degC) of the
-// flattened cell_tempC[5][40] grid. frame_idx in [0, PitDiagTempFrames=25).
-// 200 NTCs / 8 = 25 exactly, no padding.
+// NTC-temp frame: 8 NTC samples (i8 degC) of the flattened cell_tempC[5][40]
+// grid. frame_idx in [0, PitDiagTempFrames=25); 200 NTCs / 8 = 25 exactly,
+// no padding.
 //
-// Decoder side: temp_index = 8 * frame_idx + slot;
-//               module = temp_index / config::TempsPerModule (= 40),
-//               temp   = temp_index % config::TempsPerModule.
-// Values clipped to int8 range (BmsState stores int16 internally for
-// out-of-range sentinels). Saturated clip matches the 0x4A2 telemetry
-// behaviour from telemetry_encoders.hpp -- consistent across IDs.
+// Decoder: temp_index = 8 * frame_idx + slot;
+//          module = temp_index / config::TempsPerModule (= 40),
+//          temp   = temp_index % config::TempsPerModule.
+// Values are clipped to int8 (BmsState stores int16 so it can hold
+// out-of-range sentinels). The saturating clip matches 0x4A2 in
+// telemetry_encoders.hpp, so every ID behaves the same.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::int8_t clip_int8_pit(std::int16_t v) noexcept {
     if (v >  127) return  127;
@@ -133,8 +130,8 @@ namespace detail {
             const std::uint8_t m = static_cast<std::uint8_t>(flat / config::TempsPerModule);
             const std::uint8_t t = static_cast<std::uint8_t>(flat % config::TempsPerModule);
             // Offline module (isoSPI silent) -> emit the no-reading sentinel
-            // (clips to -128) rather than the frozen last-good temperature, so a
-            // disconnected chain never displays as a live temperature.
+            // (clips to -128), not the frozen last-good value, so a dead chain
+            // never displays as a live temperature.
             const std::int16_t raw = ((bms.module_online_mask & (1u << m)) == 0u)
                                          ? config::NtcNoReading
                                          : bms.cell_tempC[m][t];
@@ -145,11 +142,10 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// FSM extended status frame (0x6C0). Lives alongside 0x4A0 but carries
-// the diag fields that are HIL-only in the flight 0x4A2 layout: full
-// FSM state byte, mode_locked, raw cockpit input readbacks, AMS_OK
-// GPIO, and a sum of the per-IC PEC error counters as a compact "BMS
-// chain health" rollup.
+// FSM extended status (0x6C0) -- the diag fields the flight 0x4A0/0x4A2
+// layout does not carry: full FSM state byte, mode_locked, raw cockpit input
+// readbacks, AMS_OK GPIO, and the per-IC PEC counters summed into one
+// "BMS chain health" number.
 //
 //   byte 0  fsm_state  (same encoding as 0x4A0[0]: 0..5)
 //   byte 1  mode_locked (Undecided=0 / Car=1 / Charger=2)
@@ -191,8 +187,8 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Poll-timing frame (0x6C1). MingoCAN can graph these to spot SPI
-// jitter / mux degradation purely from the CAN stream.
+// Poll-timing frame (0x6C1). Graphable in MingoCAN to spot SPI jitter or mux
+// degradation from the CAN stream alone.
 //
 //   bytes 0..1  bms_volt_poll_ms       BE u16 (last cycle ms; clip at 0xFFFF)
 //   bytes 2..3  bms_volt_poll_max_ms   BE u16 (worst-case since boot; clip)
@@ -219,12 +215,12 @@ namespace detail {
 
 // ---------------------------------------------------------------------------
 // Command-frame decoder. Returns:
-//    +1  caller should ENABLE the diag stream  (DEADBEEF)
-//    -1  caller should DISABLE the diag stream (0x00000000)
-//     0  not a pit-diag command (caller continues normal dispatch)
+//    +1  ENABLE the diag stream  (DEADBEEF)
+//    -1  DISABLE the diag stream (0x00000000)
+//     0  not a pit-diag command -- caller continues normal dispatch
 //
-// The caller is responsible for checking f.bus / f.id / f.dlc *before*
-// calling this, but the function is defensive against a bad id/dlc.
+// Re-checks f.id and f.dlc itself. It does NOT look at f.bus -- a caller
+// fed from more than one bus must filter that first.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline int classify_command(const CanFrame& f) noexcept {
     if (f.id  != config::PitDiagCmdRxId)  return 0;
@@ -241,21 +237,18 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Balance state -- two frames carrying the full 95-bit DCC mask plus
-// the per-cycle counters. dcc_bits[m] mirrors the wire-side encoding:
-// bit c == 1 iff cell c of module m was selected for discharge in the
-// last balance window.
+// Balance state -- two frames carrying the full 95-bit DCC mask and the
+// per-cycle counters. dcc_bits[m] bit c == 1 iff cell c of module m was
+// selected for discharge in the last balance window.
 //
-//   0x6C2 [byte i] = packed mask bits 8*i..8*i+7, where bit b of byte i
-//                    is cell (8*i + b) of the row-major flat (cell_idx =
-//                    19*m + c). Covers cells 0..63.
-//   0x6C3 [byte 0..3] = mask bits 64..94 (low 31 bits of byte 4..7's
-//                       concatenation; bit 31 always 0 / reserved).
+//   0x6C2 [byte i] = mask bits 8*i..8*i+7, bit b of byte i being cell
+//                    (8*i + b) of the row-major flat (cell_idx = 19*m + c).
+//                    Covers cells 0..63.
+//   0x6C3 [byte 0..3] = mask bits 64..94 (low 31 bits; bit 31 reserved 0)
 //          [byte 4..5] = balance_cycles_total LE u16 (mod 65536)
 //          [byte 6..7] = balance_cycles_active LE u16 (mod 65536)
 //
-// MingoCAN reconstructs by walking 95 bits and mapping bit b ->
-// (module = b / 19, cell = b % 19).
+// Decoder: walk 95 bits, bit b -> (module = b / 19, cell = b % 19).
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_balance_mask_a(const volatile std::uint32_t (&dcc_bits)[config::BmsModuleCount]) noexcept {
     std::uint64_t mask = 0;
@@ -292,9 +285,8 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Boot diag -- "why did we boot, how did init go". Lets MingoCAN
-// distinguish a clean cold boot from a watchdog reset or a CAN-trigger
-// BL jump from CAN alone.
+// Boot diag -- why did we boot, how did init go. Separates a clean cold boot
+// from a watchdog reset or a CAN-trigger BL jump, from CAN alone.
 //
 //   bytes 0..3  jump_reason  LE u32 (RTC->BKP2R contents at boot;
 //                            matches config::JumpReason enum -- see
@@ -317,19 +309,15 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Crash post-mortem -- surfaces the in-RAM trail left by the FreeRTOS
-// stack-overflow + malloc-failed hooks (see freertos.c). If a previous
-// session crashed, the engineer reads this frame and learns what
-// happened from CAN alone; on a clean session every byte stays at 0.
+// Crash post-mortem -- the in-RAM trail left by the FreeRTOS stack-overflow
+// and malloc-failed hooks (freertos.c), readable from CAN alone. Every byte
+// stays 0 on a clean session.
 //
-//   byte 0      stack_overflow_seen  (0 if g_stack_overflow_task_addr
-//                                     is still 0, else 1)
-//   byte 1      stack_overflow_watermark low byte (saturates at 0xFF;
-//                                                  0xFF on the "API
-//                                                  call itself failed"
-//                                                  sentinel)
-//   bytes 2..5  stack_overflow_task_addr LE u32 (the failing task's
-//                                                xTaskHandle value)
+//   byte 0      stack_overflow_seen (1 iff g_stack_overflow_task_addr != 0)
+//   byte 1      stack_overflow_watermark low byte (saturates at 0xFF, also
+//                                                  the "API call itself
+//                                                  failed" sentinel)
+//   bytes 2..5  stack_overflow_task_addr LE u32 (failing task's xTaskHandle)
 //   bytes 6..7  malloc_failed_count LE u16 (saturates at 0xFFFF)
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline Frame encode_post_mortem(std::uint32_t stack_overflow_task_addr,
@@ -348,8 +336,8 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Firmware identification frame. Lets MingoCAN answer "what's
-// flashed?" purely over CAN (no separate readout path needed).
+// Firmware identification -- answers "what's flashed?" over CAN, with no
+// separate readout path.
 //
 //   byte 0      fw_version_major
 //   byte 1      fw_version_minor
@@ -377,22 +365,20 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// Per-IC PEC error counts. 0x6C0[4..5] already carries the sum,
-// which is enough to say "the chain is unhealthy" but not "which IC is
-// the problem". The 10 ICs (LtcChainLength) split across two frames as
-// saturating uint8 -- "error count > 255" already means catastrophic
-// chain failure for diagnostic purposes; the high bits aren't carrying
-// useful information past that. Reset only on cold boot (counts live
-// in bms_service.cpp's extern array; no per-session clear).
+// Per-IC PEC error counts. 0x6C0[4..5] carries the sum, which says the chain
+// is unhealthy but not which IC. The 10 ICs (LtcChainLength) split across two
+// frames as saturating uint8: past 255 errors the chain has failed
+// catastrophically and the high bits add nothing. Counts live in
+// bms_service.cpp's extern array and clear only on cold boot.
 //
 //   0x6C7  PitDiag_pec_per_ic_a: 8 bytes = ICs 0..7
 //   0x6C8  PitDiag_pec_per_ic_b: bytes 0..1 = ICs 8..9, bytes 2..7 = 0
 //
 // Chain-to-module mapping:
-//   IC index 0 = module 0 upper (first LTC, cells 0..8)
-//   IC index 1 = module 0 lower (second LTC, cells 9..18)
-//   IC index 2 = module 1 upper, etc.
-// So 0x6C7 byte 0 spike = "module 0's top LTC6811 is misbehaving".
+//   IC 0 = module 0 upper (first LTC, cells 0..8)
+//   IC 1 = module 0 lower (second LTC, cells 9..18)
+//   IC 2 = module 1 upper, and so on.
+// So a spike in 0x6C7 byte 0 = module 0's top LTC6811 is misbehaving.
 // ---------------------------------------------------------------------------
 [[nodiscard]] inline std::uint8_t sat_u8(std::uint32_t v) noexcept {
     return (v > 0xFFu) ? 0xFFu : static_cast<std::uint8_t>(v);
@@ -421,13 +407,11 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// FDCAN1 comms health (0x6C9). Surfaces the FDCAN1 TX-path counters
-// that were previously RAM-only so the CAN-only HIL bench can CONFIRM a
-// Bus-Off recovery fired (count > 0 after an outage) and see TX-enqueue
-// pressure -- the AMS analogue of the bootloader's bl_health
-// fdcan_recovery_count. Both full u32 (no saturation): the recovery count
-// ticks at most ~10/s (one per FdcanBusOffRetryMs) and acu_tx_fail is a
-// monotonic enqueue-failure tally.
+// FDCAN1 comms health (0x6C9). Puts the TX-path counters on the bus so the
+// CAN-only HIL bench can confirm a Bus-Off recovery fired (count > 0 after an
+// outage) and watch TX-enqueue pressure, with no debugger. Both are full u32,
+// unsaturated: the recovery count ticks at most ~10/s (one per
+// FdcanBusOffRetryMs) and acu_tx_fail is a monotonic failure tally.
 //
 //   bytes 0..3  fdcan1_busoff_recovery_count  LE u32 (Stop/Start attempts;
 //                                              0 = no Bus-Off this session)
@@ -463,11 +447,10 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
-// 0x6CA AMS_fw_health -- UNGATED firmware-health, ECU-0x704 parity.
-// Emitted always-on (NOT part of the pit-diag scan); this adapter just packs
-// the gathered fields. free_heap/min_free_heap are clamped to u16 -- the heap
-// is 64 KB so they always fit today, but the clamp stops a future larger heap
-// from wrapping silently.
+// 0x6CA AMS_fw_health -- UNGATED firmware health, ECU-0x704 parity. Always
+// emitted, NOT part of the pit-diag scan; this adapter only packs the fields.
+// free_heap / min_free_heap are clamped to u16: the 64 KB heap always fits,
+// and the clamp stops a future larger heap from wrapping silently.
 //   [0..1] free_heap      BE u16   [4] task_liveness bitfield   [6] uptime_s u8
 //   [2..3] min_free_heap  BE u16   [5] reset_cause enum         [7] last_fault
 // ---------------------------------------------------------------------------
