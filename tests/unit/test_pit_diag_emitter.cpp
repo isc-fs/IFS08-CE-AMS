@@ -455,3 +455,26 @@ extern "C" void test_pit_encode_balance_health_layout(void) {
     TEST_ASSERT_EQUAL_HEX8(0x30, healthy[1]);
     for (std::uint8_t i = 4; i < 8; ++i) TEST_ASSERT_EQUAL_HEX8(0x00, healthy[i]);
 }
+
+// A refused 0x002 reboot has no reply channel, so bit 19 of 0x6C0 is the only
+// thing that tells an operator their flash attempt was rejected rather than
+// ignored. It must not disturb the bits packed beside it in the same byte.
+extern "C" void test_pit_fsm_status_publishes_refused_reboot(void) {
+    using namespace ams::pit_diag;
+    auto none = encode_fsm_status(3u, ams::fsm::Mode::Car, true, false, 1u, 0u,
+                                  0u, 0u, /*balance_override=*/false,
+                                  /*boot_trigger_refused=*/false);
+    TEST_ASSERT_EQUAL_UINT8(0u, static_cast<std::uint8_t>(none[2] & 0x08u));
+
+    auto refused = encode_fsm_status(3u, ams::fsm::Mode::Car, true, false, 1u, 0u,
+                                     0u, 0u, false, /*boot_trigger_refused=*/true);
+    TEST_ASSERT_EQUAL_UINT8(0x08u, static_cast<std::uint8_t>(refused[2] & 0x08u));
+
+    // packed beside dash_chg(16) / tsms(17) / balance_override(18) -- setting
+    // the new bit must leave those alone
+    auto both = encode_fsm_status(3u, ams::fsm::Mode::Car, /*tsms=*/true,
+                                  /*dash_chg=*/true, 1u, 0u, 0u, 0u,
+                                  /*balance_override=*/true,
+                                  /*boot_trigger_refused=*/true);
+    TEST_ASSERT_EQUAL_UINT8(0x0Fu, static_cast<std::uint8_t>(both[2] & 0x0Fu));
+}

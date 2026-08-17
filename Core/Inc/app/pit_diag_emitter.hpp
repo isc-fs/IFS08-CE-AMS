@@ -169,13 +169,15 @@ namespace detail {
                                              std::uint32_t pec_err_total,
                                              std::uint8_t  fault_reason = 0u,
                                              std::uint8_t  fault_detail = 0u,
-                                             bool          balance_override = false) noexcept {
+                                             bool          balance_override = false,
+                                             bool          boot_trigger_refused = false) noexcept {
     ifs08::PIT_fsm_status_t s{};
     s.fsm_state        = fsm_state;
     s.mode_locked      = static_cast<std::uint8_t>(mode_locked);
     s.dash_chg         = dash_chg ? 1u : 0u;
     s.tsms             = tsms ? 1u : 0u;
     s.balance_override = balance_override ? 1u : 0u;
+    s.boot_trigger_refused = boot_trigger_refused ? 1u : 0u;
     s.ams_ok_gpio      = ams_ok_gpio ? 1u : 0u;
     s.pec_err_total    = (pec_err_total > 0xFFFFu)
                              ? 0xFFFFu : static_cast<std::uint16_t>(pec_err_total);

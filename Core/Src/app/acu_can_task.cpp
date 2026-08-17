@@ -326,7 +326,8 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
                               pec_err_sum(),
                               g_fault_reason_telemetry,
                               g_fault_detail_telemetry,
-                              balance_override));
+                              balance_override,
+                              g_boot_trigger_refused != 0u));
     send_or_fail_blocking(ams::config::PitDiagTimingId,
                           ams::pit_diag::encode_timing(
                               g_bms_volt_poll_ms,

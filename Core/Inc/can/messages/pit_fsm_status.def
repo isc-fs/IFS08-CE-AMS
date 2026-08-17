@@ -8,6 +8,11 @@ CAN_MSG(PIT_fsm_status, 0x6C0, 8, "AMS", 1000)
     FIELD_LE_BITS (dash_chg,         uint8_t, 16,  1, 1, 0, "bool")
     FIELD_LE_BITS (tsms,             uint8_t, 17,  1, 1, 0, "bool")
     FIELD_LE_BITS (balance_override, uint8_t, 18,  1, 1, 0, "bool")
+    /* A 0x002 reboot trigger arrived while the FSM was energised and was
+     * refused (Bootloader::reboot_allowed_in). The trigger is a bare frame
+     * with no reply channel, so without this bit the refusal is invisible and
+     * a flash attempt on a live car just appears to do nothing. */
+    FIELD_LE_BITS (boot_trigger_refused, uint8_t, 19,  1, 1, 0, "bool")
     FIELD_LE      (ams_ok_gpio,      uint8_t,  3,  8, 1, 0, "bool")
     FIELD_BE      (pec_err_total,    uint16_t, 4, 16, 1, 0, "count")
     FIELD_LE      (fault_reason,     uint8_t,  6,  8, 1, 0, "enum")

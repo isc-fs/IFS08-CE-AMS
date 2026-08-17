@@ -32,6 +32,13 @@ engineering judgement and says so:
 | [COMMISSION-3](#commission-3--the-over-current-trip-is-not-a-thermal-protection-and-the-thermal-protection-is-disarmed--open) | **Cell temperature faults are disarmed, and the current trip was never meant to cover slow overload.** |
 | [LATCH-1](#latch-1--every-backup-register-write-is-unverified--open) | Every `ErrorLatch` write is fire-and-forget; the read is an exact-match compare. |
 | [LATCH-3](#latch-3--ams_hil_clear_error_latch-has-no-build-system-guard--open) | The bench latch-wipe flag has no build-system guard against reaching flight. |
+| [SEASON-1](#season-1--a-nuisance-trip-in-run-ends-the-session--open) | **A nuisance trip in `Run` ends the session — no documented way to restart the car.** |
+| [SEASON-2](#season-2--maintask-has-no-automated-coverage--open) | `MainTask` is in no test; the SIL harness is a second, divergent copy of it. |
+| [SEASON-3](#season-3--0x1030x104-force-balancing-in-any-state--open) | Balancing can be forced on in `Run`, through resistors rated for transient duty. |
+| [SEASON-4](#season-4--stale-comments-claimed-ltc_2s-temps-might-be-unwired--closed) | *(Closed)* All 200 NTC channels are fitted; two comments that said otherwise are corrected. |
+| [SEASON-5](#season-5--no-stack-or-wcet-budget-exists--open) | No stack or WCET budget; `MainTask` is the tightest consumer and unmeasured. |
+| [SEASON-6](#season-6--the-accumulators-safety-topology-is-unlearnable-from-a-clone--open) | The shutdown-circuit topology cannot be learned from this repo. |
+| [SEASON-7](#season-7--hil-acceptance-never-ran--open) | Two HIL acceptance items were raised and never executed. |
 | [RELAY-2](#relay-2--a-welded-precharge-contactor-is-invisible-to-the-swap-check--open) | The contactor-swap check reads bus voltage, so a welded precharge contactor passes it. |
 | [DISCHARGE-1](#discharge-1--both-halves-exist-the-pairing-is-unproven--open) | **Both halves of the discharge interlock now exist, but no bench has run them on one bus.** |
 | [BALANCE-1](#balance-1--a-failed-quiesce-corrupts-the-readings-the-selector-ranks--open) | A failed balance quiesce feeds bleed-displaced cell voltages to the safety predicates and the open-wire scan. |
@@ -845,7 +852,117 @@ live `module_online_mask` for `BmsModuleOffline`, the module index for
 
 ---
 
-## 11. What is not covered here
+## 11. Carried into next season
+
+Findings raised at the season close that are **decisions or bench work, not
+edits**. They lived in the issue tracker; they are recorded here because a
+tracker is not read during onboarding and this document is.
+
+### SEASON-1 — A nuisance trip in `Run` ends the session · **Open**
+
+A latched fault drops `AMS_OK`, the self-holding relay opens, and per §1
+invariant 8 driving PB4 high again does not restore it. `COMMISSIONING.md` §8
+still records the operator reset gesture as an open decision, so **the car
+cannot be restarted by any documented procedure.**
+
+The trip surface is wide and largely undebounced: `VcuStale` at 200 ms (a CAN
+dropout), `CurrentStale` at 200 ms, `CurrentOverLimit` on `filtered_mA`, and
+`CellUnderVoltageMv = 2800` — a `COMMISSION` placeholder — evaluated against
+loaded sag at 185 A.
+
+**Decide the reset gesture before the next test day, not at one.** Acceptance
+step 7 cannot be signed off without it.
+
+### SEASON-2 — `MainTask` has no automated coverage · **Open**
+
+`tests/unit/CMakeLists.txt` compiles four app sources; `safety_task.cpp` is not
+among them, despite being first on the safety-critical list in `CLAUDE.md`.
+`test_sil_scenarios.cpp` hand-reimplements the loop — its own collapse debounce,
+its own `vcu_required` derivation, its own edge consume, with `mode_locked` set
+directly by the test author.
+
+So the mode-lock rule, the DASH_CHG edge latch, `dc_bus_fresh`, the
+`predicate_fault` dispatch and `apply_relay_actions` are executed by no test.
+**A green CI run on a `safety_task.cpp` change proves very little**, which
+undercuts every other gate in `CONTRIBUTING.md`. Fix by compiling the loop body
+into the host build, or say plainly in `CONTRIBUTING.md` that the SIL harness is
+a parallel implementation that must be updated alongside it.
+
+### SEASON-3 — `0x103`/`0x104` force balancing in any state · **Open**
+
+`compute_mask` state-gates `BalanceCmd::Auto` to Charge, but `On` falls straight
+through — the comment says so outright. The only protections are a magic payload
+and a 5 s freshness window, which stop bus noise, not a tool at the wrong moment.
+
+Balancing forced in `Run` connects bleed resistors rated for transient duty while
+the pack delivers current, inside a sealed accumulator, with the thermal guard
+reading NTCs through the `COMMISSION`-flagged ADG731 path. It also ranks cells by
+I·R rather than SoC under load, so it bleeds the healthiest ones.
+
+Precedent gates exist and are one-liners: `logfs_allowed_in` and
+`Bootloader::reboot_allowed_in`, both `Start || Error`. **A current-magnitude
+condition may express the requirement better than a state list** — what makes it
+unsafe is load, not state.
+
+### SEASON-4 — Stale comments claimed LTC_2's temps might be unwired · **Closed**
+
+All 200 NTC channels are fitted, LTC_2's half included. Confirmed by the team
+that built the harness.
+
+Two source comments said otherwise — `Adg731ChannelMap` allowed that some
+channels "may be physically unconnected", and `BalanceMinValidTempCh` said "the
+LTC_2 half may not be wired at all". Both are corrected. `RequiredTempSlots`,
+which lists all 40 slots and enforces them, was the one that had it right.
+
+Recorded because of what the contradiction nearly caused, not because the
+hardware is in doubt. Reading only the source, the safe-looking conclusion was
+that `v3.0.0` might latch ERROR at boot on an unwired channel and refuse to arm —
+`ErrorLatch` being sticky, it would then boot back into Error until someone
+reached `RST_BMS`. That conclusion was wrong, and it was wrong because two
+comments described an uncertainty that no longer existed.
+
+**The residual lesson:** an open reading on slots 20..39 is a genuine fault, not
+an empty socket, and should be treated as a harness repair. `BalanceMinValidTempCh`
+is still set to 5 against a populated count of 200 — raise it once a bench sweep
+measures what the harness actually returns (`BmsState::valid_temp_channels`).
+
+### SEASON-5 — No stack or WCET budget exists · **Open**
+
+`MainTask` has a 512-word (2 KB) stack and takes a ~620 B snapshot by value
+inside its loop — roughly a third of the stack in one local, with no recorded
+high-water mark; `uxTaskGetStackHighWaterMark` is read only from the overflow
+hook, i.e. after the fact. No worst-case execution time exists for any task.
+`0x6C1` publishes live poll timings, but no measured figure is in the repo.
+
+Anyone adding work to the 10 ms loop has no headroom number to check against, and
+absence reads as "not a concern" rather than "unmeasured".
+
+### SEASON-6 — The accumulator's safety topology is unlearnable from a clone · **Open**
+
+Nothing in this repo says where `AMS_OK`, TSMS, the discharge relay and the ECU's
+series relay sit relative to each other in the shutdown loop — yet the FSM's whole
+shape depends on `AMS_OK` being upstream of TSMS, which is asserted in prose with
+no diagram and no citable source. The self-holding relay and its reset button
+(K5, `RST_BMS`) exist in team memory and a KiCad file outside this tree. There is
+no isolation, lockout or measure-dead procedure anywhere.
+
+`ONBOARDING.md` §0 warns honestly, but a warning is not a procedure, and the
+first-week checklist is entirely reading. **No item requires that anyone has been
+shown the pack or watched a precharge before touching a car.**
+
+### SEASON-7 — HIL acceptance never ran · **Open**
+
+Two acceptance items were raised and never executed: Car-mode TSMS cycle
+re-arming to R2D without a power cycle, and the current-sensor rework
+(differential pack PF7/PF8 + ACS758 DCDC on PC1). Neither has bench evidence.
+The current-sensor constants in particular are per-carrier — §1 and the
+`ams_config.hpp` block both say the zero must be re-measured on each board.
+
+Add both to the first bench session of next season.
+
+---
+
+## 12. What is not covered here
 
 Honest limits of this register:
 
