@@ -1,0 +1,113 @@
+name: HIL Test
+
+# Ask the HIL bench fleet to run a suite against this PR.
+#
+#   Comment on a PR:   /hil-test
+#                      /hil-test tests/hil/ams/test_block_a_boot.py
+#                      /hil-test --bench bench-01 tests/hil/...
+#
+# The comment must come from someone with write access. This workflow does not
+# touch hardware: it dispatches `hil-test.yml` in isc-fs/IFS_HIL, which
+# resolves the requested capabilities to a bench that can serve them and runs
+# there. Results are posted back to this PR.
+#
+# REQUIRES a repository secret `HIL`: a fine-grained PAT scoped
+# to isc-fs/IFS_HIL with `Actions: read and write`. Nothing else. Without it
+# the dispatch step fails with a clear message rather than silently doing
+# nothing.
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  dispatch:
+    if: |
+      github.event.issue.pull_request != null &&
+      startsWith(github.event.comment.body, '/hil-test')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the commenter has write access
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              username: context.payload.comment.user.login,
+            });
+            if (!['admin', 'maintain', 'write'].includes(data.permission)) {
+              core.setFailed(`@${{ github.event.comment.user.login }} lacks write access; not dispatching a hardware run.`);
+            }
+
+      - name: Resolve the PR head commit
+        id: pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
+      - name: Parse the command
+        id: cmd
+        env:
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          # /hil-test [--bench <id>] [suite ...]
+          REST="$(printf '%s' "$BODY" | head -1 | sed -E 's#^/hil-test[[:space:]]*##')"
+          BENCH=""
+          if printf '%s' "$REST" | grep -qE '(^|[[:space:]])--bench[[:space:]]'; then
+            BENCH="$(printf '%s' "$REST" | sed -E 's#.*--bench[[:space:]]+([^[:space:]]+).*#\1#')"
+            REST="$(printf '%s' "$REST" | sed -E 's#--bench[[:space:]]+[^[:space:]]+##')"
+          fi
+          SUITE="$(printf '%s' "$REST" | xargs || true)"
+          [ -n "$SUITE" ] || SUITE='tests/hil/ams/'
+          {
+            echo "bench=$BENCH"
+            echo "suite=$SUITE"
+          } >> "$GITHUB_OUTPUT"
+          echo "bench='$BENCH' suite='$SUITE'"
+
+      - name: Dispatch to the bench fleet
+        env:
+          GH_TOKEN: ${{ secrets.HIL }}
+        run: |
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::HIL is not set in this repository."
+            echo "Add a fine-grained PAT scoped to isc-fs/IFS_HIL with Actions: read and write." >&2
+            exit 1
+          fi
+          gh workflow run hil-test.yml --repo isc-fs/IFS_HIL --ref dev \
+            -f capabilities='dut-ams' \
+            -f bench='${{ steps.cmd.outputs.bench }}' \
+            -f suite='${{ steps.cmd.outputs.suite }}' \
+            -f comment_on='${{ github.event.issue.number }}' \
+            -f comment_repo='${{ github.repository }}' \
+            -f firmware_ref='${{ steps.pr.outputs.ref }}@${{ steps.pr.outputs.sha }}'
+
+      - name: Acknowledge on the PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: [
+                '🔧 Dispatched a HIL run to the bench fleet.',
+                '',
+                '| | |',
+                '|---|---|',
+                '| capabilities | `dut-ams` |',
+                '| suite | `${{ steps.cmd.outputs.suite }}` |',
+                '| firmware | `${{ steps.pr.outputs.ref }}@${{ steps.pr.outputs.sha }}` |',
+                '',
+                'The result will be posted here when the run finishes.',
+                'If no bench declares these capabilities the dispatch fails fast and says which are missing.',
+              ].join('\n'),
+            });
