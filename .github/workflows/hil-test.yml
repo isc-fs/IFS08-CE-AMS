@@ -7,12 +7,12 @@ name: HIL Test
 #                      /hil-test --bench bench-01 tests/hil/...
 #
 # The comment must come from someone with write access. This workflow does not
-# touch hardware: it dispatches `hil-test.yml` in isc-fs/IFS08_HIL, which
+# touch hardware: it dispatches `hil-test.yml` in isc-fs/IFS_HIL, which
 # resolves the requested capabilities to a bench that can serve them and runs
 # there. Results are posted back to this PR.
 #
 # REQUIRES a repository secret `HIL_DISPATCH_TOKEN`: a fine-grained PAT scoped
-# to isc-fs/IFS08_HIL with `Actions: read and write`. Nothing else. Without it
+# to isc-fs/IFS_HIL with `Actions: read and write`. Nothing else. Without it
 # the dispatch step fails with a clear message rather than silently doing
 # nothing.
 
@@ -79,10 +79,10 @@ jobs:
         run: |
           if [ -z "${GH_TOKEN:-}" ]; then
             echo "::error::HIL_DISPATCH_TOKEN is not set in this repository."
-            echo "Add a fine-grained PAT scoped to isc-fs/IFS08_HIL with Actions: read and write." >&2
+            echo "Add a fine-grained PAT scoped to isc-fs/IFS_HIL with Actions: read and write." >&2
             exit 1
           fi
-          gh workflow run hil-test.yml --repo isc-fs/IFS08_HIL --ref dev \
+          gh workflow run hil-test.yml --repo isc-fs/IFS_HIL --ref dev \
             -f capabilities='dut-ams' \
             -f bench='${{ steps.cmd.outputs.bench }}' \
             -f suite='${{ steps.cmd.outputs.suite }}' \
