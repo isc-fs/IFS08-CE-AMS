@@ -17,17 +17,32 @@ name: HIL Test
 # nothing.
 
 on:
+  # Two entry points on purpose.
+  #
+  # issue_comment (`/hil-test`) is the nicer UX but carries a hard GitHub
+  # constraint: comment-triggered workflows ALWAYS run from the default
+  # branch's copy, so this file must reach `main` before it fires at all.
+  #
+  # pull_request(labeled) has no such constraint -- a PR runs the workflow from
+  # its OWN tree -- so labelling a PR `hil-test` works the day this merges to
+  # `dev`, and even works from this very PR.
   issue_comment:
     types: [created]
+  pull_request:
+    types: [labeled]
 
 jobs:
   dispatch:
     if: |
-      github.event.issue.pull_request != null &&
-      startsWith(github.event.comment.body, '/hil-test')
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request != null &&
+       startsWith(github.event.comment.body, '/hil-test')) ||
+      (github.event_name == 'pull_request' &&
+       github.event.label.name == 'hil-test')
     runs-on: ubuntu-latest
     steps:
       - name: Check the commenter has write access
+        if: github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         with:
           script: |
@@ -45,18 +60,22 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const num = context.eventName === 'pull_request'
+              ? context.payload.pull_request.number
+              : context.issue.number;
             const pr = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number,
+              pull_number: num,
             });
+            core.setOutput('number', String(num));
             core.setOutput('sha', pr.data.head.sha);
             core.setOutput('ref', pr.data.head.ref);
 
       - name: Parse the command
         id: cmd
         env:
-          BODY: ${{ github.event.comment.body }}
+          BODY: ${{ github.event_name == 'issue_comment' && github.event.comment.body || '/hil-test' }}
         run: |
           # /hil-test [--bench <id>] [suite ...]
           REST="$(printf '%s' "$BODY" | head -1 | sed -E 's#^/hil-test[[:space:]]*##')"
@@ -86,7 +105,7 @@ jobs:
             -f capabilities='dut-ams' \
             -f bench='${{ steps.cmd.outputs.bench }}' \
             -f suite='${{ steps.cmd.outputs.suite }}' \
-            -f comment_on='${{ github.event.issue.number }}' \
+            -f comment_on='${{ steps.pr.outputs.number }}' \
             -f comment_repo='${{ github.repository }}' \
             -f firmware_ref='${{ steps.pr.outputs.ref }}@${{ steps.pr.outputs.sha }}'
 
@@ -97,7 +116,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: Number('${{ steps.pr.outputs.number }}'),
               body: [
                 '🔧 Dispatched a HIL run to the bench fleet.',
                 '',
