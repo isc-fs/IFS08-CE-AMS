@@ -11,7 +11,7 @@ name: HIL Test
 # resolves the requested capabilities to a bench that can serve them and runs
 # there. Results are posted back to this PR.
 #
-# REQUIRES a repository secret `HIL_DISPATCH_TOKEN`: a fine-grained PAT scoped
+# REQUIRES a repository secret `HIL`: a fine-grained PAT scoped
 # to isc-fs/IFS_HIL with `Actions: read and write`. Nothing else. Without it
 # the dispatch step fails with a clear message rather than silently doing
 # nothing.
@@ -75,10 +75,10 @@ jobs:
 
       - name: Dispatch to the bench fleet
         env:
-          GH_TOKEN: ${{ secrets.HIL_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.HIL }}
         run: |
           if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::error::HIL_DISPATCH_TOKEN is not set in this repository."
+            echo "::error::HIL is not set in this repository."
             echo "Add a fine-grained PAT scoped to isc-fs/IFS_HIL with Actions: read and write." >&2
             exit 1
           fi
