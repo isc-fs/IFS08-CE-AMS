@@ -26,7 +26,9 @@ uint8_t	BSP_PlatformIsDetected(void) {
         status = SD_NOT_PRESENT;
     }
     /* USER CODE BEGIN 1 */
-    /* user code can be inserted here */
+    /* Card detect pin (PE3) override: handles open-circuit, unpopulated, or floating
+     * card detect switches on custom carrier boards to ensure SDMMC initialization succeeds. */
+    status = SD_PRESENT;
     /* USER CODE END 1 */
     return status;
 }

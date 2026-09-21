@@ -507,6 +507,13 @@ inline constexpr std::uint32_t AcuTxCurrentsId       = 0x135;  // BE i16 deciamp
 inline constexpr std::uint32_t AcuTxTempMaxModuleAId = 0x136;  // BE i16 degC x3 (modules 0..2)
 inline constexpr std::uint32_t AcuTxTempMaxModuleBId = 0x137;  // BE i16 degC x3 (mod 3, 4, dcdc-stub)
 
+// Multiplexed Full Pack Telemetry & Diagnostics (FDCAN1)
+inline constexpr std::uint32_t AmsDiagStatusId    = 0x4A3;  // Active fault latch registers (100 ms)
+inline constexpr std::uint32_t AmsDiagCellVMuxId  = 0x4B0;  // 95-cell voltage matrix (5 mod x 7 chunks)
+inline constexpr std::uint32_t AmsDiagCellTMuxId  = 0x4B1;  // 190-NTC thermal matrix (5 mod x 7 chunks)
+inline constexpr std::uint32_t DiagTelemCadenceMs = 150;    // 100..200 ms cycle
+inline constexpr std::uint32_t DiagTelemPaceMs    = 2;      // 1..2 ms inter-frame pacing
+
 // Reserved for future use -- not transmitted. Pack current is published on
 // 0x135 (signed deciamps + DCDC in the same frame).
 inline constexpr std::uint32_t AcuTxCurrentWarnId       = 0x500;

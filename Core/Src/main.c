@@ -32,6 +32,7 @@
 #include "app/current_task.h"
 #include "app/safety_task.h"
 #include "app/sd_logger_task.h"
+#include "app/diag_telemetry_task.h"
 #include "app/watchdog.h"
 /* USER CODE END Includes */
 
@@ -278,7 +279,7 @@ int main(void)
   SdLoggerTaskHandle = osThreadNew(StartSdLoggerTask, NULL, &SdLoggerTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
-  /* add threads, ... */
+  DiagTelemetryTask_Init();
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */

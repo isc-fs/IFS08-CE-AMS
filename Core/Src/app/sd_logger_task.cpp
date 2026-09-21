@@ -109,8 +109,13 @@ volatile std::uint32_t g_log_files   = 0;   // files sealed
 volatile std::uint8_t  g_log_state   = 0;   // 0=boot 1=no_card 2=logging 3=io_error
 
 // ---- consumer-side file state ----
-FATFS         g_fs;
-FIL           g_fil;
+// #408: FatFs structures, file handles, and transfer buffers placed strictly in
+// AXI SRAM (RAM_D1, 0x24000000) with 32-byte alignment so SDMMC1 IDMA can access
+// internal sector buffers (win/buf) without DTCM bus faults, and Cortex-M7
+// D-Cache operations align strictly to 32-byte cache lines.
+alignas(32) __attribute__((section(".sd_dma"))) static FATFS g_fs;
+alignas(32) __attribute__((section(".sd_dma"))) static FIL   g_fil;
+alignas(32) __attribute__((section(".sd_dma"))) static FIL   g_fil_aux;
 bool          g_mounted    = false;
 bool          g_file_open  = false;
 std::uint32_t g_file_idx   = 0;
@@ -123,7 +128,7 @@ std::uint32_t g_file_open_ms = 0;   // tick at which the active file was opened
 // Rows in the ACTIVE file. Gates time-based rotation so a stalled producer
 // cannot litter the card with header-only files.
 std::uint32_t g_rows_this_file = 0;
-char          g_rowbuf[ams::log_csv::MaxRowBytes];
+alignas(32) __attribute__((section(".sd_dma"))) static char g_rowbuf[ams::log_csv::MaxRowBytes];
 char          g_name[16];
 
 // Mirror the AMS.ioc SDMMC1 config onto hsd1. The boot-path MX_SDMMC1_SD_Init()
@@ -148,20 +153,19 @@ void configure_hsd1() noexcept {
 // drains). Costs one full read of the file: seconds on 4 MiB, which is exactly
 // why the sidecar exists.
 bool compute_file_crc(const char* path, std::uint32_t& crc_out) noexcept {
-    FIL f;
-    if (f_open(&f, path, FA_READ) != FR_OK) return false;
+    if (f_open(&g_fil_aux, path, FA_READ) != FR_OK) return false;
 
     std::uint32_t running = ams::crc::Crc32Init;
     for (;;) {
         UINT br = 0;
-        if (f_read(&f, g_rowbuf, sizeof g_rowbuf, &br) != FR_OK) {
-            (void)f_close(&f);
+        if (f_read(&g_fil_aux, g_rowbuf, sizeof g_rowbuf, &br) != FR_OK) {
+            (void)f_close(&g_fil_aux);
             return false;
         }
         if (br == 0) break;
         running = ams::crc::update(running, g_rowbuf, br);
     }
-    (void)f_close(&f);
+    (void)f_close(&g_fil_aux);
     crc_out = ams::crc::finalize(running);
     return true;
 }
@@ -176,16 +180,15 @@ bool compute_file_crc(const char* path, std::uint32_t& crc_out) noexcept {
 void write_crc_sidecar(std::uint32_t idx, std::uint32_t crc) noexcept {
     char  path[16];
     char  text[16];
-    FIL   f;
     std::snprintf(path, sizeof path, ams::config::LogCrcNameFmt,
                   static_cast<unsigned long>(idx));
     const int tn = std::snprintf(text, sizeof text, "%08lX\n",
                                  static_cast<unsigned long>(crc));
     if (tn <= 0) return;
-    if (f_open(&f, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return;
+    if (f_open(&g_fil_aux, path, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return;
     UINT bw = 0;
-    (void)f_write(&f, text, static_cast<UINT>(tn), &bw);
-    (void)f_close(&f);
+    (void)f_write(&g_fil_aux, text, static_cast<UINT>(tn), &bw);
+    (void)f_close(&g_fil_aux);
 }
 
 // Seal an orphaned LOGnnnn.TMP left behind by a previous run.
@@ -426,11 +429,10 @@ private:
         char text[16] = {};
         std::snprintf(path, sizeof path, ams::config::LogCrcNameFmt,
                       static_cast<unsigned long>(index));
-        FIL f;
-        if (f_open(&f, path, FA_READ) != FR_OK) return false;
+        if (f_open(&g_fil_aux, path, FA_READ) != FR_OK) return false;
         UINT br = 0;
-        const FRESULT fr = f_read(&f, text, sizeof text - 1, &br);
-        (void)f_close(&f);
+        const FRESULT fr = f_read(&g_fil_aux, text, sizeof text - 1, &br);
+        (void)f_close(&g_fil_aux);
         if (fr != FR_OK || br < 8u) return false;
 
         std::uint32_t v = 0;
@@ -464,7 +466,7 @@ private:
 
 using LogfsSrv = ams::logfs::Server<FatFsLogBackend>;
 
-FatFsLogBackend                 g_logfs_be;
+alignas(32) __attribute__((section(".sd_dma"))) static FatFsLogBackend g_logfs_be;
 LogfsSrv                        g_logfs_srv(g_logfs_be);
 ams::diag::Session              g_diag_session;
 ams::diag::Dispatcher<LogfsSrv> g_diag_disp(g_diag_session, g_logfs_srv);
