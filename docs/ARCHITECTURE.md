@@ -298,7 +298,12 @@ Three details that are easy to miss and are load-bearing:
 
 The SD log push is a bounded ~630 B struct copy into a wait-free ring at
 4 Hz. It never blocks and never faults — a full ring (card stalled, log
-being pulled) simply drops the record.
+being pulled) simply drops the record. No record is pushed until every BMS
+module has reported once (`first_full_poll_done`, gated by
+`log_csv::sample_due`): before that the cells still hold the 3700 mV boot
+seed, and a row would log a 351.5 V pack that was never measured. The price
+is that a boot whose chain never completes a full poll leaves a header-only
+file on the card; the fault itself is still latched and sent on CAN.
 
 ### BmsPollTask body
 
