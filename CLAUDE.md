@@ -31,7 +31,7 @@ cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-
 
 `ctest` reports `1/1 Test ... Passed` — that is the single Unity *runner*, not
 the case count. Run `./build-tests/ams_unit_tests` directly for the real
-total: it ends `476 Tests 0 Failures 0 Ignored`.
+total: it ends `492 Tests 0 Failures 0 Ignored`.
 
 ```bash
 # Cross-compile the firmware.

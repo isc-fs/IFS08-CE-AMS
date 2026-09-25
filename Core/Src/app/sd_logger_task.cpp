@@ -5,13 +5,19 @@
 // Consumer loop (LogDrainPeriodMs cadence):
 //   1. ensure mounted   -- non-fatal f_mount; no card -> retry next tick
 //   2. ensure file open -- LOGnnnn.TMP + CSV header
-//   3. drain the ring   -- format each LogRecord -> f_write; rotate on
-//                          LogFileMaxBytes OR LogFileMaxMs, sealing.TMP -> .CSV
-//   4. periodic f_sync  -- bound power-cut loss
+//   3. drain the rings  -- LogRecords -> LOGnnnn.TMP, ImuSamples -> IMUnnnn.TMP
+//                          (opened on the first IMU sample, so a board with no
+//                          IMU writes no IMU files)
+//   4. rotate the PAIR  -- on LogFileMaxBytes OR LogFileMaxMs of either file,
+//                          sealing both .TMP -> .CSV and moving to the next index
+//   5. periodic f_sync  -- bound power-cut loss
+//
+// LOGnnnn and IMUnnnn always share an index and a time window: they are opened
+// against the same index and sealed together (log_names.hpp).
 //
 // Any I/O error (card pulled mid-write, etc.) tears down to the unmounted
 // state and re-mounts on the next tick. Nothing here can block or fault the
-// safety loop -- the only coupling is the wait-free ring the producer fills.
+// safety loop -- the only coupling is the wait-free rings the producers fill.
 
 #include "app/sd_logger_task.h"
 
@@ -19,6 +25,8 @@
 #include "crc32.hpp"
 #include "diag_dispatch.hpp"
 #include "diag_proto.hpp"
+#include "imu_record.hpp"
+#include "log_names.hpp"
 #include "log_record.hpp"
 #include "log_rotation.hpp"
 #include "log_ring.hpp"
@@ -126,6 +134,20 @@ std::uint32_t g_rows_this_file = 0;
 char          g_rowbuf[ams::log_csv::MaxRowBytes];
 char          g_name[16];
 
+// ---- IMU ring + the IMUnnnn file paired with the active LOG file ----
+ams::SpscRing<ams::ImuSample, ams::config::ImuRingCapacity> g_imu_ring;
+volatile std::uint32_t g_imu_rows    = 0;
+volatile std::uint32_t g_imu_dropped = 0;
+FIL           g_imu_fil;
+bool          g_imu_open           = false;
+std::uint32_t g_imu_bytes          = 0;
+std::uint32_t g_imu_crc            = ams::crc::Crc32Init;
+std::uint32_t g_imu_rows_this_file = 0;
+char          g_imu_rowbuf[ams::imu_csv::MaxRowBytes];
+
+using ams::log_names::Kind;
+using ams::log_names::Stage;
+
 // Mirror the AMS.ioc SDMMC1 config onto hsd1. The boot-path MX_SDMMC1_SD_Init()
 // is intentionally NOT auto-called (CubeMX Advanced Settings) so an absent
 // card can't brick the node; we set the handle here and let f_mount run
@@ -173,12 +195,11 @@ bool compute_file_crc(const char* path, std::uint32_t& crc_out) noexcept {
 // Best-effort: if this fails the CRC opcode falls back to reading the file,
 // so a missing sidecar costs time, not correctness. Files written before this
 // existed simply have no sidecar and take the slow path.
-void write_crc_sidecar(std::uint32_t idx, std::uint32_t crc) noexcept {
+void write_crc_sidecar(Kind kind, std::uint32_t idx, std::uint32_t crc) noexcept {
     char  path[16];
     char  text[16];
     FIL   f;
-    std::snprintf(path, sizeof path, ams::config::LogCrcNameFmt,
-                  static_cast<unsigned long>(idx));
+    if (!ams::log_names::format(path, sizeof path, kind, Stage::Crc, idx)) return;
     const int tn = std::snprintf(text, sizeof text, "%08lX\n",
                                  static_cast<unsigned long>(crc));
     if (tn <= 0) return;
@@ -199,13 +220,13 @@ void write_crc_sidecar(std::uint32_t idx, std::uint32_t crc) noexcept {
 // the index scan below must consider.TMP as well: it previously looked only
 // at.CSV, so the next boot picked the same index and reopened the orphan with
 // FA_CREATE_ALWAYS -- truncating the whole previous run.
-bool seal_orphan(std::uint32_t idx) noexcept {
+bool seal_orphan_file(Kind kind, std::uint32_t idx) noexcept {
     char active[16];
     char sealed[16];
-    std::snprintf(active, sizeof active, ams::config::LogActiveNameFmt,
-                  static_cast<unsigned long>(idx));
-    std::snprintf(sealed, sizeof sealed, ams::config::LogSealedNameFmt,
-                  static_cast<unsigned long>(idx));
+    if (!ams::log_names::format(active, sizeof active, kind, Stage::Active, idx) ||
+        !ams::log_names::format(sealed, sizeof sealed, kind, Stage::Sealed, idx)) {
+        return false;
+    }
     if (f_rename(active, sealed) != FR_OK) return false;
 
     // The running CRC died with the power that ended that run, so it has to be
@@ -214,8 +235,18 @@ bool seal_orphan(std::uint32_t idx) noexcept {
     // otherwise re-stream the same 4 MiB on every host request. Best-effort: a
     // missing sidecar costs the host time, never correctness.
     std::uint32_t crc = 0;
-    if (compute_file_crc(sealed, crc)) write_crc_sidecar(idx, crc);
+    if (compute_file_crc(sealed, crc)) write_crc_sidecar(kind, idx, crc);
+    return true;
+}
 
+// Seal both halves of an orphaned pair. IMU first, LOG last, matching
+// seal_file(): the LOG .TMP is what marks the index as orphaned, so if power
+// dies between the two renames the next mount still finds it and finishes the
+// job. The IMU half may not exist (no IMU fitted, or no sample arrived before
+// power was lost); that is not a failure.
+bool seal_orphan(std::uint32_t idx) noexcept {
+    (void)seal_orphan_file(Kind::Imu, idx);
+    if (!seal_orphan_file(Kind::Log, idx)) return false;
     ++g_log_files;
     return true;
 }
@@ -229,10 +260,10 @@ std::uint32_t next_free_index() noexcept {
     return ams::log_rotation::next_index(
         [](std::uint32_t i, bool sealed) noexcept {
             FILINFO fno;
-            std::snprintf(g_name, sizeof g_name,
-                          sealed ? ams::config::LogSealedNameFmt
-                                 : ams::config::LogActiveNameFmt,
-                          static_cast<unsigned long>(i));
+            if (!ams::log_names::format(g_name, sizeof g_name, Kind::Log,
+                                        sealed ? Stage::Sealed : Stage::Active, i)) {
+                return false;
+            }
             return f_stat(g_name, &fno) == FR_OK;
         },
         [](std::uint32_t i) noexcept { return seal_orphan(i); });
@@ -245,8 +276,10 @@ std::uint32_t next_free_index() noexcept {
 // lands ahead of the loop's `now`, and `now - g_file_open_ms` then underflows
 // and seals the file on its first rows every iteration.
 bool open_new_file(std::uint32_t now) noexcept {
-    std::snprintf(g_name, sizeof g_name, ams::config::LogActiveNameFmt,
-                  static_cast<unsigned long>(g_file_idx));
+    if (!ams::log_names::format(g_name, sizeof g_name, Kind::Log, Stage::Active,
+                                g_file_idx)) {
+        return false;
+    }
     if (f_open(&g_fil, g_name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
     const std::size_t hn = ams::log_csv::build_header(g_rowbuf, sizeof g_rowbuf);
     UINT bw = 0;
@@ -262,20 +295,56 @@ bool open_new_file(std::uint32_t now) noexcept {
     return true;
 }
 
+// Open IMUnnnn.TMP against the ACTIVE LOG file's index and write its header.
+// Called on the first IMU sample of a file window, never on its own, so the
+// pair always shares an index. Its window starts at g_file_open_ms like the
+// LOG file's; rotation ages both from that one timestamp.
+bool open_imu_file() noexcept {
+    if (!g_file_open) return false;
+    char name[16];
+    if (!ams::log_names::format(name, sizeof name, Kind::Imu, Stage::Active,
+                                g_file_idx)) {
+        return false;
+    }
+    if (f_open(&g_imu_fil, name, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) return false;
+    const std::size_t hn = sizeof ams::imu_csv::Header - 1u;
+    UINT bw = 0;
+    if (f_write(&g_imu_fil, ams::imu_csv::Header, hn, &bw) != FR_OK || bw != hn) {
+        f_close(&g_imu_fil);
+        return false;
+    }
+    g_imu_bytes          = static_cast<std::uint32_t>(hn);
+    g_imu_crc            = ams::crc::update(ams::crc::Crc32Init, ams::imu_csv::Header, hn);
+    g_imu_rows_this_file = 0;
+    g_imu_open           = true;
+    return true;
+}
 
-// Close LOGnnnn.TMP and rename to LOGnnnn.CSV so the LOGFS extractor only ever
-// sees finished (sealed) files. Advance to the next index.
-void seal_file() noexcept {
-    f_close(&g_fil);
+// Close one .TMP, rename it to .CSV and write its sidecar. The sidecar comes
+// AFTER the rename, so a .CRC only ever exists next to a sealed .CSV -- never
+// next to a .TMP that is still growing.
+void seal_one(FIL& fil, Kind kind, std::uint32_t idx, std::uint32_t running_crc) noexcept {
+    f_close(&fil);
+    char active[16];
     char sealed[16];
-    std::snprintf(g_name,  sizeof g_name,  ams::config::LogActiveNameFmt,
-                  static_cast<unsigned long>(g_file_idx));
-    std::snprintf(sealed,  sizeof sealed,  ams::config::LogSealedNameFmt,
-                  static_cast<unsigned long>(g_file_idx));
-    (void)f_rename(g_name, sealed);
-    // Sidecar AFTER the rename, so a.CRC only ever exists next to a sealed
-    //.CSV -- never next to a .TMP that is still growing.
-    write_crc_sidecar(g_file_idx, ams::crc::finalize(g_file_crc));
+    if (!ams::log_names::format(active, sizeof active, kind, Stage::Active, idx) ||
+        !ams::log_names::format(sealed, sizeof sealed, kind, Stage::Sealed, idx)) {
+        return;
+    }
+    (void)f_rename(active, sealed);
+    write_crc_sidecar(kind, idx, ams::crc::finalize(running_crc));
+}
+
+// Seal the active PAIR so the LOGFS extractor only ever sees finished files,
+// then advance to the next index. IMU first, LOG last: the LOG .TMP is the
+// orphan marker next_free_index() looks for, so it must be the last to go.
+void seal_file() noexcept {
+    if (g_imu_open) {
+        seal_one(g_imu_fil, Kind::Imu, g_file_idx, g_imu_crc);
+        g_imu_open = false;
+        g_imu_crc  = ams::crc::Crc32Init;
+    }
+    seal_one(g_fil, Kind::Log, g_file_idx, g_file_crc);
     g_file_open = false;
     g_file_crc  = ams::crc::Crc32Init;
     ++g_file_idx;
@@ -285,11 +354,13 @@ void seal_file() noexcept {
 // Drop to the unmounted state on an I/O error / card pull so the next tick
 // re-mounts cleanly. Best-effort; ignores secondary errors.
 void teardown(std::uint8_t new_state) noexcept {
+    if (g_imu_open)  { (void)f_close(&g_imu_fil); g_imu_open = false; }
     if (g_file_open) { (void)f_close(&g_fil); g_file_open = false; }
     if (g_mounted)   { (void)f_mount(nullptr, SDPath, 0); g_mounted = false; }
-    // The abandoned file stays a.TMP and never gets a sidecar, so the partial
-    // CRC must not carry into the next file.
+    // The abandoned files stay .TMP and never get sidecars, so the partial
+    // CRCs must not carry into the next pair.
     g_file_crc  = ams::crc::Crc32Init;
+    g_imu_crc   = ams::crc::Crc32Init;
     g_log_state = new_state;
 }
 
@@ -297,9 +368,10 @@ void teardown(std::uint8_t new_state) noexcept {
 // LOGFS backend -- the FatFs half of ams::logfs::Server.
 //
 // Every method here runs on THIS thread; see logfs_server.hpp for why the
-// server is not given its own task. Only sealed LOGnnnn.CSV files are visible:
-// the active.TMP is still growing (its length would be a lie by the time the
-// host finished reading it) and.CRC sidecars are an implementation detail.
+// server is not given its own task. Only sealed LOGnnnn.CSV and IMUnnnn.CSV
+// files are visible (IMU at index 0x8000|nnnn, see log_names.hpp): an active
+// .TMP is still growing (its length would be a lie by the time the host
+// finished reading it) and .CRC sidecars are an implementation detail.
 // ---------------------------------------------------------------------------
 class FatFsLogBackend {
 public:
@@ -325,7 +397,7 @@ public:
             }
             if ((fno.fattrib & AM_DIR) != 0) continue;
             std::uint16_t idx = 0;
-            if (!parse_sealed_name(fno.fname, idx)) continue;   // .TMP/.CRC/other
+            if (!ams::log_names::parse_sealed(fno.fname, idx)) continue;   // .TMP/.CRC/other
             if (skip_ > 0) { --skip_; continue; }
 
             out.index = idx;
@@ -345,10 +417,11 @@ public:
     // sidecar-less file asks for it explicitly with LOGFS_CRC.
     //
     // The sidecar is read BEFORE rd_ is opened, deliberately. _FS_LOCK counts
-    // files AND directories and SdLoggerTask permanently holds one slot with
-    // the active.TMP, so reading it afterwards would need a third slot -- the
-    // exact FR_TOO_MANY_OPEN_FILES that made the CRC opcode fall back to
-    // streaming every time.
+    // files AND directories, and SdLoggerTask permanently holds up to two
+    // slots with the active LOG and IMU .TMPs. Opening the sidecar afterwards
+    // would stack a third and fourth slot (rd_ + sidecar, plus the directory
+    // if a LIST is still open) -- the FR_TOO_MANY_OPEN_FILES that once made
+    // the CRC opcode fall back to streaming every time.
     bool open(std::uint16_t index, std::uint32_t& size_out,
               std::uint32_t& crc_out) noexcept {
         close_file();
@@ -356,8 +429,7 @@ public:
         if (!read_sidecar(index, crc_out)) crc_out = 0;
 
         char path[16];
-        std::snprintf(path, sizeof path, ams::config::LogSealedNameFmt,
-                      static_cast<unsigned long>(index));
+        if (!sealed_path(index, path, sizeof path)) return false;
         if (f_open(&rd_, path, FA_READ) != FR_OK) return false;
         rd_open_    = true;
         open_crc_   = crc_out;
@@ -385,47 +457,46 @@ public:
         // sidecar write failed. Stream it. Seconds on a 4 MiB file, which is
         // the whole reason seal writes a sidecar in the first place.
         char path[16];
-        std::snprintf(path, sizeof path, ams::config::LogSealedNameFmt,
-                      static_cast<unsigned long>(index));
+        if (!sealed_path(index, path, sizeof path)) return false;
         return compute_file_crc(path, crc_out);
     }
 
     void close(std::uint16_t) noexcept { close_file(); }
 
-    // Seal the ACTIVE log so the run that just happened becomes
-    // listable without waiting for rotation. Safe to call seal_file() directly:
-    // the LOGFS server is serviced ON this thread, between drains, so nothing
-    // else is touching g_fil.
+    // Seal the ACTIVE pair so the run that just happened becomes listable
+    // without waiting for rotation. Safe to call seal_file() directly: the
+    // LOGFS server is serviced ON this thread, between drains, so nothing else
+    // is touching the open files.
     //
-    // Refused when the file has no rows yet -- sealing a header-only file would
-    // hand the operator an empty log and burn an index.
+    // Refused when neither file has rows yet -- sealing header-only files would
+    // hand the operator an empty log and burn an index. Reports the LOG file's
+    // index; the IMU half, if any, is at the same index with bit 15 set.
     bool finalize(std::uint16_t& sealed_index_out) noexcept {
-        if (!g_mounted || !g_file_open || g_rows_this_file == 0) return false;
-        sealed_index_out = static_cast<std::uint16_t>(g_file_idx);
-        seal_file();   // f_close -> rename .TMP->.CSV -> CRC sidecar -> ++idx
+        if (!g_mounted || !g_file_open) return false;
+        const bool imu_rows = g_imu_open && g_imu_rows_this_file > 0;
+        if (g_rows_this_file == 0 && !imu_rows) return false;
+        sealed_index_out = ams::log_names::logfs_index(Kind::Log, g_file_idx);
+        seal_file();   // both halves: f_close -> rename .TMP->.CSV -> sidecar -> ++idx
         return true;
     }
 
 private:
-    // "LOGnnnn.CSV" -> nnnn. Rejects.TMP (still growing) and .CRC (sidecar).
-    static bool parse_sealed_name(const char* n, std::uint16_t& idx) noexcept {
-        if (std::strlen(n) != 11u) return false;
-        if (std::strncmp(n, "LOG", 3) != 0) return false;
-        if (std::strcmp(n + 7, ".CSV") != 0) return false;
-        std::uint32_t v = 0;
-        for (int i = 3; i < 7; ++i) {
-            if (n[i] < '0' || n[i] > '9') return false;
-            v = v * 10u + static_cast<std::uint32_t>(n[i] - '0');
-        }
-        idx = static_cast<std::uint16_t>(v);
-        return true;
+    static bool sealed_path(std::uint16_t logfs_idx, char* out, std::size_t cap) noexcept {
+        Kind kind;
+        std::uint32_t idx = 0;
+        return ams::log_names::from_logfs_index(logfs_idx, kind, idx) &&
+               ams::log_names::format(out, cap, kind, Stage::Sealed, idx);
     }
 
-    bool read_sidecar(std::uint16_t index, std::uint32_t& crc_out) noexcept {
+    bool read_sidecar(std::uint16_t logfs_idx, std::uint32_t& crc_out) noexcept {
         char path[16];
         char text[16] = {};
-        std::snprintf(path, sizeof path, ams::config::LogCrcNameFmt,
-                      static_cast<unsigned long>(index));
+        Kind kind;
+        std::uint32_t idx = 0;
+        if (!ams::log_names::from_logfs_index(logfs_idx, kind, idx) ||
+            !ams::log_names::format(path, sizeof path, kind, Stage::Crc, idx)) {
+            return false;
+        }
         FIL f;
         if (f_open(&f, path, FA_READ) != FR_OK) return false;
         UINT br = 0;
@@ -536,8 +607,14 @@ bool sd_log_push(const LogRecord& rec) noexcept {
     return true;
 }
 
+bool sd_imu_push(const ImuSample& s) noexcept {
+    if (!g_imu_ring.push(s)) { ++g_imu_dropped; return false; }
+    return true;
+}
+
 SdLogStats sd_log_stats() noexcept {
-    return SdLogStats{ g_log_rows, g_log_dropped, g_log_files, g_log_state };
+    return SdLogStats{ g_log_rows, g_log_dropped, g_log_files,
+                       g_imu_rows, g_imu_dropped, g_log_state };
 }
 
 }  // namespace ams
@@ -589,8 +666,10 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
                 g_log_state = 2;
             } else {
                 g_log_state = 1;   // no card / not ready -> retry next tick
-                ams::LogRecord scratch;        // keep the ring from wedging
+                ams::LogRecord scratch;        // keep the rings from wedging
                 while (g_ring.pop(scratch)) { /* discard while cardless */ }
+                ams::ImuSample imu_scratch;
+                while (g_imu_ring.pop(imu_scratch)) { /* discard while cardless */ }
                 continue;
             }
         }
@@ -618,21 +697,58 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
             }
         }
 
+        // (3a) Drain the IMU ring -> IMUnnnn rows. Only while a LOG file is
+        // open: the IMU file must share its index, so after a rotation the IMU
+        // samples wait in the ring (2.5 s deep) until the next pair opens on
+        // the following tick.
+        if (g_mounted && g_file_open) {
+            ams::ImuSample s;
+            while (g_imu_ring.pop(s)) {
+                if (!g_imu_open && !open_imu_file()) { teardown(3); break; }
+                const std::size_t n =
+                    ams::imu_csv::format_row(s, g_imu_rowbuf, sizeof g_imu_rowbuf);
+                if (n == 0) continue;
+                UINT bw = 0;
+                if (f_write(&g_imu_fil, g_imu_rowbuf, n, &bw) != FR_OK || bw != n) {
+                    teardown(3);
+                    break;
+                }
+                g_imu_bytes += static_cast<std::uint32_t>(n);
+                g_imu_crc    = ams::crc::update(g_imu_crc, g_imu_rowbuf, n);
+                ++g_imu_rows_this_file;
+                ++g_imu_rows;
+                if (g_imu_bytes >= ams::config::LogFileMaxBytes) {
+                    seal_file();               // rotate the pair
+                    break;
+                }
+            }
+        }
+
         // (3b) Time-based rotation. Without this a file is only sealed on the
         // size cap (~13 min of rows), so an ordinary bench session ends leaving
         // a.TMP that no tool treats as a finished log. Checked outside the
         // drain loop so it still fires during a lull in the ring.
-        if (g_file_open &&
-            ams::log_rotation::should_rotate(
-                g_file_bytes, g_rows_this_file,
-                ams::log_rotation::file_age_ms(now, g_file_open_ms))) {
-            seal_file();                       // next file opens next tick
+        //
+        // Either half can trigger it, and it always seals both. With no BMS
+        // the LOG file gets no rows (log_csv::sample_due), so the IMU rows are
+        // what rotate the pair, and each window leaves a header-only LOG file
+        // beside its IMU file. That keeps the one-index-one-window pairing.
+        if (g_file_open) {
+            const std::uint32_t age = ams::log_rotation::file_age_ms(now, g_file_open_ms);
+            if (ams::log_rotation::should_rotate(g_file_bytes, g_rows_this_file, age) ||
+                (g_imu_open &&
+                 ams::log_rotation::should_rotate(g_imu_bytes, g_imu_rows_this_file, age))) {
+                seal_file();                   // next pair opens next tick
+            }
         }
 
         // (4) Periodic flush -- bounds data lost on a power-cut to one window.
         if (g_file_open && (now - last_sync) >= ams::config::LogSyncPeriodMs) {
             last_sync = now;
-            if (f_sync(&g_fil) != FR_OK) teardown(3);
+            if (f_sync(&g_fil) != FR_OK ||
+                (g_imu_open && f_sync(&g_imu_fil) != FR_OK)) {
+                teardown(3);
+            }
         }
     }
 }

@@ -313,6 +313,55 @@ inline constexpr char          LogSealedNameFmt[] = "LOG%04lu.CSV";
 inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 
 // ---------------------------------------------------------------------------
+// IMU logging (BMI088 on the MLC, I2C2 PF0/PF1). TELEMETRY ONLY: no predicate,
+// FSM input or relay decision reads it, and a missing or failing IMU never
+// raises a fault -- it only stops producing rows. The MLC in the AMS sits
+// closest to the car's CoG, which is the reason to log it here at all.
+//
+// ImuTask samples at ImuSamplePeriodMs and pushes into its own ring; the
+// SdLoggerTask drains it into IMUnnnn.CSV, opened, rotated and sealed together
+// with LOGnnnn.CSV so the two files of one index always cover the same window.
+//
+// Bus speed is 100 kHz (Standard mode), set in AMS.ioc, and must stay there:
+// the MLC has NO external pull-ups on I2C2, only the MCU's internal 30-50 kohm
+// ones (PF0/PF1 GPIO_PULLUP). With ~15-20 pF on the bus the rise time is
+// 0.85*R*C ~= 0.4-0.85 us: inside Standard mode's 1 us limit, outside Fast
+// mode's 0.3 us. The uDV drives the same sensor the same way.
+//
+// Rate budget at 100 Hz: two 6-byte DMA reads per sample is ~1.7 ms of bus
+// time out of each 10 ms (the bus carries only the IMU); CPU is the ISR tail
+// plus one task wake, well under 1 %; ~53 B/row CSV (g and rad/s to 4
+// decimals) = ~5.3 KB/s on the card, next to ~5.3 KB/s for the LOG rows.
+// ---------------------------------------------------------------------------
+
+// 100 Hz. The sensor free-runs at 400 Hz behind a ~40 Hz low-pass (see
+// bmi088:: in imu_record.hpp), so every read returns a fresh, already
+// band-limited sample and reading slower than the sensor never aliases.
+// Chassis motion lives below ~20 Hz.
+inline constexpr std::uint32_t ImuSamplePeriodMs = 10;
+
+// 7-bit I2C addresses. SDO1 (accel) and SDO2 (gyro) are tied to GND on the
+// MLC (MAIN_LITE IC1), which selects the low address of each pair.
+inline constexpr std::uint8_t  ImuAccAddr7b = 0x18;
+inline constexpr std::uint8_t  ImuGyrAddr7b = 0x68;
+
+// One 6-byte register read is ~0.85 ms on the wire at 100 kHz (9 bytes of
+// 9 bits plus start/stop); anything past this is a hung bus.
+inline constexpr std::uint32_t ImuXferTimeoutMs = 5;
+// After a failed init or a failed read, wait this long before re-initialising.
+// A dead IMU therefore costs one short I2C attempt per second, nothing more.
+inline constexpr std::uint32_t ImuRetryPeriodMs = 1000;
+
+// Ring between ImuTask and SdLoggerTask. 16-byte samples; 256 = 2.56 s at
+// 100 Hz, which rides out a rotation (two seals, two sidecars, two opens --
+// hundreds of ms of SD latency) without dropping. MUST be a power of two.
+inline constexpr std::uint32_t ImuRingCapacity = 256;
+
+inline constexpr char          ImuActiveNameFmt[] = "IMU%04lu.TMP";
+inline constexpr char          ImuSealedNameFmt[] = "IMU%04lu.CSV";
+inline constexpr char          ImuCrcNameFmt[]    = "IMU%04lu.CRC";
+
+// ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
 // the encode/decode helpers in can_frame.hpp.
 // ---------------------------------------------------------------------------

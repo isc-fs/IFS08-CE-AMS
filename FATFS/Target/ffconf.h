@@ -228,17 +228,15 @@
 /  _NORTC_MDAY and _NORTC_YEAR have no effect.
 /  These options have no effect at read-only configuration (_FS_READONLY = 1). */
 
-#define _FS_LOCK    4     /* 0:Disable or >=1:Enable */
-/* RAISED 2 -> 4 for LOGFS (#406/#452). This counts open FILES **and
-/  SUB-DIRECTORIES**, and SdLoggerTask permanently holds one slot with the
-/  active LOGnnnn.TMP. At 2, the LOGFS server exhausted the table constantly:
-/    - g_fil + rd_ + read_sidecar()'s f_open  -> FR_TOO_MANY_OPEN_FILES, so the
-/      CRC opcode silently fell back to streaming 4 MiB on the logger thread,
-/      blowing both the host timeout and BL_ISOTP_TIMEOUT_MS;
-/    - g_fil + rd_ + f_opendir()              -> LIST while a file is open
-/      failed the same way.
-/  4 leaves headroom for logger + one open log + a directory scan + one spare.
-/  Costs one FILESEM entry each (a few bytes of .bss). */
+#define _FS_LOCK    6     /* 0:Disable or >=1:Enable */
+/* Also set in AMS.ioc (FATFS._FS_LOCK), so a CubeMX regen keeps it.
+/  This counts open FILES **and SUB-DIRECTORIES**. SdLoggerTask permanently
+/  holds up to two slots (the active LOGnnnn.TMP and IMUnnnn.TMP), and a LOGFS
+/  pull stacks on top of them: the read handle, the .CRC sidecar it reads first,
+/  and a directory if a LIST is still open -- five at worst. Running out makes
+/  f_open fail with FR_TOO_MANY_OPEN_FILES, which turns the CRC opcode into a
+/  multi-second stream of the whole file on the logger thread. 6 covers the
+/  worst case with one spare. Costs one FILESEM entry each (a few bytes). */
 /* The option _FS_LOCK switches file lock function to control duplicated file open
 /  and illegal operation to open objects. This option must be 0 when _FS_READONLY
 /  is 1.
