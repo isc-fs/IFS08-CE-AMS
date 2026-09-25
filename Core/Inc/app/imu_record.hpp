@@ -41,18 +41,15 @@ inline constexpr std::uint8_t AccConfReg     = 0x40;
 inline constexpr std::uint8_t AccRangeReg    = 0x41;
 inline constexpr std::uint8_t AccPwrConfReg  = 0x7C;
 inline constexpr std::uint8_t AccPwrCtrlReg  = 0x7D;
-inline constexpr std::uint8_t AccSoftResetReg = 0x7E;
 
 inline constexpr std::uint8_t GyrChipIdReg   = 0x00;
 inline constexpr std::uint8_t GyrDataReg     = 0x02;  // X_LSB .. Z_MSB, 6 bytes
 inline constexpr std::uint8_t GyrRangeReg    = 0x0F;
 inline constexpr std::uint8_t GyrBandwidthReg = 0x10;
 inline constexpr std::uint8_t GyrLpm1Reg     = 0x11;
-inline constexpr std::uint8_t GyrSoftResetReg = 0x14;
 
 inline constexpr std::uint8_t AccChipId      = 0x1E;
 inline constexpr std::uint8_t GyrChipId      = 0x0F;
-inline constexpr std::uint8_t SoftResetCmd   = 0xB6;
 
 // Configuration written at init.
 //
@@ -74,8 +71,6 @@ inline constexpr std::uint8_t GyrLpm1Normal  = 0x00;
 inline constexpr std::uint8_t GyrBandwidthReadMask = 0x7F;
 
 // Settling times from the datasheet's start-up sequence, rounded up.
-inline constexpr std::uint32_t AccSoftResetMs = 2;    // spec 1 ms
-inline constexpr std::uint32_t GyrSoftResetMs = 30;   // spec 30 ms
 inline constexpr std::uint32_t AccPwrConfMs   = 5;    // spec 450 us
 inline constexpr std::uint32_t AccPwrOnMs     = 50;   // first valid sample
 

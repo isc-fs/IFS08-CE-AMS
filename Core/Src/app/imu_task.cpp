@@ -48,6 +48,20 @@ volatile std::uint32_t g_imu_read_errors = 0;
 volatile std::uint32_t g_imu_inits       = 0;
 volatile ImuState      g_imu_state       = ImuState::Init;
 
+// Where the last bring-up stopped, for bench diagnosis over SWD or a future
+// diag frame. 0 = last init completed. Otherwise the InitStep that failed,
+// the HAL I2C ErrorCode at that moment, and -- for a read-back mismatch --
+// the value the register actually held.
+volatile std::uint8_t  g_imu_fail_step   = 0;
+volatile std::uint32_t g_imu_i2c_error   = 0;
+volatile std::uint8_t  g_imu_readback    = 0;
+
+enum InitStep : std::uint8_t {
+    StepAccChipId = 1, StepGyrChipId, StepAccPwrConf, StepAccPwrCtrl,
+    StepAccConf, StepAccRange, StepGyrRange, StepGyrBw, StepGyrLpm1,
+    StepVerifyAccConf, StepVerifyAccRange, StepVerifyGyrRange, StepVerifyGyrBw,
+};
+
 constexpr std::uint16_t addr8(std::uint8_t addr7) noexcept {
     return static_cast<std::uint16_t>(addr7 << 1);
 }
@@ -65,47 +79,53 @@ bool read_reg(std::uint8_t addr7, std::uint8_t reg, std::uint8_t& val) noexcept 
 bool reg_reads_back(std::uint8_t addr7, std::uint8_t reg, std::uint8_t want,
                     std::uint8_t mask = 0xFF) noexcept {
     std::uint8_t got = 0;
-    return read_reg(addr7, reg, got) && (got & mask) == (want & mask);
+    if (!read_reg(addr7, reg, got)) return false;
+    g_imu_readback = got;
+    return (got & mask) == (want & mask);
 }
 
-// Datasheet start-up sequence, then read every configuration register back.
-// ~90 ms, dominated by the settling delays; only runs at bring-up and after a
-// failure.
+// Record which step failed and the HAL's view of why, then report `st`.
+ImuState fail(InitStep step, ImuState st) noexcept {
+    g_imu_fail_step = step;
+    g_imu_i2c_error = hi2c2.ErrorCode;
+    return st;
+}
+
+// Power the accelerometer up, write the configuration, then read every
+// configuration register back. ~55 ms, dominated by the accelerometer's
+// power-up settling; only runs at bring-up and after a failure.
 ImuState init_sensor() noexcept {
     const std::uint8_t acc = config::ImuAccAddr7b;
     const std::uint8_t gyr = config::ImuGyrAddr7b;
 
-    if (!reg_reads_back(acc, bmi088::AccChipIdReg, bmi088::AccChipId) ||
-        !reg_reads_back(gyr, bmi088::GyrChipIdReg, bmi088::GyrChipId)) {
-        return ImuState::NotFound;
-    }
+    if (!reg_reads_back(acc, bmi088::AccChipIdReg, bmi088::AccChipId)) return fail(StepAccChipId, ImuState::NotFound);
+    if (!reg_reads_back(gyr, bmi088::GyrChipIdReg, bmi088::GyrChipId)) return fail(StepGyrChipId, ImuState::NotFound);
 
-    if (!write_reg(acc, bmi088::AccSoftResetReg, bmi088::SoftResetCmd)) return ImuState::BusError;
-    osDelay(bmi088::AccSoftResetMs);
-    if (!write_reg(gyr, bmi088::GyrSoftResetReg, bmi088::SoftResetCmd)) return ImuState::BusError;
-    osDelay(bmi088::GyrSoftResetMs);
+    // No soft reset. Resetting a die mid-transfer leaves the bus disturbed:
+    // on the bench the next writes failed with bus errors and timeouts for
+    // seconds after it. It is not needed either -- every register this driver
+    // depends on is written below and read back, which is also what the uDV
+    // does with the same sensor on the same board.
 
     // The accelerometer powers up suspended and off.
-    if (!write_reg(acc, bmi088::AccPwrConfReg, bmi088::AccPwrActive)) return ImuState::BusError;
+    if (!write_reg(acc, bmi088::AccPwrConfReg, bmi088::AccPwrActive)) return fail(StepAccPwrConf, ImuState::BusError);
     osDelay(bmi088::AccPwrConfMs);
-    if (!write_reg(acc, bmi088::AccPwrCtrlReg, bmi088::AccPwrOn)) return ImuState::BusError;
+    if (!write_reg(acc, bmi088::AccPwrCtrlReg, bmi088::AccPwrOn)) return fail(StepAccPwrCtrl, ImuState::BusError);
     osDelay(bmi088::AccPwrOnMs);
 
-    if (!write_reg(acc, bmi088::AccConfReg,      bmi088::AccConf)       ||
-        !write_reg(acc, bmi088::AccRangeReg,     bmi088::AccRange6g)    ||
-        !write_reg(gyr, bmi088::GyrRangeReg,     bmi088::GyrRange500dps) ||
-        !write_reg(gyr, bmi088::GyrBandwidthReg, bmi088::GyrBw400Hz47Hz) ||
-        !write_reg(gyr, bmi088::GyrLpm1Reg,      bmi088::GyrLpm1Normal)) {
-        return ImuState::BusError;
-    }
+    if (!write_reg(acc, bmi088::AccConfReg,      bmi088::AccConf))        return fail(StepAccConf,  ImuState::BusError);
+    if (!write_reg(acc, bmi088::AccRangeReg,     bmi088::AccRange6g))     return fail(StepAccRange, ImuState::BusError);
+    if (!write_reg(gyr, bmi088::GyrRangeReg,     bmi088::GyrRange500dps)) return fail(StepGyrRange, ImuState::BusError);
+    if (!write_reg(gyr, bmi088::GyrBandwidthReg, bmi088::GyrBw400Hz47Hz)) return fail(StepGyrBw,    ImuState::BusError);
+    if (!write_reg(gyr, bmi088::GyrLpm1Reg,      bmi088::GyrLpm1Normal))  return fail(StepGyrLpm1,  ImuState::BusError);
 
-    if (!reg_reads_back(acc, bmi088::AccConfReg,      bmi088::AccConf)        ||
-        !reg_reads_back(acc, bmi088::AccRangeReg,     bmi088::AccRange6g)     ||
-        !reg_reads_back(gyr, bmi088::GyrRangeReg,     bmi088::GyrRange500dps) ||
-        !reg_reads_back(gyr, bmi088::GyrBandwidthReg, bmi088::GyrBw400Hz47Hz,
-                        bmi088::GyrBandwidthReadMask)) {
-        return ImuState::BusError;
-    }
+    if (!reg_reads_back(acc, bmi088::AccConfReg,  bmi088::AccConf))        return fail(StepVerifyAccConf,  ImuState::BusError);
+    if (!reg_reads_back(acc, bmi088::AccRangeReg, bmi088::AccRange6g))     return fail(StepVerifyAccRange, ImuState::BusError);
+    if (!reg_reads_back(gyr, bmi088::GyrRangeReg, bmi088::GyrRange500dps)) return fail(StepVerifyGyrRange, ImuState::BusError);
+    if (!reg_reads_back(gyr, bmi088::GyrBandwidthReg, bmi088::GyrBw400Hz47Hz,
+                        bmi088::GyrBandwidthReadMask))                     return fail(StepVerifyGyrBw,    ImuState::BusError);
+
+    g_imu_fail_step = 0;
     return ImuState::Running;
 }
 
@@ -198,7 +218,8 @@ void ams_imu_task_run(void* argument) {
 namespace ams {
 
 ImuStats imu_stats() noexcept {
-    return ImuStats{ g_imu_samples, g_imu_read_errors, g_imu_inits, g_imu_state };
+    return ImuStats{ g_imu_samples, g_imu_read_errors, g_imu_inits,
+                     g_imu_i2c_error, g_imu_fail_step, g_imu_state };
 }
 
 }  // namespace ams

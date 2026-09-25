@@ -30,6 +30,8 @@ struct ImuStats {
     std::uint32_t samples;       // readings pushed toward the logger
     std::uint32_t read_errors;   // failed or timed-out DMA reads
     std::uint32_t inits;         // successful sensor initialisations
+    std::uint32_t i2c_error;     // HAL ErrorCode when the last init failed
+    std::uint8_t  fail_step;     // init step that last failed, 0 = last init OK
     ImuState      state;
 };
 ImuStats imu_stats() noexcept;
