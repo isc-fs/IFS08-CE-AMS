@@ -946,11 +946,12 @@ Three behaviours a host must get right:
 - **A short READ means end-of-file**, and it is an ACK, not an error — that is
   the host's normal termination signal. An oversized `len` is clamped to 512
   rather than rejected.
-- **`FINALIZE` seals the *active* log** — flush, close, rename to `.CSV`, write
-  the CRC sidecar — and returns the sealed index, so the run that just happened
-  is immediately listable rather than waiting on rotation. It NACKs
-  `FILE_NOT_FOUND` when there is nothing to seal (no active file, or no rows
-  written), so an eager operator cannot fill the card with header-only files.
+- **`FINALIZE` seals the *active* pair** — flush, close, rename to `.CSV`, write
+  the CRC sidecars, IMU half first — and returns the LOG file's index (the IMU
+  half, if any, is the same index with bit 15 set), so the run that just
+  happened is immediately listable rather than waiting on rotation. It NACKs
+  `FILE_NOT_FOUND` when there is nothing to seal (no active file, or no rows in
+  either half), so an eager operator cannot fill the card with header-only files.
   Any open read handle is released, since the file set changed.
 
 **v1 is read-only.** `0x26` (DELETE) is deliberately unimplemented and NACKs as
@@ -1017,8 +1018,14 @@ nobody is driving.
 
 ### Files visible
 
-Only sealed `LOGnnnn.CSV`. The active `LOGnnnn.TMP` is excluded because its
-length would be stale before a host finished reading it, and `LOGnnnn.CRC`
+Only sealed `LOGnnnn.CSV` and `IMUnnnn.CSV`. They are listed under different
+indices: a LOG file under its rotation number (`LOG0003.CSV` → `0x0003`), an
+IMU file under the same number with bit 15 set (`IMU0003.CSV` → `0x8003`).
+The two ranges cannot collide (the rotation number stops at 9999), and the
+host needs no change because it treats the index as opaque and names the
+pulled file from the entry's `name`. `LOGnnnn` and `IMUnnnn` of one number
+cover the same time window. The active `.TMP` files are excluded because their
+length would be stale before a host finished reading them, and the `.CRC`
 sidecars are an implementation detail. The sidecar holds the CRC-32 accumulated
 as rows were written, so `CRC` answers without re-reading the file; absent one,
 it falls back to streaming.

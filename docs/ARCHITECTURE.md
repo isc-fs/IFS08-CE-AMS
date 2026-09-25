@@ -245,6 +245,7 @@ timers (inside `BmsPollTask` itself).
 | `AcuCanTask` | AboveNormal (32) | RX-queue drain with a deadline-computed timeout; TX matrix at 50 / 100 / 250 ms | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
 | `CurrentSensorTask` | AboveNormal (32) | 50 ms fixed (`osDelayUntil`) | 256 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
 | `BmsPollTask` | Normal (24) | event-driven: voltage poll 200 ms, temp sweep 250 ms | 1024 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
+| `ImuTask` | Low1 (9) | 10 ms fixed (`osDelayUntil`); two I2C2 DMA reads per tick | 512 | [`imu_task.cpp`](../Core/Src/app/imu_task.cpp) |
 | `SdLoggerTask` | Low (8) | 50 ms drain, or on a diag semaphore | 1024 | [`sd_logger_task.cpp`](../Core/Src/app/sd_logger_task.cpp) |
 | `defaultTask` | Low (8) | `osDelay(1)` forever | 128 | CMSIS placeholder, does nothing |
 | Timer service | (FreeRTOS daemon) | callback-driven | — | raises `PollVDue` / `PollTDue` |
@@ -424,8 +425,11 @@ flowchart TD
     BmsPollT[BmsPollTask<br/>+ balance WRCFGA]
     CurT[CurrentSensorTask<br/>+ SoC EKF]
     SdT[SdLoggerTask]
+    ImuT[ImuTask<br/>BMI088, telemetry only]
     MainT[MainTask<br/>safety + FSM + telemetry]
   end
+
+  ImuT -- "I2C2 + DMA, 100 Hz" --> ImuRing[(imu ring)] --> SdT
 
   FDCAN1 --> RX1 --> acu_rx --> AcuT --> VehSvc
   AcuT -- "boot-trigger 0x002 -> request_reboot" --> FDCAN1
@@ -933,6 +937,33 @@ selector ranks are untrustworthy.
 never faults — this is the one place where a *dropped* datum is the
 correct outcome.
 
+### The IMU ring
+
+`ImuTask` reads the MLC's BMI088 every 10 ms (100 Hz) over I2C2 and pushes a
+16-byte `ImuSample` into a second ring (`ImuRingCapacity` = 256, ~2.5 s), so a
+burst of IMU data can never crowd out a `LogRecord`. It is **telemetry only**:
+priority Low1 (9), below everything on the safety path; not in `fw_health` or
+the watchdog; a missing or failing IMU never raises a fault, it just produces
+no rows and the task retries once a second.
+
+- **Sensor setup.** The sensor free-runs at 400 Hz behind a ~40 Hz low-pass
+  (accel OSR4, gyro 47 Hz), so each 10 ms read returns a fresh, band-limited
+  sample. The board routes no BMI088 interrupt pins, which rules out
+  data-ready sync, and this is what keeps polling alias-free. Ranges ±6 g and
+  ±500 dps. Logged in the sensor's own axes; mapping to the car frame is post-processing.
+- **Bus cost.** Two 6-byte `HAL_I2C_Mem_Read_DMA` bursts per sample at 400 kHz
+  (~0.5 ms on a bus nothing else uses). The register address goes out from
+  the I2C interrupt and the data by DMA, so the task sleeps through the
+  transfer. The DMA buffer lives in `.imu_dma` (RAM_D1), because DMA1 cannot
+  reach DTCM.
+- **Files.** `SdLoggerTask` writes the samples to `IMUnnnn.CSV`
+  (`tick_ms,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps`, ~3.5 KB/s). It is
+  paired with `LOGnnnn.CSV`: same index, opened against the same window,
+  rotated and sealed together, with the IMU half sealed first so an
+  interrupted seal is still found as an orphan. `tick_ms` is the same clock
+  in both files. With no BMS the LOG half gets no rows, so the IMU rows are
+  what rotate the pair and each window leaves a header-only LOG file.
+
 ---
 
 ## 8. Inter-task signalling
@@ -1017,7 +1048,9 @@ queues, and the event groups. All threads ship `Dynamic` allocation: the
 CubeMX UI workflow for `Static` is brittle enough that it has not been
 worth the churn, and there is headroom. Watch the DTCM figure though — at
 ~74 % it is the tightest region, and the datalog ring alone
-(`LogRingCapacity` × ~630 B) is ~10 KB of it.
+(`LogRingCapacity` × ~630 B) is ~10 KB of it. The IMU path adds ~4.7 KB
+(ring 4 KB, one more open `FIL`, row buffer) plus `ImuTask`'s 2 KB stack
+from the heap.
 
 ---
 

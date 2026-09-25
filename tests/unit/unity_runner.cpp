@@ -534,6 +534,23 @@ void test_logrot_time_cap_is_shorter_than_size_cap(void);
 void test_logrot_file_age_normal(void);
 void test_logrot_file_age_inverted_pair_is_zero(void);
 
+// test_imu_record.cpp
+void test_imu_decode_axes_little_endian_signed(void);
+void test_imu_acc_mg_scaling(void);
+void test_imu_gyr_mdps_scaling(void);
+void test_imu_csv_row_values_and_columns(void);
+void test_imu_csv_widest_row_fits(void);
+void test_imu_csv_truncation_returns_zero(void);
+void test_imu_sensor_config_matches_log_rate(void);
+
+// test_log_names.cpp
+void test_lognames_format_pair(void);
+void test_lognames_format_rejects_out_of_range(void);
+void test_lognames_parse_sealed_both_kinds(void);
+void test_lognames_parse_rejects_non_logs(void);
+void test_lognames_logfs_index_round_trip(void);
+void test_lognames_ranges_disjoint(void);
+
 int main(void) {
     UNITY_BEGIN();
 
@@ -1037,6 +1054,19 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_logrot_time_cap_is_shorter_than_size_cap);
     RUN_TEST(test_logrot_file_age_normal);
     RUN_TEST(test_logrot_file_age_inverted_pair_is_zero);
+    RUN_TEST(test_imu_decode_axes_little_endian_signed);
+    RUN_TEST(test_imu_acc_mg_scaling);
+    RUN_TEST(test_imu_gyr_mdps_scaling);
+    RUN_TEST(test_imu_csv_row_values_and_columns);
+    RUN_TEST(test_imu_csv_widest_row_fits);
+    RUN_TEST(test_imu_csv_truncation_returns_zero);
+    RUN_TEST(test_imu_sensor_config_matches_log_rate);
+    RUN_TEST(test_lognames_format_pair);
+    RUN_TEST(test_lognames_format_rejects_out_of_range);
+    RUN_TEST(test_lognames_parse_sealed_both_kinds);
+    RUN_TEST(test_lognames_parse_rejects_non_logs);
+    RUN_TEST(test_lognames_logfs_index_round_trip);
+    RUN_TEST(test_lognames_ranges_disjoint);
 
     return UNITY_END();
 }

@@ -255,6 +255,15 @@ SECTIONS
     . = ALIGN(32);
   } >RAM_D1
 
+  /* DMA1 cannot reach DTCM either: the ImuTask I2C2 RX buffer lives here too. */
+  .imu_dma (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.imu_dma)
+    *(.imu_dma*)
+    . = ALIGN(32);
+  } >RAM_D1
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack (NOLOAD) :
   {
