@@ -59,6 +59,10 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define MICROSD_DET_Pin GPIO_PIN_3
 #define MICROSD_DET_GPIO_Port GPIOE
+#define IMU_SDA_Pin GPIO_PIN_0
+#define IMU_SDA_GPIO_Port GPIOF
+#define IMU_SCL_Pin GPIO_PIN_1
+#define IMU_SCL_GPIO_Port GPIOF
 #define S_CURRENT_P_Pin GPIO_PIN_7
 #define S_CURRENT_P_GPIO_Port GPIOF
 #define S_CURRENT_N_Pin GPIO_PIN_8
