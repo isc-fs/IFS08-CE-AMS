@@ -30,6 +30,7 @@
 #include "app/bms_poll_task.h"
 #include "app/can_frame.h"
 #include "app/current_task.h"
+#include "app/imu_task.h"
 #include "app/safety_task.h"
 #include "app/sd_logger_task.h"
 #include "app/watchdog.h"
@@ -54,6 +55,9 @@
 ADC_HandleTypeDef hadc3;
 
 FDCAN_HandleTypeDef hfdcan1;
+
+I2C_HandleTypeDef hi2c2;
+DMA_HandleTypeDef hdma_i2c2_rx;
 
 IWDG_HandleTypeDef hiwdg1;
 
@@ -110,6 +114,13 @@ const osThreadAttr_t SdLoggerTask_attributes = {
   .stack_size = 1024 * 4,
   .priority = (osPriority_t) osPriorityLow,
 };
+/* Definitions for ImuTask */
+osThreadId_t ImuTaskHandle;
+const osThreadAttr_t ImuTask_attributes = {
+  .name = "ImuTask",
+  .stack_size = 512 * 4,
+  .priority = (osPriority_t) osPriorityLow1,
+};
 /* Definitions for acu_rx_queue */
 osMessageQueueId_t acu_rx_queueHandle;
 const osMessageQueueAttr_t acu_rx_queue_attributes = {
@@ -142,11 +153,13 @@ const osMutexAttr_t vehicle_mutex_attributes = {
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_FDCAN1_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_IWDG1_Init(void);
+static void MX_I2C2_Init(void);
 void StartDefaultTask(void *argument);
 void StartAppInitTask(void *argument);
 void StartSafetyTask(void *argument);
@@ -154,6 +167,7 @@ void StartBmsPollTask(void *argument);
 void StartAcuCanTask(void *argument);
 void StartCurrentSensorTask(void *argument);
 void StartSdLoggerTask(void *argument);
+void StartImuTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 
@@ -200,12 +214,14 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_FDCAN1_Init();
   MX_USART2_UART_Init();
   MX_ADC3_Init();
   MX_SPI1_Init();
   MX_IWDG1_Init();
   MX_FATFS_Init();
+  MX_I2C2_Init();
   /* USER CODE BEGIN 2 */
   /* IWDG1 is started by MX_IWDG1_Init() above (CubeMX-owned), which
    * runs before osKernelStart and so satisfies the "watchdog alive in
@@ -276,6 +292,9 @@ int main(void)
 
   /* creation of SdLoggerTask */
   SdLoggerTaskHandle = osThreadNew(StartSdLoggerTask, NULL, &SdLoggerTask_attributes);
+
+  /* creation of ImuTask */
+  ImuTaskHandle = osThreadNew(StartImuTask, NULL, &ImuTask_attributes);
 
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
@@ -479,6 +498,54 @@ static void MX_FDCAN1_Init(void)
 }
 
 /**
+  * @brief I2C2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C2_Init(void)
+{
+
+  /* USER CODE BEGIN I2C2_Init 0 */
+
+  /* USER CODE END I2C2_Init 0 */
+
+  /* USER CODE BEGIN I2C2_Init 1 */
+
+  /* USER CODE END I2C2_Init 1 */
+  hi2c2.Instance = I2C2;
+  hi2c2.Init.Timing = 0x20A0B1FF;
+  hi2c2.Init.OwnAddress1 = 0;
+  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c2.Init.OwnAddress2 = 0;
+  hi2c2.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C2_Init 2 */
+
+  /* USER CODE END I2C2_Init 2 */
+
+}
+
+/**
   * @brief IWDG1 Initialization Function
   * @param None
   * @retval None
@@ -600,6 +667,22 @@ static void MX_USART2_UART_Init(void)
   /* USER CODE BEGIN USART2_Init 2 */
 
   /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 10, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
 
 }
 
@@ -785,6 +868,22 @@ void StartSdLoggerTask(void *argument)
   /* Unreachable: ams_sd_logger_task_run() never returns. */
   for(;;) { osDelay(1); }
   /* USER CODE END StartSdLoggerTask */
+}
+
+/* USER CODE BEGIN Header_StartImuTask */
+/**
+* @brief Function implementing the ImuTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartImuTask */
+void StartImuTask(void *argument)
+{
+  /* USER CODE BEGIN StartImuTask */
+  ams_imu_task_run(argument);
+  /* Unreachable: ams_imu_task_run() never returns. */
+  for(;;) { osDelay(1); }
+  /* USER CODE END StartImuTask */
 }
 
 /**

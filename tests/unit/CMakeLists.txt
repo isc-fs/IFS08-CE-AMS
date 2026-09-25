@@ -64,6 +64,8 @@ add_executable(ams_unit_tests
     test_telemetry_encoders.cpp
     test_pit_diag_emitter.cpp
     test_fw_health.cpp
+    test_imu_record.cpp
+    test_log_names.cpp
     test_vehicle_service.cpp
     unity_runner.cpp
 )
