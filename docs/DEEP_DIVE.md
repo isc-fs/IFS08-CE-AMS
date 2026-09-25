@@ -1255,7 +1255,7 @@ ctest --test-dir build-tests --output-on-failure     # reports 1/1 — that is t
 
 `ctest` shows `1/1 Test ... Passed` because there is a single Unity runner
 target. Run the binary directly for the case count; it currently ends
-**`491 Tests 0 Failures 0 Ignored`**.
+**`492 Tests 0 Failures 0 Ignored`**.
 
 | File | Coverage |
 |---|---|

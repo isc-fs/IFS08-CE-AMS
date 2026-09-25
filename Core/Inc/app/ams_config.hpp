@@ -330,8 +330,8 @@ inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 //
 // Rate budget at 100 Hz: two 6-byte DMA reads per sample is ~1.7 ms of bus
 // time out of each 10 ms (the bus carries only the IMU); CPU is the ISR tail
-// plus one task wake, well under 1 %; ~35 B/row CSV = ~3.5 KB/s on the card,
-// next to ~5.3 KB/s for the LOG rows.
+// plus one task wake, well under 1 %; ~53 B/row CSV (g and rad/s to 4
+// decimals) = ~5.3 KB/s on the card, next to ~5.3 KB/s for the LOG rows.
 // ---------------------------------------------------------------------------
 
 // 100 Hz. The sensor free-runs at 400 Hz behind a ~40 Hz low-pass (see

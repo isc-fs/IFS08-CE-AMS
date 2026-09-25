@@ -962,7 +962,7 @@ no rows and the task retries once a second.
   transfer. The DMA buffer lives in `.imu_dma` (RAM_D1), because DMA1 cannot
   reach DTCM.
 - **Files.** `SdLoggerTask` writes the samples to `IMUnnnn.CSV`
-  (`tick_ms,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps`, ~3.5 KB/s). It is
+  (`tick_ms,ax_g,ay_g,az_g,gx_rad_s,gy_rad_s,gz_rad_s`, 4 decimals, ~5.3 KB/s). It is
   paired with `LOGnnnn.CSV`: same index, opened against the same window,
   rotated and sealed together, with the IMU half sealed first so an
   interrupted seal is still found as an orphan. `tick_ms` is the same clock

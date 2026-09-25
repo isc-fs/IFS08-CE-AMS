@@ -20,32 +20,34 @@ extern "C" void test_imu_decode_axes_little_endian_signed(void) {
     TEST_ASSERT_EQUAL_INT(-32768, out[2]);
 }
 
-// +/-6 g full scale: 32768 counts = 6000 mg.
-extern "C" void test_imu_acc_mg_scaling(void) {
-    TEST_ASSERT_EQUAL_INT(0, ams::bmi088::acc_mg(0));
-    TEST_ASSERT_EQUAL_INT(6000, ams::bmi088::acc_mg(32767));    // 5999.8 rounds up
-    TEST_ASSERT_EQUAL_INT(-6000, ams::bmi088::acc_mg(-32768));
-    TEST_ASSERT_EQUAL_INT(1000, ams::bmi088::acc_mg(5461));     // ~1 g
-    TEST_ASSERT_EQUAL_INT(-1000, ams::bmi088::acc_mg(-5461));   // symmetric rounding
+// +/-6 g full scale, 1e-4 g units: 32768 counts = 60000 (6.0000 g).
+extern "C" void test_imu_acc_g_scaling(void) {
+    TEST_ASSERT_EQUAL_INT(0, ams::bmi088::acc_g_e4(0));
+    TEST_ASSERT_EQUAL_INT(30000, ams::bmi088::acc_g_e4(16384));    // exactly 3 g
+    TEST_ASSERT_EQUAL_INT(59998, ams::bmi088::acc_g_e4(32767));
+    TEST_ASSERT_EQUAL_INT(-60000, ams::bmi088::acc_g_e4(-32768));
+    TEST_ASSERT_EQUAL_INT(2, ams::bmi088::acc_g_e4(1));            // 1.83e-4 g/count
+    TEST_ASSERT_EQUAL_INT(-2, ams::bmi088::acc_g_e4(-1));          // symmetric rounding
 }
 
-// +/-500 dps full scale: 32768 counts = 500000 mdps. Needs 64-bit products.
-extern "C" void test_imu_gyr_mdps_scaling(void) {
-    TEST_ASSERT_EQUAL_INT(0, ams::bmi088::gyr_mdps(0));
-    TEST_ASSERT_EQUAL_INT(15, ams::bmi088::gyr_mdps(1));        // 15.26 mdps/count
-    TEST_ASSERT_EQUAL_INT(-15, ams::bmi088::gyr_mdps(-1));
-    TEST_ASSERT_EQUAL_INT(499985, ams::bmi088::gyr_mdps(32767));
-    TEST_ASSERT_EQUAL_INT(-500000, ams::bmi088::gyr_mdps(-32768));
+// +/-500 dps full scale in 1e-4 rad/s: 32768 counts = 8.7266 rad/s.
+extern "C" void test_imu_gyr_rad_s_scaling(void) {
+    TEST_ASSERT_EQUAL_INT(0, ams::bmi088::gyr_rad_s_e4(0));
+    TEST_ASSERT_EQUAL_INT(3, ams::bmi088::gyr_rad_s_e4(1));         // 2.66e-4 rad/s/count
+    TEST_ASSERT_EQUAL_INT(-3, ams::bmi088::gyr_rad_s_e4(-1));
+    TEST_ASSERT_EQUAL_INT(43633, ams::bmi088::gyr_rad_s_e4(16384)); // 250 dps
+    TEST_ASSERT_EQUAL_INT(87264, ams::bmi088::gyr_rad_s_e4(32767));
+    TEST_ASSERT_EQUAL_INT(-87266, ams::bmi088::gyr_rad_s_e4(-32768));
 }
 
 extern "C" void test_imu_csv_row_values_and_columns(void) {
     ams::ImuSample s{};
     s.tick_ms = 123;
-    s.acc[0] = 5461; s.acc[1] = 0; s.acc[2] = -32768;
-    s.gyr[0] = 1;    s.gyr[1] = -1; s.gyr[2] = -32768;
+    s.acc[0] = 16384; s.acc[1] = 0;  s.acc[2] = -32768;
+    s.gyr[0] = 1;     s.gyr[1] = -1; s.gyr[2] = -32768;
     char buf[ams::imu_csv::MaxRowBytes];
     const std::size_t n = ams::imu_csv::format_row(s, buf, sizeof buf);
-    TEST_ASSERT_EQUAL_STRING("123,1000,0,-6000,15,-15,-500000\n", buf);
+    TEST_ASSERT_EQUAL_STRING("123,3.0000,0.0000,-6.0000,0.0003,-0.0003,-8.7266\n", buf);
     TEST_ASSERT_EQUAL_UINT(std::strlen(buf), n);
 
     // Same number of fields as the header.
@@ -53,6 +55,15 @@ extern "C" void test_imu_csv_row_values_and_columns(void) {
     for (const char* p = buf; *p; ++p) row_commas += (*p == ',');
     for (const char* p = ams::imu_csv::Header; *p; ++p) hdr_commas += (*p == ',');
     TEST_ASSERT_EQUAL_INT(hdr_commas, row_commas);
+}
+
+// A value between -1 and 0 must keep its sign: "-0.0002", not "0.0002".
+extern "C" void test_imu_csv_small_negative_keeps_sign(void) {
+    ams::ImuSample s{};
+    s.acc[0] = -1;
+    char buf[ams::imu_csv::MaxRowBytes];
+    TEST_ASSERT_GREATER_THAN(0u, ams::imu_csv::format_row(s, buf, sizeof buf));
+    TEST_ASSERT_EQUAL_STRING("0,-0.0002,0.0000,0.0000,0.0000,0.0000,0.0000\n", buf);
 }
 
 // The widest possible row must fit the buffer the logger allocates.

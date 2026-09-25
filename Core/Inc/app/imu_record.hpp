@@ -83,23 +83,28 @@ inline void decode_axes(const std::uint8_t* b6, std::int16_t out[3]) noexcept {
     }
 }
 
-// Round-half-away-from-zero of v * num / 32768. 64-bit because a gyro count
-// times 500000 overflows 32 bits.
-inline std::int32_t scale_counts(std::int16_t v, std::int32_t num) noexcept {
+// Round-half-away-from-zero of v * num / den. 64-bit because a count times
+// the gyro numerator below is ~2.9e13.
+inline std::int32_t scale_counts(std::int16_t v, std::int64_t num, std::int64_t den) noexcept {
     const std::int64_t p = static_cast<std::int64_t>(v) * num;
-    const std::int64_t half = (p >= 0) ? 16384 : -16384;
-    return static_cast<std::int32_t>((p + half) / 32768);
+    const std::int64_t half = (p >= 0) ? den / 2 : -(den / 2);
+    return static_cast<std::int32_t>((p + half) / den);
 }
 
-// Datasheet: accel_mg = counts / 32768 * 1000 * 2^(range + 1) * 1.5.
-// Range 0x01 -> 2^2 * 1.5 = 6 g full scale -> counts * 6000 / 32768.
-inline std::int32_t acc_mg(std::int16_t counts) noexcept {
-    return scale_counts(counts, 6000);
+// Both outputs are fixed-point with 4 decimals (units of 1e-4), which keeps
+// the firmware integer-only and is finer than one sensor count on either die.
+
+// Acceleration in 1e-4 g. Datasheet: accel_g = counts / 32768 * 2^(range+1) * 1.5;
+// range 0x01 -> 6 g full scale -> counts * 60000 / 32768. One count = 1.83e-4 g.
+inline std::int32_t acc_g_e4(std::int16_t counts) noexcept {
+    return scale_counts(counts, 60000, 32768);
 }
 
-// +/-500 dps full scale: counts * 500 / 32768 dps = counts * 500000 / 32768 mdps.
-inline std::int32_t gyr_mdps(std::int16_t counts) noexcept {
-    return scale_counts(counts, 500000);
+// Angular rate in 1e-4 rad/s. +/-500 dps full scale = 500 * pi / 180 =
+// 8.726646 rad/s, so counts * 87266.4626 / 32768; kept exact to 1e-9 as
+// 872664626 / 327680000. One count = 2.66e-4 rad/s (0.0153 dps).
+inline std::int32_t gyr_rad_s_e4(std::int16_t counts) noexcept {
+    return scale_counts(counts, 872664626LL, 327680000LL);
 }
 
 }  // namespace bmi088
@@ -107,25 +112,43 @@ inline std::int32_t gyr_mdps(std::int16_t counts) noexcept {
 namespace imu_csv {
 
 inline constexpr char Header[] =
-    "tick_ms,ax_mg,ay_mg,az_mg,gx_mdps,gy_mdps,gz_mdps\n";
+    "tick_ms,ax_g,ay_g,az_g,gx_rad_s,gy_rad_s,gz_rad_s\n";
 
-// Widest row: 10-digit tick, three "-6000", three "-500000", 6 commas, '\n'.
-inline constexpr std::size_t MaxRowBytes = 64;
+// Widest row: 10-digit tick, three "-6.0000", three "-8.7266", 6 commas, '\n'
+// = 59 bytes.
+inline constexpr std::size_t MaxRowBytes = 72;
+
+// Append ",<v/1e4 with 4 decimals>" -- sign handled by hand so a value in
+// (-1, 0) prints as "-0.0012", not "0.0012". Returns bytes written or -1.
+inline int put_fixed4(char* buf, std::size_t cap, std::int32_t v) noexcept {
+    const bool neg = v < 0;
+    const std::uint32_t a = neg ? static_cast<std::uint32_t>(-static_cast<std::int64_t>(v))
+                                : static_cast<std::uint32_t>(v);
+    const int n = std::snprintf(buf, cap, ",%s%lu.%04lu", neg ? "-" : "",
+                                static_cast<unsigned long>(a / 10000u),
+                                static_cast<unsigned long>(a % 10000u));
+    return (n < 0 || static_cast<std::size_t>(n) >= cap) ? -1 : n;
+}
 
 // Returns bytes written (excl. NUL), or 0 on truncation. tick_ms is the same
 // clock as LOGnnnn.CSV's tick_ms, so the two files of one index line up.
 inline std::size_t format_row(const ImuSample& s, char* buf, std::size_t cap) noexcept {
-    const int n = std::snprintf(
-        buf, cap, "%lu,%ld,%ld,%ld,%ld,%ld,%ld\n",
-        static_cast<unsigned long>(s.tick_ms),
-        static_cast<long>(bmi088::acc_mg(s.acc[0])),
-        static_cast<long>(bmi088::acc_mg(s.acc[1])),
-        static_cast<long>(bmi088::acc_mg(s.acc[2])),
-        static_cast<long>(bmi088::gyr_mdps(s.gyr[0])),
-        static_cast<long>(bmi088::gyr_mdps(s.gyr[1])),
-        static_cast<long>(bmi088::gyr_mdps(s.gyr[2])));
-    if (n < 0 || static_cast<std::size_t>(n) >= cap) return 0;
-    return static_cast<std::size_t>(n);
+    int off = std::snprintf(buf, cap, "%lu", static_cast<unsigned long>(s.tick_ms));
+    if (off < 0 || static_cast<std::size_t>(off) >= cap) return 0;
+    const std::int32_t v[6] = {
+        bmi088::acc_g_e4(s.acc[0]),     bmi088::acc_g_e4(s.acc[1]),
+        bmi088::acc_g_e4(s.acc[2]),     bmi088::gyr_rad_s_e4(s.gyr[0]),
+        bmi088::gyr_rad_s_e4(s.gyr[1]), bmi088::gyr_rad_s_e4(s.gyr[2]),
+    };
+    for (std::int32_t x : v) {
+        const int k = put_fixed4(buf + off, cap - static_cast<std::size_t>(off), x);
+        if (k < 0) return 0;
+        off += k;
+    }
+    if (static_cast<std::size_t>(off) + 2u > cap) return 0;
+    buf[off++] = '\n';
+    buf[off]   = '\0';
+    return static_cast<std::size_t>(off);
 }
 
 }  // namespace imu_csv

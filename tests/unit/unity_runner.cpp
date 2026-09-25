@@ -536,9 +536,10 @@ void test_logrot_file_age_inverted_pair_is_zero(void);
 
 // test_imu_record.cpp
 void test_imu_decode_axes_little_endian_signed(void);
-void test_imu_acc_mg_scaling(void);
-void test_imu_gyr_mdps_scaling(void);
+void test_imu_acc_g_scaling(void);
+void test_imu_gyr_rad_s_scaling(void);
 void test_imu_csv_row_values_and_columns(void);
+void test_imu_csv_small_negative_keeps_sign(void);
 void test_imu_csv_widest_row_fits(void);
 void test_imu_csv_truncation_returns_zero(void);
 void test_imu_sensor_config_matches_log_rate(void);
@@ -1055,9 +1056,10 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_logrot_file_age_normal);
     RUN_TEST(test_logrot_file_age_inverted_pair_is_zero);
     RUN_TEST(test_imu_decode_axes_little_endian_signed);
-    RUN_TEST(test_imu_acc_mg_scaling);
-    RUN_TEST(test_imu_gyr_mdps_scaling);
+    RUN_TEST(test_imu_acc_g_scaling);
+    RUN_TEST(test_imu_gyr_rad_s_scaling);
     RUN_TEST(test_imu_csv_row_values_and_columns);
+    RUN_TEST(test_imu_csv_small_negative_keeps_sign);
     RUN_TEST(test_imu_csv_widest_row_fits);
     RUN_TEST(test_imu_csv_truncation_returns_zero);
     RUN_TEST(test_imu_sensor_config_matches_log_rate);
