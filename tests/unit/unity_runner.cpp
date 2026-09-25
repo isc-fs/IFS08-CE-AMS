@@ -499,6 +499,8 @@ void test_logcsv_row_matches_header_columns(void);
 void test_logcsv_row_scalar_values(void);
 void test_logcsv_row_cell_and_temp_values(void);
 void test_logcsv_truncation_returns_zero(void);
+void test_logcsv_no_sample_before_first_full_poll(void);
+void test_logcsv_sample_cadence_after_first_full_poll(void);
 
 // test_ntc_table.cpp
 void test_ntc_table_is_strictly_decreasing(void);
@@ -1003,6 +1005,8 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_logcsv_row_scalar_values);
     RUN_TEST(test_logcsv_row_cell_and_temp_values);
     RUN_TEST(test_logcsv_truncation_returns_zero);
+    RUN_TEST(test_logcsv_no_sample_before_first_full_poll);
+    RUN_TEST(test_logcsv_sample_cadence_after_first_full_poll);
 
     RUN_TEST(test_ntc_table_is_strictly_decreasing);
     RUN_TEST(test_ntc_table_covers_expected_range);

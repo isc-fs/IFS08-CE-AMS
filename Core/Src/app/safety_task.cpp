@@ -430,8 +430,10 @@ void SafetyTask::run() noexcept {
         // from THIS tick's snapshots. sd_log_push() never blocks and never
         // faults -- a full ring (SD stall / log-pull) just drops the record.
         // Off the safety path; the only cost on the 10 ms loop is a bounded
-        // ~590 B struct copy at 4 Hz.
-        if (now - last_log_tick >= config::LogSamplePeriodMs) {
+        // ~590 B struct copy at 4 Hz. Nothing is sampled until every BMS module
+        // has reported once, so the 3700 mV boot seed never reaches the card
+        // (log_csv::sample_due).
+        if (log_csv::sample_due(bms_snap.first_full_poll_done, now, last_log_tick)) {
             last_log_tick = now;
             // Static scratch: keep the 632 B record off the SafetyTask stack
             // (it already holds a ~620 B bms_snap). Single-writer, fully

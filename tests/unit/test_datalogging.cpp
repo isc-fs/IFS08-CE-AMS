@@ -139,3 +139,21 @@ extern "C" void test_logcsv_truncation_returns_zero(void) {
     char tiny[10];                                       // far too small
     TEST_ASSERT_EQUAL_INT(0, (int)ams::log_csv::format_row(rec, tiny, sizeof tiny));
 }
+
+// Before the first full BMS poll the cells hold the 3700 mV boot seed, so no
+// row may be sampled however long it has been since the last one.
+extern "C" void test_logcsv_no_sample_before_first_full_poll(void) {
+    constexpr std::uint32_t P = ams::config::LogSamplePeriodMs;
+    TEST_ASSERT_FALSE(ams::log_csv::sample_due(false, P, 0u));
+    TEST_ASSERT_FALSE(ams::log_csv::sample_due(false, 100u * P, 0u));
+}
+
+extern "C" void test_logcsv_sample_cadence_after_first_full_poll(void) {
+    constexpr std::uint32_t P = ams::config::LogSamplePeriodMs;
+    TEST_ASSERT_FALSE(ams::log_csv::sample_due(true, 1000u + P - 1u, 1000u));
+    TEST_ASSERT_TRUE (ams::log_csv::sample_due(true, 1000u + P,      1000u));
+    // The first sample after a withheld stretch fires at once, not one period late.
+    TEST_ASSERT_TRUE (ams::log_csv::sample_due(true, 5000u,          0u));
+    // Tick wraparound: unsigned subtraction still measures the real gap.
+    TEST_ASSERT_TRUE (ams::log_csv::sample_due(true, P - 10u, 0xFFFFFFF6u));
+}

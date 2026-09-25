@@ -134,5 +134,22 @@ inline std::size_t format_row(const LogRecord& r, char* buf, std::size_t cap) no
     return static_cast<std::size_t>(off);
 }
 
+// Is a sample due this tick? Rows are withheld until BmsState's
+// first_full_poll_done: before every module has reported once, cell_mV still
+// holds the 3700 mV boot seed (pack_mV = 95 x 3700 = 351500) and the boot
+// free-pass window reports all modules online, so a row would record a
+// healthy pack that was never measured.
+//
+// Consequence, accepted deliberately: if the chain never completes a full
+// poll (a module missing, a dead isoSPI link, a board with no BMS attached)
+// the run writes no rows at all -- the file carries only the CSV header. The
+// fault itself is still latched and reported on CAN; only the on-card record
+// of that boot is empty.
+[[nodiscard]] inline constexpr bool sample_due(bool bms_fully_polled,
+                                               std::uint32_t now_ms,
+                                               std::uint32_t last_sample_ms) noexcept {
+    return bms_fully_polled && (now_ms - last_sample_ms) >= config::LogSamplePeriodMs;
+}
+
 }  // namespace log_csv
 }  // namespace ams
