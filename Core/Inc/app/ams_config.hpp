@@ -322,10 +322,16 @@ inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 // SdLoggerTask drains it into IMUnnnn.CSV, opened, rotated and sealed together
 // with LOGnnnn.CSV so the two files of one index always cover the same window.
 //
-// Rate budget at 100 Hz: two 6-byte DMA reads per sample at 400 kHz is
-// ~0.5 ms of bus time (bus carries only the IMU); CPU is the ISR tail plus one
-// task wake, well under 1 %; ~35 B/row CSV = ~3.5 KB/s on the card, next to
-// ~5.3 KB/s for the LOG rows.
+// Bus speed is 100 kHz (Standard mode), set in AMS.ioc, and must stay there:
+// the MLC has NO external pull-ups on I2C2, only the MCU's internal 30-50 kohm
+// ones (PF0/PF1 GPIO_PULLUP). With ~15-20 pF on the bus the rise time is
+// 0.85*R*C ~= 0.4-0.85 us: inside Standard mode's 1 us limit, outside Fast
+// mode's 0.3 us. The uDV drives the same sensor the same way.
+//
+// Rate budget at 100 Hz: two 6-byte DMA reads per sample is ~1.7 ms of bus
+// time out of each 10 ms (the bus carries only the IMU); CPU is the ISR tail
+// plus one task wake, well under 1 %; ~35 B/row CSV = ~3.5 KB/s on the card,
+// next to ~5.3 KB/s for the LOG rows.
 // ---------------------------------------------------------------------------
 
 // 100 Hz. The sensor free-runs at 400 Hz behind a ~40 Hz low-pass (see
@@ -339,7 +345,8 @@ inline constexpr std::uint32_t ImuSamplePeriodMs = 10;
 inline constexpr std::uint8_t  ImuAccAddr7b = 0x18;
 inline constexpr std::uint8_t  ImuGyrAddr7b = 0x68;
 
-// One DMA read is ~0.25 ms on the wire; anything past this is a hung bus.
+// One 6-byte register read is ~0.85 ms on the wire at 100 kHz (9 bytes of
+// 9 bits plus start/stop); anything past this is a hung bus.
 inline constexpr std::uint32_t ImuXferTimeoutMs = 5;
 // After a failed init or a failed read, wait this long before re-initialising.
 // A dead IMU therefore costs one short I2C attempt per second, nothing more.

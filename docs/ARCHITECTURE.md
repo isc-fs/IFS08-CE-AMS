@@ -951,8 +951,13 @@ no rows and the task retries once a second.
   sample. The board routes no BMI088 interrupt pins, which rules out
   data-ready sync, and this is what keeps polling alias-free. Ranges ±6 g and
   ±500 dps. Logged in the sensor's own axes; mapping to the car frame is post-processing.
-- **Bus cost.** Two 6-byte `HAL_I2C_Mem_Read_DMA` bursts per sample at 400 kHz
-  (~0.5 ms on a bus nothing else uses). The register address goes out from
+- **Bus.** I2C2 at **100 kHz**, and it must stay in Standard mode: the MLC has
+  no external pull-ups on SDA/SCL, only the MCU's internal 30–50 kΩ ones
+  (PF0/PF1 `GPIO_PULLUP`), which give a 0.4–0.85 µs rise time. That's inside
+  Standard mode's 1 µs limit and outside Fast mode's 0.3 µs. The uDV drives the
+  same sensor the same way.
+- **Bus cost.** Two 6-byte `HAL_I2C_Mem_Read_DMA` bursts per sample (~1.7 ms
+  of each 10 ms, on a bus nothing else uses). The register address goes out from
   the I2C interrupt and the data by DMA, so the task sleeps through the
   transfer. The DMA buffer lives in `.imu_dma` (RAM_D1), because DMA1 cannot
   reach DTCM.
