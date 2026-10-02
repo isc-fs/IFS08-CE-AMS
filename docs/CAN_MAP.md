@@ -124,6 +124,7 @@ Everything the firmware puts on, or takes off, the wire.
 | `0x6C0..0x6C9` | PIT status frames (10) | TX | 8 | 1 Hz, gated | `pit_*.def` |
 | `0x6CA` | AMS_fw_health | TX | 8 | 1 Hz, **ungated** | `ams_fw_health.def` |
 | `0x6CB` | PIT_balance_health | TX | 8 | 1 Hz, gated | `pit_balance_health.def` |
+| `0x6CC` | PIT_balance_status | TX | 8 | 1 Hz, gated | `pit_balance_status.def` |
 | `0x6D0..0x6E7` | ADOW raw PU grid (24) | TX | 8 | bench build only | none — `pit_diag_emitter.hpp` |
 | `0x6E8..0x6FF` | ADOW raw PD grid (24) | TX | 8 | bench build only | none — `pit_diag_emitter.hpp` |
 | `0x7F0` | PitDiag_cmd | RX | 4 (exact) | — | `rx_pitdiag_cmd.def` |
@@ -451,10 +452,10 @@ residual phase was on the timer.
 
 ### Cost, and why it is the only blocking TX path
 
-A scan is **60 frames**: 24 cell + 25 temp + 10 status (`0x6C0..0x6C9`) +
-`0x6CB`. All DLC 8. A standard-ID 8-byte data frame is ~111 bits on the wire
-before stuffing, so a scan is ≈6.7 kbit ≈ 13 ms of bus time — about **1.3 %
-average load at 1 Hz**, up to ~1.6 % with worst-case bit stuffing.
+A scan is **61 frames**: 24 cell + 25 temp + 10 status (`0x6C0..0x6C9`) +
+`0x6CB` + `0x6CC`. All DLC 8. A standard-ID 8-byte data frame is ~111 bits on
+the wire before stuffing, so a scan is ≈6.8 kbit ≈ 14 ms of bus time — about
+**1.4 % average load at 1 Hz**, up to ~1.7 % with worst-case bit stuffing.
 
 60 frames do not fit a 16-deep TX FIFO. Without flow control, frames 17+ are
 silently NACKed and only the front of the burst reaches the wire. So the
@@ -638,6 +639,36 @@ LTC6811 datasheet Table 53 it suppresses discharge only on the cell being
 measured and its immediate neighbours, so roughly half the selected cells keep
 bleeding through the conversion. The quiesce is the only full stop.
 
+#### `0x6CC` — balancing status
+
+What balancing is doing and, when it is not, **every** reason why. Before this
+frame, "balanced" and "blocked" both showed only as an empty DCC mask on
+`0x6C2`/`0x6C3`. Published by `BmsPollTask` once per balance window (800 ms),
+sent at the 1 Hz scan.
+
+| Byte | Field | Meaning |
+|---|---|---|
+| 0 | `balance_state` | `0` Off · `1` Blocked · `2` Active · `3` Holding · `4` Done (`balance::State`) |
+| 1 | `balance_active` | cells discharging, whole pack |
+| 2..3 | `balance_inhibit` | LE u16, `balance::inhibit` bits (below) |
+| 4..5 | `balance_spread` | LE u16 mV: highest cell minus the balancing floor (second-lowest cell) |
+| 6..7 | — | reserved, 0 |
+
+| Bit | Name | Set when |
+|---|---|---|
+| 0 | `OpOff` | `0x103` is Off, stale or never seen |
+| 1 | `StateNotAllowed` | `Auto` outside `Charge`, or `On` outside `Start`/`Charge` |
+| 2 | `CellDataFault` | open wire / OV / UV latched |
+| 3 | `TempsUntrusted` | `config::BalanceTempsTrusted` is false |
+| 4 | `NoThermalData` | fewer than `BalanceMinValidTempCh` valid NTC channels |
+| 5 | `PackHot` | max cell temperature over `BalanceTempMax`; releases at `BalanceTempMax − BalanceTempHystC` |
+| 6 | `ModulesDisabled` | every cell that needs bleeding is in a module `0x104` disabled |
+| 7 | `QuiesceFailHold` | last quiesce unproven: previous mask held, not re-picked |
+
+`Done` means balancing is allowed and the spread is within `BalanceDeltaMv`.
+`Off` is reported only when the operator command is the sole reason; any other
+gate makes it `Blocked`, with all applicable bits set.
+
 ### `0x6D0..0x6FF` — raw ADOW grids (bench build only)
 
 Two more 24-frame blocks with the **same** window layout as the `0x680` cell
@@ -809,8 +840,8 @@ cadence) once.
 | Bytes `[0..3]` | ASCII | `BalanceCmd` | Effect |
 |---|---|---|---|
 | `42 41 4C 4F` | `"BALO"` | `Off` (0) | suppress balancing |
-| `42 41 4C 4E` | `"BALN"` | `On` (2) | force balancing on |
-| `42 41 4C 58` | `"BALX"` | `Auto` (1) | autonomous balancing |
+| `42 41 4C 4E` | `"BALN"` | `On` (2) | force balancing on, in `Start` or `Charge` |
+| `42 41 4C 58` | `"BALX"` | `Auto` (1) | autonomous balancing, in `Charge` |
 
 Any other payload is ignored and leaves the previous command *and* its
 freshness tick in place — bus-noise safe.
@@ -823,9 +854,11 @@ balancing is **off** and `0x6C0[2]` bit 2 reads **1**. That is the intended
 failure direction: a dead pit-tool link must never leave a pack bleeding
 unattended.
 
-Balancing runs in `Charge` only, so this can never touch an AIR or a safety
-path, and `Error` is unaffected. Consumed by `BmsPollTask` via
-`VehicleService::balance_suppressed`.
+**Where each command can run** (`balance::command_allowed_in`): `Auto` only
+in `Charge`; `On` only in `Start` or `Charge`. **Never** in `Precharge`,
+`Transition`, `Run` or `Error`, whatever the command — `0x6CC` reports
+`StateNotAllowed`. This can never touch an AIR or a safety path. Consumed by
+`BmsPollTask` via `VehicleService::effective_balance_cmd`.
 
 ### `0x104` — operator per-module balance enable
 

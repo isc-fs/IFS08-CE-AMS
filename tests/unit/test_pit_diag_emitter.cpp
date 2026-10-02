@@ -456,6 +456,21 @@ extern "C" void test_pit_encode_balance_health_layout(void) {
     for (std::uint8_t i = 4; i < 8; ++i) TEST_ASSERT_EQUAL_HEX8(0x00, healthy[i]);
 }
 
+// --- 0x6CC balancing status ------------------------------------------------
+// Byte layout asserted literally: state, active, LE u16 inhibit, LE u16 spread,
+// two reserved zero bytes.
+extern "C" void test_pit_encode_balance_status_layout(void) {
+    const auto f = ams::pit_diag::encode_balance_status(4u, 17u, 0x0122u, 0x1234u);
+    TEST_ASSERT_EQUAL_HEX8(0x04, f[0]);   // state = Done
+    TEST_ASSERT_EQUAL_HEX8(0x11, f[1]);   // 17 active
+    TEST_ASSERT_EQUAL_HEX8(0x22, f[2]);   // inhibit LSB
+    TEST_ASSERT_EQUAL_HEX8(0x01, f[3]);   // inhibit MSB
+    TEST_ASSERT_EQUAL_HEX8(0x34, f[4]);   // spread LSB
+    TEST_ASSERT_EQUAL_HEX8(0x12, f[5]);   // spread MSB
+    TEST_ASSERT_EQUAL_HEX8(0x00, f[6]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, f[7]);
+}
+
 // A refused 0x002 reboot has no reply channel, so bit 19 of 0x6C0 is the only
 // thing that tells an operator their flash attempt was rejected rather than
 // ignored. It must not disturb the bits packed beside it in the same byte.

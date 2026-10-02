@@ -66,6 +66,15 @@ extern "C" volatile std::uint32_t g_balance_dcc_bits[5] = {0, 0, 0, 0, 0};
 extern "C" volatile std::uint32_t g_balance_cycles_total_pub  = 0;
 extern "C" volatile std::uint32_t g_balance_cycles_active_pub = 0;
 
+// Balancing controller status, mirrored for pit-diag 0x6CC and the SD log.
+// Written only here (single writer), once per balance window; 8/16-bit stores
+// are atomic on the M7, and a reader that catches the four mid-update sees a
+// mix of two consecutive windows, which is harmless for telemetry.
+extern "C" volatile std::uint8_t  g_balance_state     = 0;   // balance::State
+extern "C" volatile std::uint16_t g_balance_inhibit   = 1;   // balance::inhibit bits; OpOff until the first window
+extern "C" volatile std::uint8_t  g_balance_active    = 0;   // cells discharging
+extern "C" volatile std::uint16_t g_balance_spread_mv = 0;   // highest - floor
+
 // Counts the times run_voltage_poll re-woke and reconfigured the chain after
 // consecutive failed polls. Zero on a healthy bus; climbing means the chain is
 // repeatedly dropping out (the inverter-EMI T_SLEEP case this recovery exists
@@ -124,12 +133,18 @@ std::uint32_t          s_xcheck_poll_count     = 0;
 std::uint8_t s_last_cfga[ams::config::LtcChainLength][6] = {};
 bool         s_balance_active = false;
 
-// Last mask compute_mask produced, fed back next cycle so the selector can apply
-// hysteresis (BalanceStopDeltaMv). Without it the policy re-ranks from scratch
-// every BalanceUpdatePolls and a cell hovering near the threshold toggles
-// instead of accumulating bleed time. Held here rather than inside compute_mask
-// so that function stays pure and host-testable.
-ams::balance::Mask s_prev_balance_mask = {};
+// The balancing policy with its memory: the previous mask (selection
+// hysteresis), the pack-temperature lockout latch, and the reported status.
+// The policy itself stays pure and host-tested in balance_controller.hpp.
+ams::balance::Controller s_balance;
+
+void publish_balance_status() noexcept {
+    const auto& st = s_balance.status();
+    g_balance_state     = static_cast<std::uint8_t>(st.state);
+    g_balance_inhibit   = st.inhibit;
+    g_balance_active    = st.active;
+    g_balance_spread_mv = st.spread_mV;
+}
 
 // Set by quiesce_balancing() when it could not prove discharge was off, i.e. the
 // cell voltages this poll produced were taken under bleed. Consumed and cleared
@@ -571,6 +586,8 @@ void maybe_run_balance_update() {
     // multi-hour C/101 balancer.
     if (g_balance_quiesce_fail) {
         g_balance_quiesce_fail = false;
+        s_balance.hold_for_quiesce_failure();
+        publish_balance_status();
         return;
     }
 
@@ -596,10 +613,10 @@ void maybe_run_balance_update() {
     // Auto and the operator On override: once one has fired, the voltages
     // compute_mask ranks are not trustworthy.
     const auto       fault    = static_cast<safety::FaultReason>(g_fault_reason_telemetry);
-    const auto       mask   = balance::compute_mask(
+    const balance::Mask& mask = s_balance.step(balance::Inputs{
         state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
-        fault, mod_enable, &s_prev_balance_mask);
-    s_prev_balance_mask = mask;
+        fault, mod_enable});
+    publish_balance_status();
 
     std::uint8_t per_ic[config::LtcChainLength][6];
     bool         any_dcc = false;

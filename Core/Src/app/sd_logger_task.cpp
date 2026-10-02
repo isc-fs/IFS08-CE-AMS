@@ -45,6 +45,13 @@ extern "C" {
 // log extraction while the tractive system is live.
 extern volatile std::uint8_t g_state_telemetry;
 
+// Balancing controller status published by BmsPollTask, copied into each LOG
+// row as it is written (see LogRecord::bal_state for why here and not in
+// SafetyTask).
+extern volatile std::uint8_t  g_balance_state;
+extern volatile std::uint16_t g_balance_inhibit;
+extern volatile std::uint8_t  g_balance_active;
+
 // hsd1 is OWNED here. With MX_SDMMC1_SD_Init decoupled in CubeMX the
 // handle is no longer defined in main.c, so the logger -- which now owns SD
 // bring-up -- defines it; bsp_driver_sd.c (the FatFs BSP) externs and drives
@@ -680,6 +687,9 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
         // (3) Drain the ring -> CSV rows.
         ams::LogRecord r;
         while (g_ring.pop(r)) {
+            r.bal_state   = g_balance_state;
+            r.bal_inhibit = g_balance_inhibit;
+            r.bal_active  = g_balance_active;
             const std::size_t n = ams::log_csv::format_row(r, g_rowbuf, sizeof g_rowbuf);
             if (n == 0) continue;              // skip a malformed row, keep going
             UINT bw = 0;

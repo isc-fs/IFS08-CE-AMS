@@ -46,12 +46,23 @@ struct LogRecord {
     // Full matrices, copied straight from BmsState. [module][index].
     std::uint16_t cell_mV   [config::BmsModuleCount][config::CellsPerModule]; // 5 x 19 = 95
     std::int16_t  cell_tempC[config::BmsModuleCount][config::TempsPerModule]; // 5 x 40 = 200
+
+    // Balancing status. Unlike the fields above these are NOT captured by
+    // SafetyTask: SdLoggerTask fills them from BmsPollTask's published status
+    // when it writes the row, at most one drain period (50 ms) later. Balancing
+    // changes only once per 800 ms window, so the skew never mislabels a row by
+    // more than that one boundary. Appended as the LAST columns so every earlier
+    // column keeps its position.
+    std::uint8_t  bal_state;           // balance::State
+    std::uint16_t bal_inhibit;         // balance::inhibit bits
+    std::uint8_t  bal_active;          // cells discharging, whole pack
 };
 
 namespace log_csv {
 
 // Upper bound on one formatted CSV row (and the header), incl. newline + NUL.
-// "65535," / "-32768," <= 8 chars each; 256 covers the scalar block.
+// "65535," / "-32768," <= 8 chars each; 256 covers the scalar block and the
+// three balancing columns (the longest part, the header, is ~185 chars).
 inline constexpr std::size_t MaxRowBytes =
     256u
     + static_cast<std::size_t>(config::BmsModuleCount) * config::CellsPerModule * 8u
@@ -81,6 +92,12 @@ inline std::size_t build_header(char* buf, std::size_t cap) noexcept {
             if (k < 0 || static_cast<std::size_t>(k) >= rem) return 0;
             off += k;
         }
+    {
+        const std::size_t rem = cap - static_cast<std::size_t>(off);
+        const int k = std::snprintf(buf + off, rem, "bal_state,bal_inhibit,bal_active,");
+        if (k < 0 || static_cast<std::size_t>(k) >= rem) return 0;
+        off += k;
+    }
     buf[off - 1] = '\n';  // overwrite the trailing comma
     return static_cast<std::size_t>(off);
 }
@@ -130,6 +147,15 @@ inline std::size_t format_row(const LogRecord& r, char* buf, std::size_t cap) no
             if (k < 0 || static_cast<std::size_t>(k) >= rem) return 0;
             off += k;
         }
+    {
+        const std::size_t rem = cap - static_cast<std::size_t>(off);
+        const int k = std::snprintf(buf + off, rem, "%u,%u,%u,",
+                                    static_cast<unsigned>(r.bal_state),
+                                    static_cast<unsigned>(r.bal_inhibit),
+                                    static_cast<unsigned>(r.bal_active));
+        if (k < 0 || static_cast<std::size_t>(k) >= rem) return 0;
+        off += k;
+    }
     buf[off - 1] = '\n';  // overwrite the trailing comma
     return static_cast<std::size_t>(off);
 }

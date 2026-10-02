@@ -95,6 +95,11 @@ extern "C" volatile std::uint32_t g_balance_cycles_active_pub;
 // RATIO is the diagnostic -- see pit_balance_health.def.
 extern "C" volatile std::uint32_t g_balance_quiesce_count;
 extern "C" volatile std::uint32_t g_balance_quiesce_fail_count;
+// Balancing controller status, published by BmsPollTask (0x6CC).
+extern "C" volatile std::uint8_t  g_balance_state;
+extern "C" volatile std::uint16_t g_balance_inhibit;
+extern "C" volatile std::uint8_t  g_balance_active;
+extern "C" volatile std::uint16_t g_balance_spread_mv;
 
 // Boot diagnostics, surfaced on the boot-diag frame (0x6C4): app-init
 // progress and FDCAN1 start outcome, visible on can0 from any build.
@@ -385,6 +390,13 @@ void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     send_or_fail_blocking(ams::config::PitDiagBalanceHealthId,
                           ams::pit_diag::encode_balance_health(
                               g_balance_quiesce_count, g_balance_quiesce_fail_count));
+
+    // Balancing status (0x6CC): state, active cells, spread, and every gate
+    // currently blocking it -- so "balanced" and "blocked" are distinguishable.
+    send_or_fail_blocking(ams::config::PitDiagBalanceStatusId,
+                          ams::pit_diag::encode_balance_status(
+                              g_balance_state, g_balance_active,
+                              g_balance_inhibit, g_balance_spread_mv));
 
     // BENCH DIAGNOSTIC (config::AdowRawDiag): raw ADOW pull-up + pull-down
     // per-cell dump on AdowDiagPuBaseId / AdowDiagPdBaseId, in the same

@@ -197,26 +197,33 @@ extern "C" void test_balance_op_off_forces_no_discharge(void) {
 }
 
 // ---------------------------------------------------------------------------
-// #336: operator ON forces balancing in ANY state (overrides the Charge-only
-// default), while AUTO stays quiet outside Charge -- same imbalanced pack.
+// Operator ON extends balancing from Charge into Start, and no further; AUTO
+// stays quiet outside Charge -- same imbalanced pack.
 // ---------------------------------------------------------------------------
 extern "C" void test_balance_op_on_runs_outside_charge(void) {
     auto state = make_uniform_state(4100, 25);
     state.cell_mV[0][0] = 4200;
     state.max_cell_mV   = 4200;
 
+    // AUTO is quiet everywhere but Charge.
     for (auto st : { fsm::State::Start, fsm::State::Precharge,
                      fsm::State::Transition, fsm::State::Run, fsm::State::Error }) {
-        // AUTO: quiet outside Charge.
         TEST_ASSERT_FALSE_MESSAGE(
             any_set(balance::compute_mask(state, st, /*temps_trusted=*/true,
                                           config::BalanceCmd::Auto)),
             "AUTO must stay quiet outside Charge");
-        // ON: the imbalanced cell discharges regardless of state.
-        TEST_ASSERT_TRUE_MESSAGE(
-            balance::compute_mask(state, st, /*temps_trusted=*/true,
-                                  config::BalanceCmd::On).cell[0][0],
-            "ON must balance in any state");
+    }
+    // ON reaches outside Charge, but only into Start.
+    TEST_ASSERT_TRUE_MESSAGE(
+        balance::compute_mask(state, fsm::State::Start, /*temps_trusted=*/true,
+                              config::BalanceCmd::On).cell[0][0],
+        "ON must balance in Start");
+    for (auto st : { fsm::State::Precharge, fsm::State::Transition,
+                     fsm::State::Run, fsm::State::Error }) {
+        TEST_ASSERT_FALSE_MESSAGE(
+            any_set(balance::compute_mask(state, st, /*temps_trusted=*/true,
+                                          config::BalanceCmd::On)),
+            "ON must never balance outside Start/Charge");
     }
 }
 
@@ -226,7 +233,8 @@ extern "C" void test_balance_op_on_respects_temp_trust(void) {
     auto state = make_uniform_state(4100, 25);
     state.cell_mV[0][0] = 4200;
     state.max_cell_mV   = 4200;
-    const auto mask = balance::compute_mask(state, fsm::State::Run,
+    // Start, where ON is allowed, so temp trust is the only thing refusing.
+    const auto mask = balance::compute_mask(state, fsm::State::Start,
                                             /*temps_trusted=*/false, config::BalanceCmd::On);
     TEST_ASSERT_FALSE(any_set(mask));
 }
@@ -322,26 +330,35 @@ extern "C" void test_balance_operator_toggle_is_reachable_on_this_build(void) {
     TEST_ASSERT_TRUE_MESSAGE(
         config::BalanceTempsTrusted,
         "BalanceTempsTrusted is false -- the WarioCharger 0x103 toggle cannot "
-        "discharge in ANY FSM state on this build. If that is intended, update "
+        "discharge in any FSM state on this build. If that is intended, update "
         "this test and docs/CAN_MAP.md 0x103 together so it stays deliberate.");
 }
 
-// The operator switch must reach discharge in every FSM state on the build as
-// configured -- not just with a hand-passed temps_trusted=true.
+// The operator switch must reach discharge in Start and Charge on the build as
+// configured -- not just with a hand-passed temps_trusted=true -- and nowhere
+// else.
 extern "C" void test_balance_on_discharges_in_all_states_as_configured(void) {
     if (!config::BalanceTempsTrusted) return;   // covered by the tripwire above
     auto state = make_uniform_state(4100, 25);
     state.cell_mV[0][0] = 4200;
     state.max_cell_mV   = 4200;
 
-    for (auto st : { fsm::State::Start, fsm::State::Precharge,
-                     fsm::State::Transition, fsm::State::Run,
-                     fsm::State::Charge, fsm::State::Error }) {
+    // On the build as configured, operator ON discharges in Start and Charge...
+    for (auto st : { fsm::State::Start, fsm::State::Charge }) {
         TEST_ASSERT_TRUE_MESSAGE(
             balance::compute_mask(state, st,
                                   /*temps_trusted=*/config::BalanceTempsTrusted,
                                   config::BalanceCmd::On).cell[0][0],
-            "operator ON must discharge in every FSM state");
+            "operator ON must discharge in Start and Charge");
+    }
+    // ...and in no other state.
+    for (auto st : { fsm::State::Precharge, fsm::State::Transition,
+                     fsm::State::Run, fsm::State::Error }) {
+        TEST_ASSERT_FALSE_MESSAGE(
+            any_set(balance::compute_mask(state, st,
+                                          /*temps_trusted=*/config::BalanceTempsTrusted,
+                                          config::BalanceCmd::On)),
+            "operator ON must not discharge outside Start/Charge");
     }
 }
 
@@ -392,7 +409,7 @@ extern "C" void test_balance_operator_on_cannot_override_thermal_data_gate(void)
     state.valid_temp_channels = 0;
     state.max_tempC = std::numeric_limits<std::int16_t>::min();
 
-    for (auto st : { fsm::State::Start, fsm::State::Run, fsm::State::Charge }) {
+    for (auto st : { fsm::State::Start, fsm::State::Charge }) {
         TEST_ASSERT_FALSE(any_set(balance::compute_mask(
             state, st, /*temps_trusted=*/true, config::BalanceCmd::On)));
     }
@@ -736,4 +753,199 @@ extern "C" void test_balance_incumbent_wins_ties_against_newcomer(void) {
         safety::FaultReason::None, config::AllModulesMask, &prev);
     TEST_ASSERT_TRUE_MESSAGE(out.cell[0][placed[n - 1]],
         "an incumbent must not be evicted by an equal-excess newcomer");
+}
+
+// ===========================================================================
+// State gate, inhibit reasons and the stateful Controller.
+// ===========================================================================
+
+namespace {
+
+balance::Inputs make_inputs(const BmsState& s,
+                            fsm::State st = fsm::State::Charge,
+                            config::BalanceCmd cmd = config::BalanceCmd::Auto,
+                            std::uint8_t module_enable = config::AllModulesMask,
+                            bool temps_trusted = true,
+                            safety::FaultReason fault = safety::FaultReason::None) {
+    return balance::Inputs{s, st, temps_trusted, cmd, fault, module_enable};
+}
+
+}  // namespace
+
+// Auto runs only in Charge; On only in Start or Charge; Off nowhere.
+extern "C" void test_balance_state_gate_matrix(void) {
+    const fsm::State all[] = { fsm::State::Start, fsm::State::Precharge,
+                               fsm::State::Transition, fsm::State::Run,
+                               fsm::State::Charge, fsm::State::Error };
+    for (auto st : all) {
+        TEST_ASSERT_FALSE(balance::command_allowed_in(config::BalanceCmd::Off, st));
+        TEST_ASSERT_EQUAL(st == fsm::State::Charge,
+                          balance::command_allowed_in(config::BalanceCmd::Auto, st));
+        TEST_ASSERT_EQUAL(st == fsm::State::Start || st == fsm::State::Charge,
+                          balance::command_allowed_in(config::BalanceCmd::On, st));
+    }
+}
+
+// Every blocking gate is reported, not just the first.
+extern "C" void test_balance_gate_reasons_reports_every_gate(void) {
+    auto state = make_uniform_state(4100, 60);         // hot
+    state.valid_temp_channels = 1;                     // and too little thermal data
+    const std::uint16_t r = balance::gate_reasons(
+        state, fsm::State::Run, /*temps_trusted=*/false, config::BalanceCmd::On,
+        safety::FaultReason::CellOpenWire, /*module_enable=*/0u);
+    TEST_ASSERT_EQUAL_HEX16(balance::inhibit::StateNotAllowed |
+                            balance::inhibit::CellDataFault   |
+                            balance::inhibit::TempsUntrusted  |
+                            balance::inhibit::NoThermalData   |
+                            balance::inhibit::PackHot         |
+                            balance::inhibit::ModulesDisabled, r);
+}
+
+extern "C" void test_balance_gate_reasons_zero_when_allowed(void) {
+    const auto state = make_uniform_state(4100, 25);
+    TEST_ASSERT_EQUAL_HEX16(0, balance::gate_reasons(
+        state, fsm::State::Charge, true, config::BalanceCmd::Auto,
+        safety::FaultReason::None, config::AllModulesMask));
+    TEST_ASSERT_EQUAL_HEX16(0, balance::gate_reasons(
+        state, fsm::State::Start, true, config::BalanceCmd::On,
+        safety::FaultReason::None, config::AllModulesMask));
+}
+
+// Operator Off: state Off, and Off is the only reason reported.
+extern "C" void test_balance_controller_off_state(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    balance::Controller c;
+    const auto& m = c.step(make_inputs(state, fsm::State::Charge, config::BalanceCmd::Off));
+    TEST_ASSERT_FALSE(any_set(m));
+    TEST_ASSERT_EQUAL(balance::State::Off, c.status().state);
+    TEST_ASSERT_EQUAL_HEX16(balance::inhibit::OpOff, c.status().inhibit);
+    TEST_ASSERT_EQUAL_UINT8(0, c.status().active);
+}
+
+extern "C" void test_balance_controller_blocked_reports_reasons(void) {
+    auto state = make_uniform_state(4100, 25);
+    state.cell_mV[0][0] = 4200;
+    balance::Controller c;
+    c.step(make_inputs(state, fsm::State::Start, config::BalanceCmd::Auto,
+                       config::AllModulesMask, /*temps_trusted=*/false));
+    TEST_ASSERT_EQUAL(balance::State::Blocked, c.status().state);
+    TEST_ASSERT_EQUAL_HEX16(balance::inhibit::StateNotAllowed |
+                            balance::inhibit::TempsUntrusted, c.status().inhibit);
+}
+
+extern "C" void test_balance_controller_active_counts_cells(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[0][0] = 4100;
+    state.cell_mV[1][5] = 4090;
+    state.cell_mV[4][18] = 4080;
+    balance::Controller c;
+    const auto& m = c.step(make_inputs(state));
+    TEST_ASSERT_TRUE(m.cell[0][0] && m.cell[1][5] && m.cell[4][18]);
+    TEST_ASSERT_EQUAL(balance::State::Active, c.status().state);
+    TEST_ASSERT_EQUAL_HEX16(0, c.status().inhibit);
+    TEST_ASSERT_EQUAL_UINT8(3, c.status().active);
+    TEST_ASSERT_EQUAL_UINT16(100, c.status().spread_mV);
+}
+
+extern "C" void test_balance_controller_done_when_matched(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[2][3] = 4040;                        // inside the 50 mV deadband
+    balance::Controller c;
+    const auto& m = c.step(make_inputs(state));
+    TEST_ASSERT_FALSE(any_set(m));
+    TEST_ASSERT_EQUAL(balance::State::Done, c.status().state);
+    TEST_ASSERT_EQUAL_UINT16(40, c.status().spread_mV);
+}
+
+// Lockout trips above BalanceTempMax and releases only at BalanceTempMax -
+// BalanceTempHystC, so a pack sitting near the threshold does not toggle.
+extern "C" void test_balance_controller_thermal_hysteresis(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[0][0] = 4100;
+    balance::Controller c;
+
+    state.max_tempC = config::BalanceTempMax + 1;
+    c.step(make_inputs(state));
+    TEST_ASSERT_EQUAL(balance::State::Blocked, c.status().state);
+    TEST_ASSERT_TRUE(c.status().inhibit & balance::inhibit::PackHot);
+
+    state.max_tempC = config::BalanceTempMax - 1;      // below trip, above release
+    c.step(make_inputs(state));
+    TEST_ASSERT_TRUE_MESSAGE(c.status().inhibit & balance::inhibit::PackHot,
+                             "lockout must hold until the release point");
+
+    state.max_tempC = config::BalanceTempMax - config::BalanceTempHystC;
+    const auto& m = c.step(make_inputs(state));
+    TEST_ASSERT_EQUAL(balance::State::Active, c.status().state);
+    TEST_ASSERT_TRUE(m.cell[0][0]);
+}
+
+// An unproven quiesce keeps the mask on the chain and reports Holding.
+extern "C" void test_balance_controller_quiesce_hold_keeps_mask(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[3][7] = 4100;
+    balance::Controller c;
+    c.step(make_inputs(state));
+    TEST_ASSERT_TRUE(c.mask().cell[3][7]);
+
+    c.hold_for_quiesce_failure();
+    TEST_ASSERT_EQUAL(balance::State::Holding, c.status().state);
+    TEST_ASSERT_TRUE(c.status().inhibit & balance::inhibit::QuiesceFailHold);
+    TEST_ASSERT_TRUE_MESSAGE(c.mask().cell[3][7], "held mask must be unchanged");
+
+    c.step(make_inputs(state));                        // next clean window
+    TEST_ASSERT_EQUAL(balance::State::Active, c.status().state);
+    TEST_ASSERT_EQUAL_HEX16(0, c.status().inhibit);
+}
+
+// Imbalance only in a module 0x104 disabled: blocked, and it says why.
+extern "C" void test_balance_controller_modules_disabled(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[2][4] = 4100;
+    balance::Controller c;
+    const auto& m = c.step(make_inputs(state, fsm::State::Charge, config::BalanceCmd::Auto,
+                                       static_cast<std::uint8_t>(config::AllModulesMask & ~(1u << 2))));
+    TEST_ASSERT_FALSE(any_set(m));
+    TEST_ASSERT_EQUAL(balance::State::Blocked, c.status().state);
+    TEST_ASSERT_EQUAL_HEX16(balance::inhibit::ModulesDisabled, c.status().inhibit);
+}
+
+// The controller feeds its own previous mask back, so a cell keeps bleeding
+// between the stop and start thresholds across windows.
+extern "C" void test_balance_controller_keeps_selection_hysteresis(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[1][2] = 4000 + config::BalanceDeltaMv + 10;
+    balance::Controller c;
+    c.step(make_inputs(state));
+    TEST_ASSERT_TRUE(c.mask().cell[1][2]);
+
+    state.cell_mV[1][2] = 4000 + config::BalanceStopDeltaMv + 5;   // inside the band
+    c.step(make_inputs(state));
+    TEST_ASSERT_TRUE_MESSAGE(c.mask().cell[1][2], "incumbent must hold inside the band");
+    TEST_ASSERT_EQUAL(balance::State::Active, c.status().state);
+}
+
+// Spread is measured from the balancing floor (second-lowest), so one stuck-low
+// tap does not inflate it.
+extern "C" void test_balance_controller_spread_ignores_one_low_outlier(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[0][0] = 3000;                        // single bad tap
+    state.cell_mV[4][10] = 4030;
+    balance::Controller c;
+    c.step(make_inputs(state));
+    TEST_ASSERT_EQUAL_UINT16(30, c.status().spread_mV);
+    TEST_ASSERT_EQUAL(balance::State::Done, c.status().state);
+}
+
+// A window that becomes blocked drops the mask immediately.
+extern "C" void test_balance_controller_clears_mask_when_blocked(void) {
+    auto state = make_uniform_state(4000, 25);
+    state.cell_mV[0][0] = 4100;
+    balance::Controller c;
+    c.step(make_inputs(state));
+    TEST_ASSERT_TRUE(any_set(c.mask()));
+    c.step(make_inputs(state, fsm::State::Run, config::BalanceCmd::On));
+    TEST_ASSERT_FALSE(any_set(c.mask()));
+    TEST_ASSERT_EQUAL_HEX16(balance::inhibit::StateNotAllowed, c.status().inhibit);
 }
