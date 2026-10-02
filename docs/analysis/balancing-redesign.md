@@ -42,13 +42,12 @@ step) a bleed-path self-test.
 |---|---|---|
 | D1 | **Balancing runs only in `Start` and `Charge`.** Never in `Precharge`, `Transition`, `Run` or `Error`, whatever `0x103` says. | Closes FMEA **SEASON-3** (forced balancing while driving). Removes balancing in `Error`: the pit-rebalance path after a fault now requires clearing the fault first. |
 | D2 | **The WarioCharger only displays data; it does not control the charger.** The charger runs its own profile. | Nothing in the system can taper charge current for balancing. The AMS's only lever on charging is the contactors. See §6. |
+| D1a | **`Auto` only in `Charge`; `On` in `Start` or `Charge`.** | No autonomous bleeding in the pit; balancing in `Start` always needs an operator command. |
 | D3 | Design reviewed as a document first; implementation follows in staged PRs (§8). | — |
 
-**Open on D1:** `Auto` is Charge-only today. The proposal keeps `Auto` =
-`Charge` and lets `On` run in `Start` or `Charge`. If `Auto` should also run in
-`Start` (the pack is at rest there, which is ideal for picking), that is a
-one-line change, but it means autonomous bleeding while the car sits in the pit
-with only a WarioCharger link alive.
+**D1 per command:** `Auto` runs **only in `Charge`**; `On` (operator force)
+runs in `Start` or `Charge`. No autonomous balancing while the car sits in
+`Start`.
 
 ---
 
