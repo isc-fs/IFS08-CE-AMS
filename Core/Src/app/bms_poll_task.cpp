@@ -47,9 +47,6 @@ namespace {
 osTimerId_t s_volt_timer = nullptr;
 osTimerId_t s_temp_timer = nullptr;
 
-// Bus-level SPI failures (HAL_OK != 0). Volatile so it can be read via the
-// symbol. The per-IC PEC-error counter is separate and lives in bms_service.cpp.
-volatile std::uint32_t g_ltc_spi_err_count = 0;
 
 // Voltage-poll round-trip time: last cycle, and worst case since boot. Lets the
 // HIL operator confirm the poll fits inside its 200 ms budget without a scope.
@@ -74,6 +71,16 @@ extern "C" volatile std::uint8_t  g_balance_state     = 0;   // balance::State
 extern "C" volatile std::uint16_t g_balance_inhibit   = 1;   // balance::inhibit bits; OpOff until the first window
 extern "C" volatile std::uint8_t  g_balance_active    = 0;   // cells discharging
 extern "C" volatile std::uint16_t g_balance_spread_mv = 0;   // highest - floor
+
+// The same state, active count and inhibit bits packed into ONE 32-bit word
+// (bits 0..7 state, 8..15 active, 16..31 inhibit), so a reader that needs all
+// three from the same window -- the SD log row -- gets them in a single atomic
+// load instead of three that can straddle an update.
+extern "C" volatile std::uint32_t g_balance_status_word = 1u << 16;   // OpOff until the first window
+
+// Bus-level SPI failures (HAL_OK != 0), published for pit-diag and the SD log.
+// The per-IC PEC-error counter is separate and lives in bms_service.cpp.
+extern "C" volatile std::uint32_t g_ltc_spi_err_count = 0;
 
 // Counts the times run_voltage_poll re-woke and reconfigured the chain after
 // consecutive failed polls. Zero on a healthy bus; climbing means the chain is
@@ -144,6 +151,9 @@ void publish_balance_status() noexcept {
     g_balance_inhibit   = st.inhibit;
     g_balance_active    = st.active;
     g_balance_spread_mv = st.spread_mV;
+    g_balance_status_word = static_cast<std::uint32_t>(st.state) |
+                            (static_cast<std::uint32_t>(st.active) << 8) |
+                            (static_cast<std::uint32_t>(st.inhibit) << 16);
 }
 
 // Set by quiesce_balancing() when it could not prove discharge was off, i.e. the

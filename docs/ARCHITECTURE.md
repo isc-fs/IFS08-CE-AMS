@@ -42,8 +42,8 @@ Everything else exists to enforce these:
 
    The debounce exists because a cell physically cannot leave its valid
    window for one 10 ms tick and return; a single sub-threshold sample is
-   a torn read of the lock-free `BmsState` snapshot or an unsettled first
-   poll, and must not latch a sticky ERROR. The confirm window is sized to
+   a measurement glitch or an unsettled first poll, and must not latch a
+   sticky ERROR. The confirm window is sized to
    span **more than one** 200 ms voltage poll, so a transient that clears
    on the next poll never reaches the count. The arithmetic that has to
    stay true: one poll to observe (200 ms) + confirm (250 ms) + one tick
@@ -105,10 +105,11 @@ Everything else exists to enforce these:
 
 6. **Shared sensor state has one writer per service.** Single-writer /
    many-reader contract — Cortex-M7 32-bit aligned loads/stores are
-   atomic. Multi-field reads can briefly observe a mid-update snapshot,
-   but the predicates and telemetry are tolerant of one-cycle staleness:
-   the worst case is one extra predicate evaluation that corrects on the
-   next 10 ms iteration. No mutex is taken anywhere in app code. See § 7.
+   atomic. `BmsService` is double-buffered, so its snapshots are always one
+   complete update. `CurrentService` and `VehicleService` are plain copies
+   and a reader can briefly observe a mid-update mix there; the predicates
+   and telemetry tolerate one-cycle staleness. No mutex is taken anywhere in
+   app code. See § 7.
 
 7. **A boot-grace window suppresses data-presence predicates for
    `SafetyBootGraceMs` (2000 ms) after `osKernelStart`.** At t = 0 every
@@ -297,14 +298,15 @@ Three details that are easy to miss and are load-bearing:
   already open from the latch path, and `fsm::step`'s any-state→`Error`
   branch is a backstop that normal operation never reaches.
 
-The SD log push is a bounded ~630 B struct copy into a wait-free ring at
+The SD log push is a bounded ~690 B struct copy into a wait-free ring at
 4 Hz. It never blocks and never faults — a full ring (card stalled, log
-being pulled) simply drops the record. No record is pushed until every BMS
-module has reported once (`first_full_poll_done`, gated by
-`log_csv::sample_due`): before that the cells still hold the 3700 mV boot
-seed, and a row would log a 351.5 V pack that was never measured. The price
-is that a boot whose chain never completes a full poll leaves a header-only
-file on the card; the fault itself is still latched and sent on CAN.
+being pulled) simply drops the record. Rows are written from boot. Until
+every BMS module has reported once (`first_full_poll_done`, logged as
+`bms_valid`) the cells still hold the 3700 mV boot seed, so every
+BMS-derived column (cells, temperatures, `pack_mV`, `vmin/vmax`,
+`tmin/tmax/tavg`) is written **empty** — the row still records state,
+faults, current and the link flags, so a boot whose chain never comes up
+is logged rather than lost.
 
 ### BmsPollTask body
 
@@ -883,12 +885,17 @@ through a copying `snapshot()`. **Single-writer / many-reader**, lock-free.
 | [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (`update_from_adc`, `update_dcdc_from_adc`) | MainTask, AcuCanTask, CurrentSensorTask (SoC) |
 | [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `AcuCanTask` (`update_from_frame`: VCU `0x100`, charge request `0x101`, balance override `0x103`, per-module balance `0x104`) | MainTask, BmsPollTask (balance commands), AcuCanTask (pit-diag) |
 
-Concurrency model: Cortex-M7 32-bit aligned loads/stores are atomic. A
-multi-field `snapshot()` from a non-writer task can briefly observe a
-mid-update mix — the predicates and telemetry are tolerant of one-cycle
-staleness, and the fault-detail byte even has a sentinel
-(`NoOffendingModule` = 0xFF) that makes a torn read *visible* on pit-diag
-rather than silently misattributed.
+Concurrency model: Cortex-M7 32-bit aligned loads/stores are atomic.
+**`BmsService` is double-buffered**: each update ends by copying the working
+state into the inactive of two published buffers and flipping an atomic
+index, and `snapshot()` copies the active buffer, so a reader never sees a
+half-written poll. That relies on every `BmsService` reader running at a
+higher priority than `BmsPollTask` (a reader can preempt the writer, never
+the reverse). `CurrentService` and `VehicleService` are plain copies, so a
+higher-priority reader can still observe a mid-update mix there; the
+predicates and telemetry tolerate one-cycle staleness. The fault-detail
+sentinel (`NoOffendingModule` = 0xFF) makes an inconsistent cell snapshot
+*visible* on pit-diag — with double buffering it should no longer occur.
 
 ### `BmsState` shape
 
@@ -937,6 +944,28 @@ selector ranks are untrustworthy.
 never faults — this is the one place where a *dropped* datum is the
 correct outcome.
 
+**Columns** (`log_record.hpp`). Every column is declared once in an X-macro
+table that both `build_header` and `format_row` expand, so the header and the
+rows cannot drift apart. Order: 19 head scalars, 95 cells `c<m>_<n>` (mV),
+200 temperatures `t<m>_<n>` (whole °C), then the tail. New columns are only
+appended to the tail, so existing positions never move. An **empty field**
+means no valid value (never 0, which is a real reading). Every value in a
+row is captured by `MainTask` in the same tick.
+
+| Tail column | Meaning |
+|---|---|
+| `bal_state`, `bal_inhibit`, `bal_active` | balancing status (`0x6CC` semantics), from one atomic word |
+| `bms_valid` | 1 once every module has reported; BMS columns are empty while 0 |
+| `bms_age_ms` | age of the newest module poll in this row's snapshot (rows and polls do not line up), saturating, 65535 = none |
+| `soc_ppm`, `soc_sig_ppm` | SoC and its 1-σ at 1 ppm (0.0648 A·s at 18 Ah); empty while the estimator has none |
+| `soc_flags`, `soc_seeds` | `soc::flags` (valid / corrected / correction skipped / coulomb-only) and a wrapping seed count |
+| `q_dis_mAs`, `q_chg_mAs`, `q_gaps` | monotonic charge totals (`soc::ChargeTally`), never clamped; the difference between any two rows is the exact charge moved. `q_gaps` counts intervals not integrated |
+| `dcbus_age_ms`, `veh_flags`, `chg_age_ms` | age of the last `0x100` (`dcbus_V` holds the last value forever), `dc_bus_valid` / `discharge_engaged` / `ecu_discharge_capable`, age of the last `0x101` |
+| `pec_err`, `spi_err`, `chain_rec` | isoSPI running totals: PEC errors, SPI failures, chain recoveries |
+
+Sign convention: `+` current = discharge. `I_filt_mA` is the IIR-filtered
+pack current; `I_raw_mA` the single sample.
+
 ### The IMU ring
 
 `ImuTask` reads the MLC's BMI088 every 10 ms (100 Hz) over I2C2 and pushes a
@@ -966,8 +995,8 @@ no rows and the task retries once a second.
   paired with `LOGnnnn.CSV`: same index, opened against the same window,
   rotated and sealed together, with the IMU half sealed first so an
   interrupted seal is still found as an orphan. `tick_ms` is the same clock
-  in both files. With no BMS the LOG half gets no rows, so the IMU rows are
-  what rotate the pair and each window leaves a header-only LOG file.
+  in both files. The LOG half has rows from boot (BMS columns empty until the
+  first full poll), so it normally drives rotation.
 
 ---
 

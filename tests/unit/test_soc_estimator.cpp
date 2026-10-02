@@ -397,3 +397,43 @@ extern "C" void test_soc_ekf_beats_coulomb_counting_with_a_biased_sensor(void) {
     TEST_ASSERT_TRUE_MESSAGE(ekf_abs < cc_abs / 2,
                              "EKF must beat CC under a biased current sensor");
 }
+
+// correct() reports whether it actually corrected, so the SD log can tell a
+// filter that is being corrected from one that is only predicting.
+extern "C" void test_soc_ekf_correct_reports_whether_applied(void) {
+    soc::KalmanSoc k;
+    TEST_ASSERT_FALSE_MESSAGE(k.correct(3655, 0, 25), "no estimate yet: nothing to correct");
+    k.seed(3655);
+    TEST_ASSERT_TRUE(k.correct(3655, 0, 25));
+}
+
+// ChargeTally: monotonic, split by direction (+ = discharge), mA*s.
+extern "C" void test_soc_tally_splits_by_direction(void) {
+    soc::ChargeTally t;
+    t.add(10000, 50);     // 10 A discharge for 50 ms = 500 mA*s
+    t.add(-2000, 100);    // 2 A charge for 100 ms   = 200 mA*s
+    t.add(10000, 50);
+    TEST_ASSERT_EQUAL_UINT32(1000u, t.discharge_mAs());
+    TEST_ASSERT_EQUAL_UINT32(200u,  t.charge_mAs());
+    TEST_ASSERT_EQUAL_UINT16(0u,    t.gaps());
+}
+
+// Accumulated in mA*ms, so samples far below 1 mA*s each are not lost.
+extern "C" void test_soc_tally_keeps_small_samples(void) {
+    soc::ChargeTally t;
+    for (int i = 0; i < 1000; ++i) t.add(15, 50);   // 0.75 mA*s each
+    TEST_ASSERT_EQUAL_UINT32(750u, t.discharge_mAs());
+}
+
+// An interval too long to trust, or one explicitly skipped, is not integrated
+// and is counted as a gap; a zero interval is ignored.
+extern "C" void test_soc_tally_counts_gaps(void) {
+    soc::ChargeTally t;
+    t.add(10000, config::SocMaxIntegrationGapMs + 1u);
+    t.skip();
+    t.add(10000, 0);
+    TEST_ASSERT_EQUAL_UINT32(0u, t.discharge_mAs());
+    TEST_ASSERT_EQUAL_UINT16(2u, t.gaps());
+    t.add(10000, config::SocMaxIntegrationGapMs);   // exactly the limit still counts
+    TEST_ASSERT_EQUAL_UINT32(10u * config::SocMaxIntegrationGapMs, t.discharge_mAs());
+}

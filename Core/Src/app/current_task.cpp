@@ -44,6 +44,8 @@
 #include "cmsis_os2.h"
 #include "main.h"
 
+#include <cmath>
+
 extern "C" {
 extern ADC_HandleTypeDef hadc3;
 }
@@ -54,6 +56,23 @@ extern ADC_HandleTypeDef hadc3;
 // g_state_telemetry. TELEMETRY ONLY: no safety predicate reads this, and
 // nothing downstream of it can influence the FSM, the contactors or AMS_OK.
 extern "C" volatile std::uint8_t g_soc_percent = ams::soc::Unknown;
+
+// The same estimate at full resolution, for the SD log. 1 % of an 18 Ah pack is
+// 648 A*s, which hides everything the filter does between log rows; 1 ppm is
+// 0.0648 A*s. g_soc_ppm / g_soc_sig_ppm (1-sigma, sqrt of the filter variance)
+// are meaningful only while g_soc_flags has soc::flags::Valid. g_soc_seeds is a
+// wrapping count of seeds, so a reader spots a re-seed between two rows without
+// anyone having to clear a flag. Single writer: this task. TELEMETRY ONLY.
+extern "C" volatile std::uint32_t g_soc_ppm     = 0;
+extern "C" volatile std::uint32_t g_soc_sig_ppm = 0;
+extern "C" volatile std::uint8_t  g_soc_flags   = 0;
+extern "C" volatile std::uint8_t  g_soc_seeds   = 0;
+
+// Monotonic charge totals (soc::ChargeTally) for the SD log, mA*s, wrapping.
+// Single writer: this task. TELEMETRY ONLY.
+extern "C" volatile std::uint32_t g_q_dis_mAs = 0;
+extern "C" volatile std::uint32_t g_q_chg_mAs = 0;
+extern "C" volatile std::uint16_t g_q_gaps    = 0;
 
 namespace {
 
@@ -76,6 +95,23 @@ volatile std::uint8_t  g_current_disconnect_streak = 0;
 // ---------------------------------------------------------------------------
 ams::soc::KalmanSoc s_soc;
 std::uint32_t       s_soc_last_tick = 0;
+
+ams::soc::ChargeTally s_charge;
+std::uint32_t         s_charge_last_tick = 0;
+
+// Publish the full-resolution estimate for the SD log. sigma is the square root
+// of the filter variance, in the same ppm units as the estimate.
+void publish_soc(std::uint8_t flags) noexcept {
+    if (s_soc.valid()) {
+        g_soc_ppm     = static_cast<std::uint32_t>(s_soc.soc() * 1e6 + 0.5);
+        g_soc_sig_ppm = static_cast<std::uint32_t>(std::sqrt(s_soc.variance()) * 1e6 + 0.5);
+        flags         = static_cast<std::uint8_t>(flags | ams::soc::flags::Valid);
+    } else {
+        g_soc_ppm     = 0;
+        g_soc_sig_ppm = 0;
+    }
+    g_soc_flags = flags;
+}
 
 // State-of-charge update, run once per CurrentPeriodMs (50 ms).
 //
@@ -103,6 +139,7 @@ void update_soc() noexcept {
         // rather than publish a number we cannot stand behind.
         s_soc.invalidate();
         g_soc_percent   = soc::Unknown;
+        publish_soc(0u);
         s_soc_last_tick = now;
         return;
     }
@@ -121,6 +158,7 @@ void update_soc() noexcept {
     const bool cells_trustworthy =
         bms.module_online_mask == config::AllModulesMask && bms.first_full_poll_done;
 
+    std::uint8_t flags = 0;
     if (cells_trustworthy) {
         // Seed on the first good sample. Unlike the pure-CC path this does NOT
         // wait for the pack to rest: P starts wide and the correction step
@@ -129,14 +167,19 @@ void update_soc() noexcept {
         // I^2 term in R makes the filter discount it until the pack quietens.
         if (!s_soc.valid()) {
             s_soc.seed(bms.min_cell_mV);
+            g_soc_seeds = static_cast<std::uint8_t>(g_soc_seeds + 1u);
         }
         // Minimum cell: usable pack charge is set by the weakest element.
         // avg_tempC drives R_int -- we cannot know the min cell's own
         // temperature, and the pack average is the honest representative.
-        s_soc.correct(bms.min_cell_mV, cur.filtered_mA, bms.avg_tempC);
+        flags = s_soc.correct(bms.min_cell_mV, cur.filtered_mA, bms.avg_tempC)
+                    ? soc::flags::Corrected : soc::flags::CorrectionSkipped;
+    } else {
+        flags = soc::flags::CoulombOnly;
     }
 
     g_soc_percent = s_soc.soc_percent();
+    publish_soc(flags);
 }
 
 // One-shot single-channel read on ADC3. Reconfigures rank 1 to the
@@ -211,8 +254,23 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
             const bool sensor_fault =
                 g_current_disconnect_streak >= ams::config::CurrentDisconnectConfirm;
 
-            ams::CurrentService::instance().update_from_adc(
-                raw_pack, osKernelGetTickCount(), sensor_fault);
+            const std::uint32_t t_pack = osKernelGetTickCount();
+            ams::CurrentService::instance().update_from_adc(raw_pack, t_pack, sensor_fault);
+
+            // Monotonic charge totals for the SD log: this sample held since the
+            // previous good one. A faulted sensor's reading is not charge.
+            if (s_charge_last_tick != 0u) {
+                if (sensor_fault) {
+                    s_charge.skip();
+                } else {
+                    s_charge.add(ams::CurrentService::instance().snapshot().raw_mA,
+                                 t_pack - s_charge_last_tick);
+                }
+                g_q_dis_mAs = s_charge.discharge_mAs();
+                g_q_chg_mAs = s_charge.charge_mAs();
+                g_q_gaps    = s_charge.gaps();
+            }
+            s_charge_last_tick = t_pack;
         } else {
             ++g_current_adc_fail;
         }

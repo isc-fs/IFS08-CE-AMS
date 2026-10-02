@@ -153,8 +153,10 @@ Two consequences you must carry into any new code that touches the chain:
 - **PEC validity is per IC, not per group.** All four groups of an IC must be
   PEC-clean; one bad group drops that IC's *entire* slice for the cycle
   (its cell slots keep their previous values) and increments
-  `g_ltc_pec_err_count[ic]`. The decode is done in two passes precisely so
-  a half-updated module is never observable through `snapshot()`. See §6.
+  `g_ltc_pec_err_count[ic]`. The decode is done in two passes so a PEC
+  failure leaves that IC's previous cells rather than a mix; readers never
+  see the update in progress at all, because `snapshot()` reads the buffer
+  published when the update returns (`BmsService` is double-buffered). See §6.
 
 Anti-regression test:
 `tests/unit/test_bms_service.cpp::test_bms_ltc_clean_response_decodes_all_cells`

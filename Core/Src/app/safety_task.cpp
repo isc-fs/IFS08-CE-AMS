@@ -44,6 +44,20 @@ extern FDCAN_HandleTypeDef hfdcan1;
 // osThreadNew silently failed at boot.
 extern osThreadId_t BmsPollTaskHandle;
 
+// Published by other tasks and read here ONLY to fill the SD log row. None of
+// them feeds a predicate, the FSM or a relay decision.
+extern volatile std::uint32_t g_balance_status_word;     // BmsPollTask
+extern volatile std::uint32_t g_soc_ppm;                 // CurrentSensorTask
+extern volatile std::uint32_t g_soc_sig_ppm;
+extern volatile std::uint8_t  g_soc_flags;
+extern volatile std::uint8_t  g_soc_seeds;
+extern volatile std::uint32_t g_q_dis_mAs;
+extern volatile std::uint32_t g_q_chg_mAs;
+extern volatile std::uint16_t g_q_gaps;
+extern volatile std::uint32_t g_ltc_pec_err_count[ams::config::LtcChainLength];  // BmsService
+extern volatile std::uint32_t g_ltc_spi_err_count;       // BmsPollTask
+extern volatile std::uint32_t g_ltc_chain_recover_count;
+
 }
 
 // FSM state mirror exposed for BmsPollTask / other read-only consumers.
@@ -430,12 +444,12 @@ void SafetyTask::run() noexcept {
         // from THIS tick's snapshots. sd_log_push() never blocks and never
         // faults -- a full ring (SD stall / log-pull) just drops the record.
         // Off the safety path; the only cost on the 10 ms loop is a bounded
-        // ~590 B struct copy at 4 Hz. Nothing is sampled until every BMS module
-        // has reported once, so the 3700 mV boot seed never reaches the card
-        // (log_csv::sample_due).
-        if (log_csv::sample_due(bms_snap.first_full_poll_done, now, last_log_tick)) {
+        // ~690 B struct copy at 4 Hz. Rows are written from boot; until every
+        // BMS module has reported once (bms_valid) the BMS-derived columns are
+        // written empty, so the 3700 mV boot seed never reaches the card.
+        if (log_csv::sample_due(now, last_log_tick)) {
             last_log_tick = now;
-            // Static scratch: keep the 632 B record off the SafetyTask stack
+            // Static scratch: keep the ~690 B record off the SafetyTask stack
             // (it already holds a ~620 B bms_snap). Single-writer, fully
             // overwritten every pass before push -- no concurrency concern.
             static LogRecord rec{};
@@ -461,6 +475,34 @@ void SafetyTask::run() noexcept {
             rec.dash_chg            = dash_chg ? 1u : 0u;
             std::memcpy(rec.cell_mV,    bms_snap.cell_mV,    sizeof rec.cell_mV);
             std::memcpy(rec.cell_tempC, bms_snap.cell_tempC, sizeof rec.cell_tempC);
+
+            // Tail columns, all from this same tick.
+            const std::uint32_t bal = g_balance_status_word;   // one atomic load
+            rec.bal_state    = static_cast<std::uint8_t>(bal & 0xFFu);
+            rec.bal_active   = static_cast<std::uint8_t>((bal >> 8) & 0xFFu);
+            rec.bal_inhibit  = static_cast<std::uint16_t>(bal >> 16);
+            rec.bms_valid    = bms_snap.first_full_poll_done ? 1u : 0u;
+            rec.bms_age_ms   = log_csv::newest_age_ms(now, bms_snap.last_rx_tick,
+                                                      config::BmsModuleCount);
+            rec.soc_ppm      = g_soc_ppm;
+            rec.soc_sig_ppm  = g_soc_sig_ppm;
+            rec.soc_flags    = g_soc_flags;
+            rec.soc_seeds    = g_soc_seeds;
+            rec.q_dis_mAs    = g_q_dis_mAs;
+            rec.q_chg_mAs    = g_q_chg_mAs;
+            rec.q_gaps       = g_q_gaps;
+            rec.dcbus_age_ms = log_csv::age_ms(now, veh_snap.last_dc_bus_tick);
+            rec.veh_flags    = static_cast<std::uint8_t>(
+                                   (veh_snap.dc_bus_valid          ? 1u : 0u) |
+                                   (veh_snap.discharge_engaged     ? 2u : 0u) |
+                                   (veh_snap.ecu_discharge_capable ? 4u : 0u));
+            rec.chg_age_ms   = log_csv::age_ms(now, veh_snap.last_charge_req_tick);
+            std::uint32_t pec = 0;
+            for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) pec += g_ltc_pec_err_count[i];
+            rec.pec_err      = pec;
+            rec.spi_err      = g_ltc_spi_err_count;
+            rec.chain_rec    = g_ltc_chain_recover_count;
+
             sd_log_push(rec);
         }
     }

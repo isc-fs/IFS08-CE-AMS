@@ -344,9 +344,13 @@ public:
 
     // Voltage correction against the equivalent-circuit model. `cell_mV` should
     // be the MINIMUM cell: usable pack charge is set by the weakest element.
-    void correct(std::uint16_t cell_mV, std::int32_t current_mA,
+    // Returns true when the estimate was actually corrected; false when there
+    // is no estimate yet or the measurement carried no SoC information (flat
+    // OCV slope). The SD log records which, so a run of uncorrected updates is
+    // visible rather than looking like a confident filter.
+    bool correct(std::uint16_t cell_mV, std::int32_t current_mA,
                  std::int16_t tempC) noexcept {
-        if (!converged_) return;
+        if (!converged_) return false;
 
         const double amps = static_cast<double>(current_mA) * 1e-3;
         const double z    = static_cast<double>(cell_mV) * 1e-3;
@@ -358,18 +362,19 @@ public:
 
         // Flat curve (or railed outside it) -> this measurement carries no SoC
         // information. Bail rather than divide by a near-zero denominator.
-        if (H <= 1e-6) return;
+        if (H <= 1e-6) return false;
 
         const double R = config::SocEkfMeasVarBase +
                         config::SocEkfMeasVarPerA2 * amps * amps;
         const double S = H * var_ * H + R;
-        if (S <= 0.0) return;
+        if (S <= 0.0) return false;
 
         const double K = var_ * H / S;
         soc_ += K * (z - h);
         var_  = (1.0 - K * H) * var_;
         if (var_ < 0.0) var_ = 0.0;      // guard against FP round-off
         clamp();
+        return true;
     }
 
     [[nodiscard]] double soc() const noexcept { return soc_; }
@@ -394,6 +399,57 @@ private:
     double soc_       = 0.0;
     double var_       = config::SocEkfInitVar;
     bool  converged_ = false;
+};
+
+// Bits of the SoC status byte CurrentSensorTask publishes for the SD log.
+namespace flags {
+inline constexpr std::uint8_t Valid             = 1u << 0;  // an estimate exists (soc_ppm is meaningful)
+inline constexpr std::uint8_t Corrected         = 1u << 1;  // this update applied a voltage correction
+inline constexpr std::uint8_t CorrectionSkipped = 1u << 2;  // correction attempted, measurement carried no SoC information
+inline constexpr std::uint8_t CoulombOnly       = 1u << 3;  // cells not trustworthy: predicted from current alone
+}  // namespace flags
+
+// Monotonic charge totals for the SD log, split by direction.
+//
+// Unlike KalmanSoc and CoulombCounter this is never clamped, never anchored and
+// never reset during a boot, so the difference between ANY two log rows is the
+// exact charge that moved between them -- even when rows in between were
+// dropped from a full logging ring -- and that difference over the time between
+// the rows is the mean current. Accumulated in mA*ms (64-bit, no rounding per
+// sample) and read in mA*s; the 32-bit read wraps after 2^32 mA*s (~1193 Ah),
+// which a reader handles with unsigned subtraction.
+//
+// An interval longer than SocMaxIntegrationGapMs, or one taken while the sensor
+// was faulted, is not integrated: integrating across it would invent charge that
+// may never have flowed. Each such interval bumps a wrapping gap counter so the
+// log shows that charge went unaccounted.
+class ChargeTally {
+public:
+    // One current sample held over dt_ms. + current = DISCHARGE.
+    void add(std::int32_t current_mA, std::uint32_t dt_ms) noexcept {
+        if (dt_ms == 0u) return;
+        if (dt_ms > config::SocMaxIntegrationGapMs) { skip(); return; }
+        const std::int64_t  i  = current_mA;
+        const std::uint64_t mag = static_cast<std::uint64_t>(i < 0 ? -i : i);
+        const std::uint64_t q   = mag * static_cast<std::uint64_t>(dt_ms);
+        if (current_mA >= 0) dis_mAms_ += q; else chg_mAms_ += q;
+    }
+
+    // An interval that could not be integrated (sensor fault, missed sample).
+    void skip() noexcept { ++gaps_; }
+
+    [[nodiscard]] std::uint32_t discharge_mAs() const noexcept {
+        return static_cast<std::uint32_t>(dis_mAms_ / 1000u);
+    }
+    [[nodiscard]] std::uint32_t charge_mAs() const noexcept {
+        return static_cast<std::uint32_t>(chg_mAms_ / 1000u);
+    }
+    [[nodiscard]] std::uint16_t gaps() const noexcept { return gaps_; }
+
+private:
+    std::uint64_t dis_mAms_ = 0;
+    std::uint64_t chg_mAms_ = 0;
+    std::uint16_t gaps_     = 0;
 };
 
 }  // namespace ams::soc
