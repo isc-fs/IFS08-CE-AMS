@@ -12,6 +12,9 @@
 > findings now live in [`../BMS_LTC6811.md`](../BMS_LTC6811.md) and
 > [`../FMEA.md`](../FMEA.md); trust those for current behaviour and read this
 > for *why*.
+>
+> **Successor:** [`balancing-redesign.md`](balancing-redesign.md) (v3.0.2,
+> 2026-10-02) proposes the next round of changes.
 
 ---
 
