@@ -12,6 +12,7 @@
 #include "ams_config.hpp"
 #include "can_frame.hpp"
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 
@@ -217,9 +218,9 @@ public:
                                  std::size_t         len,
                                  std::uint16_t*      out) noexcept;
 
-    // Returns the caller its own copy of the full state. Lock-free, so a reader
-    // can briefly observe a mid-update snapshot; every consumer tolerates that
-    // (see the single-writer note at the top of bms_service.cpp).
+    // Returns the caller its own copy of the full state, always one complete
+    // published update -- never a mix of two polls (see the double-buffer note
+    // at the top of bms_service.cpp).
     [[nodiscard]] BmsState snapshot() const noexcept;
 
     // True iff all 5 modules have reported within BmsStaleMs and
@@ -242,7 +243,24 @@ private:
     // per-module aggregates from the cell and temperature matrices.
     void recompute_summaries_() noexcept;
 
+    // Copy state_ into the inactive published buffer and make it the active
+    // one. Called once at the end of every update, by the writer only.
+    void publish_() noexcept;
+
+    // Runs publish_() when an update returns, on every return path.
+    struct PublishOnExit {
+        BmsService& svc;
+        ~PublishOnExit() { svc.publish_(); }
+    };
+
+    // The writer's (BmsPollTask's) working copy. Updates change it field by
+    // field; readers never see it directly.
     mutable BmsState state_ = {};
+
+    // The two published copies and which one is current. A reader copies
+    // published_[active_]; the writer only ever overwrites the other one.
+    BmsState                  published_[2] = {};
+    std::atomic<std::uint8_t> active_{0};
 
     // Per cell-temp-channel disconnect tracking; not part of the snapshot.
     // seen_valid_ latches once a channel has produced a real reading, so an

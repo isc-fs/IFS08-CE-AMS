@@ -81,8 +81,8 @@ matters for the Formula Student "< 500 ms" rules:
 Two honest consequences a newcomer must internalise:
 
 1. **Cell range faults are deliberately slow.** The debounce exists
-   because the `BmsState` snapshot can be read mid-update (see §3) and a
-   single torn read must never latch a sticky `Error`. A cell cannot
+   because a single glitched or unsettled sample must never latch a sticky
+   `Error`. A cell cannot
    leave its window for one 10 ms tick and come back, so ~250 ms of
    confirmation costs nothing real.
 2. **Over-current does not trip fast, by design.** The filter is the
@@ -236,15 +236,14 @@ Three ideas do most of the work:
    BmsPollTask), `CurrentService` (CurrentSensorTask), `VehicleService`
    (AcuCanTask). Each has exactly one writer and many readers; no mutex
    is taken. **Do not read this as "reads are atomic."** Individual
-   32-bit aligned words are atomic on the Cortex-M7, but
-   `BmsService::snapshot()` returns a copy of a ~690-byte struct while
-   the writer may be part-way through updating it, so a reader *can*
-   observe a mid-update mix — a torn read. The design
-   tolerates it deliberately: telemetry only ever looks stale, and the
-   safety path is protected by the cell V/T debounce and the
-   `first_full_poll_done` gate. If you add a predicate that cannot
-   survive a torn read, that is your problem to solve, not the
-   service's.
+   32-bit aligned words are atomic on the Cortex-M7, but a service
+   snapshot is a copy of a whole struct. `BmsService` is double-buffered,
+   so its snapshot is always one complete update — provided every reader
+   runs above `BmsPollTask`'s priority (see the header of
+   `bms_service.cpp`). `CurrentService` and `VehicleService` are plain
+   copies: a higher-priority reader *can* observe a mid-update mix there.
+   If you add a predicate that cannot survive that, it is yours to solve,
+   not the service's.
 3. **Pure-logic core.** The FSM
    ([`state_machine.hpp`](../Core/Inc/app/state_machine.hpp)), the fault
    predicates

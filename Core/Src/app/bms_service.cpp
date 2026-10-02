@@ -12,12 +12,26 @@
 #include <cstdint>
 #include <limits>
 
-// Lock-free single-writer / multi-reader contract. BmsPollTask is the only
-// writer; MainTask, AcuCanTask and BalanceController are readers. Cortex-M7
-// 32-bit aligned loads/stores are atomic, so a multi-field read can briefly
-// observe a mid-update snapshot -- the predicates and telemetry tolerate one
-// cycle of staleness. CubeMX still declares bms_mutexHandle in main.c, but no
-// app code takes it.
+// Lock-free single-writer / multi-reader contract, double-buffered.
+// BmsPollTask is the only writer; MainTask, AcuCanTask and CurrentSensorTask
+// read snapshots (BmsPollTask itself reads its own).
+//
+// An update writes the cells IC by IC and recomputes the summaries only at the
+// end, so the working copy (state_) is inconsistent mid-update. Readers never
+// see it: every update ends by copying state_ into the INACTIVE of two published
+// buffers and then flipping active_ with one atomic store, and snapshot() copies
+// the active buffer. A snapshot is therefore always one complete update.
+//
+// Why double buffering and not a seqlock: every reader runs at a HIGHER
+// priority than BmsPollTask (Realtime 48 / AboveNormal 32 vs Normal 24). On a
+// single core a reader can preempt the writer mid-update but never the reverse,
+// so a seqlock reader that found an update in progress could never wait it out
+// -- the writer cannot run until the reader yields. With two buffers the writer
+// only ever overwrites the buffer no reader is pointed at, and a reader's copy,
+// once started, cannot be interrupted by the writer. That invariant (no reader
+// below BmsPollTask's priority) is what makes this safe; a new lower-priority
+// reader would need a retry check. CubeMX still declares bms_mutexHandle in
+// main.c, but no app code takes it.
 
 namespace ams {
 
@@ -63,6 +77,7 @@ BmsService::BmsService() {
     }
 
     state_.first_full_poll_done = false;
+    publish_();
 }
 
 namespace {
@@ -239,6 +254,7 @@ void BmsService::recompute_summaries_() noexcept {
 bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
                                           std::size_t         len,
                                           std::uint32_t       now_tick_ms) noexcept {
+    const PublishOnExit publish_on_exit{*this};   // readers see this update only once it is complete
     constexpr std::size_t Seg        = 8;                              // 6 data + 2 PEC
     constexpr std::size_t GroupBytes = config::LtcChainLength * Seg; // 10 * 8 = 80
     constexpr std::size_t Expected   = 4u * GroupBytes;               // 320
@@ -246,9 +262,10 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
     if (chain_response == nullptr || len < Expected) return false;
 
 
-    // PEC-check an IC's four groups before committing any of its cells. That
-    // keeps the commit atomic per IC, so a half-updated IC is never observable
-    // through snapshot().
+    // PEC-check an IC's four groups before committing any of its cells, so a
+    // PEC failure leaves that IC's previous cells intact instead of a mix.
+    // (Readers never see this working copy mid-update at all: snapshot() reads
+    // the buffer published when this function returns.)
     std::uint16_t new_ltc_online = 0u;
     std::array<std::array<std::uint16_t, 3>, 4> groups{};  // [group_idx][slot]
 
@@ -340,6 +357,7 @@ bool BmsService::update_from_ltc_response(const std::uint8_t* chain_response,
 bool BmsService::update_temperature(std::uint8_t        channel_idx,
                                     const std::uint8_t* chain_response,
                                     std::size_t         len) noexcept {
+    const PublishOnExit publish_on_exit{*this};   // readers see this update only once it is complete
     constexpr std::size_t Seg      = 8;
     constexpr std::size_t Expected = config::LtcChainLength * Seg;
 
@@ -397,6 +415,7 @@ bool BmsService::update_temperature(std::uint8_t        channel_idx,
 bool BmsService::update_open_wire(const std::uint8_t* pu_reply,
                                  const std::uint8_t* pd_reply,
                                  std::size_t         len, bool accumulate) noexcept {
+    const PublishOnExit publish_on_exit{*this};   // readers see this update only once it is complete
     // Gated off -> report "no open" so a stale mask cannot linger, and report
     // fully evaluated so the caller does not retry.
     if (!config::CellOpenWireCheck) {
@@ -537,16 +556,24 @@ void BmsService::capture_adow_raw(const std::uint8_t* pu_reply,
     }
 }
 
+void BmsService::publish_() noexcept {
+    const std::uint8_t next =
+        static_cast<std::uint8_t>(active_.load(std::memory_order_relaxed) ^ 1u);
+    published_[next] = state_;
+    active_.store(next, std::memory_order_release);
+}
+
 BmsState BmsService::snapshot() const noexcept {
-    return state_;
+    return published_[active_.load(std::memory_order_acquire)];
 }
 
 bool BmsService::is_healthy(std::uint32_t now_tick) const noexcept {
+    const BmsState& s = published_[active_.load(std::memory_order_acquire)];
 
-    if (state_.module_online_mask != config::AllModulesMask) return false;
+    if (s.module_online_mask != config::AllModulesMask) return false;
 
     for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
-        if (now_tick - state_.last_rx_tick[m] > config::BmsStaleMs) return false;
+        if (now_tick - s.last_rx_tick[m] > config::BmsStaleMs) return false;
     }
     return true;
 }

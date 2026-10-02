@@ -45,13 +45,6 @@ extern "C" {
 // log extraction while the tractive system is live.
 extern volatile std::uint8_t g_state_telemetry;
 
-// Balancing controller status published by BmsPollTask, copied into each LOG
-// row as it is written (see LogRecord::bal_state for why here and not in
-// SafetyTask).
-extern volatile std::uint8_t  g_balance_state;
-extern volatile std::uint16_t g_balance_inhibit;
-extern volatile std::uint8_t  g_balance_active;
-
 // hsd1 is OWNED here. With MX_SDMMC1_SD_Init decoupled in CubeMX the
 // handle is no longer defined in main.c, so the logger -- which now owns SD
 // bring-up -- defines it; bsp_driver_sd.c (the FatFs BSP) externs and drives
@@ -122,6 +115,7 @@ volatile std::uint32_t g_log_rows    = 0;   // CSV rows written
 volatile std::uint32_t g_log_dropped = 0;   // producer drops (ring full)
 volatile std::uint32_t g_log_files   = 0;   // files sealed
 volatile std::uint8_t  g_log_state   = 0;   // 0=boot 1=no_card 2=logging 3=io_error
+volatile std::uint32_t g_log_fmt_fail = 0;  // rows format_row could not fit (should stay 0)
 
 // ---- consumer-side file state ----
 FATFS         g_fs;
@@ -687,11 +681,8 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
         // (3) Drain the ring -> CSV rows.
         ams::LogRecord r;
         while (g_ring.pop(r)) {
-            r.bal_state   = g_balance_state;
-            r.bal_inhibit = g_balance_inhibit;
-            r.bal_active  = g_balance_active;
             const std::size_t n = ams::log_csv::format_row(r, g_rowbuf, sizeof g_rowbuf);
-            if (n == 0) continue;              // skip a malformed row, keep going
+            if (n == 0) { ++g_log_fmt_fail; continue; }   // counted, not silent
             UINT bw = 0;
             if (f_write(&g_fil, g_rowbuf, n, &bw) != FR_OK || bw != n) {
                 teardown(3);                   // card pulled / write error
@@ -739,10 +730,10 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
         // a.TMP that no tool treats as a finished log. Checked outside the
         // drain loop so it still fires during a lull in the ring.
         //
-        // Either half can trigger it, and it always seals both. With no BMS
-        // the LOG file gets no rows (log_csv::sample_due), so the IMU rows are
-        // what rotate the pair, and each window leaves a header-only LOG file
-        // beside its IMU file. That keeps the one-index-one-window pairing.
+        // Either half can trigger it, and it always seals both, which keeps the
+        // one-index-one-window pairing. LOG rows are written from boot (with
+        // the BMS columns empty until the first full poll), so the LOG half
+        // normally drives rotation; the IMU half matters only if LOG rows stop.
         if (g_file_open) {
             const std::uint32_t age = ams::log_rotation::file_age_ms(now, g_file_open_ms);
             if (ams::log_rotation::should_rotate(g_file_bytes, g_rows_this_file, age) ||

@@ -694,23 +694,36 @@ safety one. TICK-1 is the only one that removes protection.
 
 ### CONCURRENCY-1 — Lock-free snapshots and the 0xFF fingerprint · **Latent**
 
-No mutex is taken anywhere in app code. Each service has a single writer, and
-`snapshot()` is a plain struct copy; 32-bit aligned loads and stores are
-atomic on the Cortex-M7. The design tolerates a briefly inconsistent
-multi-field read, and the range predicates are debounced to absorb one.
+No mutex is taken anywhere in app code. Each service has a single writer;
+32-bit aligned loads and stores are atomic on the Cortex-M7.
 
-Worth knowing: under the current priority assignment a torn read is close to
-unreachable. `MainTask` is the **only** `osPriorityRealtime` thread; the
-producers are `AboveNormal` (`AcuCanTask`, `CurrentSensorTask`) and `Normal`
-(`BmsPollTask`), so none of them can preempt `MainTask` mid-copy, and
-`MainTask` does not block inside its snapshot sequence.
+**The torn read is reachable, in one direction.** A writer can never preempt
+`MainTask` mid-copy (`MainTask` is the only `osPriorityRealtime` thread), but
+`MainTask` — and every other higher-priority reader — *can* preempt a writer
+**mid-update**, and then copies a half-written struct. `BmsPollTask` (`Normal`)
+writes the cells IC by IC and recomputes the summaries only at the end, so a
+snapshot taken in between mixed two polls.
+
+**`BmsService`: closed by double buffering.** Every update now ends by
+copying the working state into the inactive of two published buffers and
+flipping an atomic index; `snapshot()` copies the active one. Because all
+`BmsService` readers outrank `BmsPollTask`, the writer never overwrites a
+buffer a reader is copying. A future reader *below* `BmsPollTask`'s priority
+would break that invariant and need a retry check (`bms_service.cpp` header).
+
+**`CurrentService` and `VehicleService`: still plain copies.** `MainTask` can
+preempt `CurrentSensorTask` or `AcuCanTask` mid-update in the same way. Their
+structs are small and the consumers tolerate one inconsistent read (range
+predicates are debounced, freshness ticks are single words), so this stays
+**Latent** for them.
 
 The fingerprint is already built: `module_below()` and friends return
 `NoOffendingModule` = `0xFF` on the fault-detail byte when the summary
 min/max disagrees with the per-module aggregates — the signature of a
-snapshot copied across two poll cycles. **If you ever see `0x6C0[7] == 0xFF`
-on a cell-range fault, treat it as evidence that something changed about task
-priorities or about who writes service state**, not as routine noise.
+snapshot copied across two poll cycles. With `BmsService` double-buffered that
+should no longer happen: **if you ever see `0x6C0[7] == 0xFF` on a cell-range
+fault, treat it as evidence that something changed about task priorities or
+about who writes service state**, not as routine noise.
 
 ---
 
