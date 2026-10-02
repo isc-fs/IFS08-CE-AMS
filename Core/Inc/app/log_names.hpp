@@ -7,11 +7,13 @@
 //   LOGnnnn.TMP / .CSV / .CRC   AMS state rows (log_record.hpp)
 //   IMUnnnn.TMP / .BIN / .CRC   IMU samples    (bin_log.hpp)
 //   CELnnnn.TMP / .BIN / .CRC   cell frames    (bin_log.hpp)
+//   ELEnnnn.TMP / .BIN / .CRC   pack current   (bin_log.hpp)
 //
 // LOGFS addresses a sealed file by a u16 index: the rotation index (0..9999)
-// in the low 14 bits and the kind in the top two -- 00 LOG, 10 IMU, 01 CEL --
-// so IMU0003.BIN is LOGFS index 0x8003 and CEL0003.BIN is 0x4003. 9999 <
-// 0x4000, so the ranges cannot collide; 11 is reserved for the next stream.
+// in the low 14 bits and the kind in the top two -- 00 LOG, 10 IMU, 01 CEL,
+// 11 ELE -- so IMU0003.BIN is LOGFS index 0x8003, CEL0003.BIN 0x4003 and
+// ELE0003.BIN 0xC003. 9999 < 0x4000, so the ranges cannot collide. All four
+// codes are taken: a fifth stream needs a wider index.
 // The host treats the index as opaque and names the pulled file from the LIST
 // entry, so it needs no change to fetch any of them.
 //
@@ -28,11 +30,12 @@
 
 namespace ams::log_names {
 
-enum class Kind : std::uint8_t { Log, Imu, Cel };
+enum class Kind : std::uint8_t { Log, Imu, Cel, Ele };
 enum class Stage : std::uint8_t { Active, Sealed, Crc };
 
 inline constexpr std::uint16_t ImuIndexFlag = 0x8000u;
 inline constexpr std::uint16_t CelIndexFlag = 0x4000u;
+inline constexpr std::uint16_t EleIndexFlag = 0xC000u;
 inline constexpr std::uint16_t KindMask     = 0xC000u;
 inline constexpr std::uint16_t IndexMask    = 0x3FFFu;
 inline constexpr std::uint32_t MaxIndex     = 10000u;   // 4 decimal digits
@@ -59,6 +62,11 @@ inline bool format(char* buf, std::size_t cap, Kind kind, Stage stage,
             : (stage == Stage::Sealed) ? config::CelSealedNameFmt
                                        : config::CelCrcNameFmt;
         break;
+    case Kind::Ele:
+        fmt = (stage == Stage::Active) ? config::EleActiveNameFmt
+            : (stage == Stage::Sealed) ? config::EleSealedNameFmt
+                                       : config::EleCrcNameFmt;
+        break;
     }
     if (fmt == nullptr) return false;
     const int n = std::snprintf(buf, cap, fmt, static_cast<unsigned long>(idx));
@@ -70,6 +78,7 @@ inline bool format(char* buf, std::size_t cap, Kind kind, Stage stage,
                                                          std::uint32_t idx) noexcept {
     const std::uint16_t flag = (kind == Kind::Imu) ? ImuIndexFlag
                              : (kind == Kind::Cel) ? CelIndexFlag
+                             : (kind == Kind::Ele) ? EleIndexFlag
                                                    : 0u;
     return static_cast<std::uint16_t>(flag | (idx & IndexMask));
 }
@@ -81,14 +90,14 @@ inline bool from_logfs_index(std::uint16_t logfs_idx, Kind& kind,
     case 0u:           kind = Kind::Log; break;
     case ImuIndexFlag: kind = Kind::Imu; break;
     case CelIndexFlag: kind = Kind::Cel; break;
-    default:           return false;          // reserved
+    default:           kind = Kind::Ele; break;   // EleIndexFlag
     }
     idx = logfs_idx & IndexMask;
     return idx < MaxIndex;
 }
 
 // "LOGnnnn.CSV" -> nnnn, "IMUnnnn.BIN" -> 0x8000 | nnnn, "CELnnnn.BIN" ->
-// 0x4000 | nnnn. Rejects the growing .TMP, the .CRC sidecar, a kind with the
+// 0x4000 | nnnn, "ELEnnnn.BIN" -> 0xC000 | nnnn. Rejects the growing .TMP, the .CRC sidecar, a kind with the
 // wrong extension and anything else on the card.
 inline bool parse_sealed(const char* name, std::uint16_t& logfs_idx) noexcept {
     if (std::strlen(name) != 11u) return false;
@@ -97,6 +106,7 @@ inline bool parse_sealed(const char* name, std::uint16_t& logfs_idx) noexcept {
     if      (std::strncmp(name, "LOG", 3) == 0) { kind = Kind::Log; ext = ".CSV"; }
     else if (std::strncmp(name, "IMU", 3) == 0) { kind = Kind::Imu; ext = ".BIN"; }
     else if (std::strncmp(name, "CEL", 3) == 0) { kind = Kind::Cel; ext = ".BIN"; }
+    else if (std::strncmp(name, "ELE", 3) == 0) { kind = Kind::Ele; ext = ".BIN"; }
     else return false;
     if (std::strcmp(name + 7, ext) != 0) return false;
     std::uint32_t v = 0;

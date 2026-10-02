@@ -55,7 +55,7 @@ flowchart LR
     AMS -- "isoSPI via LTC6820" --> Chain([10 × LTC6811-1<br/>+ 10 × ADG731<br/>95 cells / 200 NTCs])
     AMS -- "AMS_OK PB4 (driven)<br/>AIR+ PB5 · AIR- PB6 · PRECHARGE PB7" --> SDC([Shutdown circuit + AIRs])
     AMS -- "0x4A0/1/2 · 0x4A4 · 0x020/0x021/0x12C/0x130..0x137<br/>0x680..0x6CB pit-diag · 0x6CA health" --> VCU
-    AMS -- "ADC3 diff PF7/PF8 (pack)<br/>ADC3 SE PC1 (DCDC)" --> CurrSensor([SSA-2-250A shunt<br/>+ DCDC sensor])
+    AMS -- "ADC3 diff PF7/PF8 (pack)" --> CurrSensor([SSA-2-250A shunt])
     AMS -- "SDMMC1 + FatFs" --> SD([microSD CSV log])
 ```
 
@@ -225,7 +225,7 @@ Seven threads, created by CubeMX in `main.c`.
 | **`SafetyTask`** *(MainTask)* | **Realtime (48)** | 512 w | **10 ms** | snapshot · predicate (10 ms) · FSM step (20 ms) · AMS_OK (10 ms) · 0x4A4 (100 ms) · log sample (250 ms) · 0x4A0/1/2 (500 ms) · IWDG | `safety_task.cpp` |
 | `BmsPollTask` | Normal (24) | 1024 w | 200 / 250 ms | ADCV + RDCV[A–D] (+ ADOW open-wire) · ADG731 mux sweep + ADAX/RDAUXA · balance WRCFGA | `bms_poll_task.cpp` |
 | `AcuCanTask` | AboveNormal (32) | 512 w | RX-queue + 50/100/250 ms TX | drain `acu_rx_queue` → VehicleService · ECU TX matrix · boot trigger · LOGFS ISO-TP · pit-diag · Bus-Off recovery · 1 Hz `0x6CA` | `acu_can_task.cpp` |
-| `CurrentSensorTask` | AboveNormal (32) | 256 w | 50 ms | ADC3 pack (diff) + DCDC (SE) · IIR filter · disconnect debounce · SoC EKF | `current_task.cpp` |
+| `CurrentSensorTask` | AboveNormal (32) | 256 w | 50 ms | ADC3 pack (diff, oversampled DMA capture) · ELE windows · IIR filter · disconnect debounce · SoC EKF | `current_task.cpp` |
 | `SdLoggerTask` | Low (8) | 1024 w | drain loop | lazy SD mount · drain `LogRing` → CSV · rotate/seal · serve LOGFS requests | `sd_logger_task.cpp` |
 
 > **Priority discipline.** Only `SafetyTask` writes relay GPIO and drives
@@ -328,7 +328,7 @@ CubeMX still declares `bms_mutex` / `current_mutex` / `vehicle_mutex` in
 | Service | Writer | Readers | Holds |
 |---|---|---|---|
 | **BmsService** | BmsPollTask | SafetyTask, AcuCanTask, CurrentSensorTask, BalanceController | `cell_mV[5][19]`, `cell_tempC[5][40]`, `pack_voltage_mV`, `min/max_cell_mV`, `min/max/avg_tempC`, `valid_temp_channels`, per-module `vmin/vmax/tmax`, `last_rx_tick[5]`, `module_online_mask` (current freshness, not ever-online), `ltc_online_mask` (per-IC PEC-OK this poll), `temp_disconnect_mask`, `tap_fault_mask`, `cell_open_mask`, `cell_open_cells[5]`, `first_full_poll_done` |
-| **CurrentService** | CurrentSensorTask | SafetyTask, BmsPollTask, AcuCanTask | `raw_mA`, `filtered_mA`, `last_update_tick`, `sensor_fault`; independent DCDC set (`dcdc_raw_mA`, `dcdc_filtered_mA`, `last_dcdc_update_tick`, `dcdc_sensor_fault`) |
+| **CurrentService** | CurrentSensorTask | SafetyTask, BmsPollTask, AcuCanTask | `raw_mA`, `filtered_mA`, `last_update_tick`, `sensor_fault` |
 | **VehicleService** | AcuCanTask | SafetyTask, BmsPollTask, AcuCanTask | `dc_bus_V`, `last_dc_bus_tick`, `discharge_engaged`, `ecu_discharge_capable`, `last_charge_req_tick`, `balance_cmd` + `last_balance_override_tick`, `balance_modules_mask` + `last_balance_modules_tick` |
 
 `+ current = discharge` is the sign convention throughout.
@@ -950,7 +950,7 @@ here disagrees with the header, the header is right.**
 | `CellFaultConfirmTicks` | 25 | cell V/T debounce ≈ 250 ms |
 | `BmsStaleConfirmTicks` | 25 | BmsStale confirm ≈ 250 ms |
 | `BmsStaleMs` | 350 | any module silent — tolerates one missed poll, trips on two |
-| `IStaleMs` / `DcdcIStaleMs` | 200 / 500 | pack current stale (safety) / DCDC stale (informational) |
+| `IStaleMs` | 200 | pack current stale (safety) |
 | `VcuStaleMs` | 200 | 0x100 stale (Car-only fault; also the `dc_bus_fresh` window) |
 | `VcuFreshMs` | 1000 | Car-vs-Charger mode-lock window |
 | `ChargerStaleMs` | 1000 | 0x101 stale in Charger mode (charger sends ≥ 2 Hz) |
@@ -998,7 +998,7 @@ Change any of these constants and redo this arithmetic — the comments in
 |---|---|---|
 | `CellUnderVoltageMv` 2800 | `CurrentZeroCount` 2054 (flight carrier; bench read 2050) | `BalanceDeltaMv` 50 / `BalanceStopDeltaMv` 20 |
 | `CellOverVoltageMv` 4200 | `CurrentMvPerAmpe1` 46 (≈ 5.4 mV/A ×10 after gain trim) | `BalanceTempMax` 50 °C |
-| `CellUnderTempC` −10 °C | `DcdcCurrentZeroMv` 1650 / `DcdcCurrentMvPerAmpe1` 264 | `BalanceMaxActive` 8 |
+| `CellUnderTempC` −10 °C | `CurrentCaptureCapacity` 1024 | `BalanceMaxActive` 8 |
 | `CellOverTempC` 60 °C | `CurrentLegPlausMinMv/MaxMv` 700 / 2300 | `NtcPullupOhm` 6800 Ω / `NtcVrefMv` 3000 / `NtcOpenMv` 2800 |
 | `CurrentMaxMa` 185000 (6P continuous) | `CurrentFilterShift` 4 (τ ≈ 16 samples) | `PackCapacityMah` 18000 (6P × 3.0 Ah), `RIntNomMicroOhm`, all `SocEkf*` |
 | `PrechargeMaxMs`, `BusCollapse*`, `DcBusDischargedV`, `BmsStaleMs`, `BmsStaleConfirmTicks` | | |
@@ -1074,7 +1074,7 @@ deadline, which keeps RX latency low and TX jitter bounded.
 
 | Cadence | IDs |
 |---|---|
-| **50 ms** (`EcuFastTxMs`) | `0x135` currents (BE i16 deciamps × 2: pack, DCDC) |
+| **50 ms** (`EcuFastTxMs`) | `0x135` currents (BE i16 deciamps × 2: pack, DCDC slot always 0) |
 | **100 ms** (`EcuMidTxMs`) | `0x020` ok_precharge (1 iff state ∈ {Run, Charge}) · `0x021` discharge interlock · `0x12C` pack-wide `v_cell_min` · `0x131`/`0x132` vmin per module · `0x133`/`0x134` vmax per module |
 | **250 ms** (`EcuSlowTxMs`) | `0x136`/`0x137` tmax per module (+ DCDC temp stub on `0x137`) · `0x130` SoC % |
 | **1000 ms, ungated** | `0x6CA` firmware health — see §14 |
@@ -1186,7 +1186,7 @@ usually also asserts, and POR beats Pin because a cold boot raises both.
 ### Producer side (SafetyTask, 250 ms)
 
 One `LogRecord` per `LogSamplePeriodMs`, built from the snapshots the safety
-tick already took: scalars (tick, pack mV, raw/filtered/DCDC current, cell
+tick already took: scalars (tick, pack mV, raw/filtered current, cell
 extremes, `dc_bus_V`, temp extremes, FSM state, mode, fault reason + detail,
 online mask, AMS_OK / TSMS / DASH_CHG pin read-backs) plus the **full**
 `cell_mV[5][19]` and `cell_tempC[5][40]` matrices. It lives in a file-static
@@ -1255,7 +1255,7 @@ ctest --test-dir build-tests --output-on-failure     # reports 1/1 — that is t
 
 `ctest` shows `1/1 Test ... Passed` because there is a single Unity runner
 target. Run the binary directly for the case count; it currently ends
-**`522 Tests 0 Failures 0 Ignored`**.
+**`528 Tests 0 Failures 0 Ignored`**.
 
 | File | Coverage |
 |---|---|

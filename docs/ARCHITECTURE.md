@@ -402,7 +402,7 @@ flowchart TD
   subgraph HW[STM32H733]
     FDCAN1[FDCAN1 RX/TX PD0/PD1<br/>ACU + bootloader-trigger + LOGFS]
     SPI1[SPI1 master PA5/6/7 @ ~516 kHz<br/>+ PB9 LTC6820_CS]
-    ADC3[ADC3 diff ch3 PF7/PF8 pack<br/>+ SE ch11 PC1 DCDC]
+    ADC3[ADC3 diff ch3 PF7/PF8 pack<br/>64x oversampling, DMA1_Stream1]
     GPIOB[GPIOB outputs<br/>PB4 AMS_OK<br/>PB5 AIR+ / PB6 AIR- / PB7 Precharge]
     GPIOF[GPIOF inputs<br/>PF9 TSMS / PF10 DASH_CHG]
     SDMMC[SDMMC1 + FatFs<br/>PC8-12/PD2, PE3 card-detect]
@@ -891,7 +891,7 @@ through a copying `snapshot()`. **Single-writer / many-reader**, lock-free.
 | Service | Writer | Readers |
 |---|---|---|
 | [`BmsService`](../Core/Inc/app/bms_service.hpp) | `BmsPollTask` (`update_from_ltc_response`, `update_temperature`, `update_open_wire`) | MainTask, AcuCanTask, CurrentSensorTask (SoC), BalanceController |
-| [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (`update_from_adc`, `update_dcdc_from_adc`) | MainTask, AcuCanTask, CurrentSensorTask (SoC) |
+| [`CurrentService`](../Core/Inc/app/current_service.hpp) | `CurrentSensorTask` (`update_from_adc`) | MainTask, AcuCanTask, CurrentSensorTask (SoC) |
 | [`VehicleService`](../Core/Inc/app/vehicle_service.hpp) | `AcuCanTask` (`update_from_frame`: VCU `0x100`, charge request `0x101`, balance override `0x103`, per-module balance `0x104`) | MainTask, BmsPollTask (balance commands), AcuCanTask (pit-diag) |
 
 Concurrency model: Cortex-M7 32-bit aligned loads/stores are atomic.
@@ -953,9 +953,9 @@ selector ranks are untrustworthy.
 never faults — this is the one place where a *dropped* datum is the
 correct outcome.
 
-The log rings (LOG, IMU, CEL) and the logger's staging buffer live in
+The log rings (LOG, IMU, CEL, ELE) and the logger's staging buffer live in
 `.log_bss`, a NOLOAD section in AXI SRAM (RAM_D1) that `main()` zeroes in
-`USER CODE BEGIN 1` before the scheduler starts. That keeps ~30 KB out of the
+`USER CODE BEGIN 1` before the scheduler starts. That keeps ~42 KB out of the
 128 KB DTCM. Only objects whose initial state is all-zero may go there.
 
 **Files of one index.** Each rotation index `nnnn` owns a set of files that
@@ -966,13 +966,14 @@ cover the same time window and share the `tick_ms` clock:
 | `LOGnnnn.CSV` | MainTask | state, cells, temps, SoC, health (columns below) | 4 Hz |
 | `IMUnnnn.BIN` | ImuTask | BMI088 raw counts | 100 Hz, 1.6 KB/s |
 | `CELnnnn.BIN` | BmsPollTask | every cell-voltage read with its current sample | 5 Hz, ~1 KB/s |
+| `ELEnnnn.BIN` | CurrentSensorTask | pack current mean / min / max per 10 ms, DC-bus voltage | 100 Hz, 2.4 KB/s |
 
 They are opened against the same index, rotated together when any of them
 reaches `LogFileMaxBytes` or `LogFileMaxMs`, and sealed binary files first,
 LOG last, so an interrupted seal is still found as an orphan. A binary file
 opens on its stream's first record, so a board with no IMU writes no IMU file.
-`_FS_LOCK` = 8 covers the three open logging files plus a LOGFS pull (read
-handle, sidecar, directory) with two spare.
+`_FS_LOCK` = 8 covers the four open logging files plus a LOGFS pull (read
+handle, sidecar, directory) with one spare.
 
 **Binary files** ([`bin_log.hpp`](../Core/Inc/app/bin_log.hpp)) start with a
 512-byte header — magic `AMSBIN1`, record size, rotation index, open tick,
@@ -990,14 +991,38 @@ on that read are 0 (decoded empty), not the IC's previous value, so every cell
 in a frame was converted at `t_adcv_ms`, which is latched when ADCV is issued;
 `ltc_ok` gives the PEC mask. `i_mA` is the latest pack-current sample when the
 read completes (~7 ms after ADCV) and `i_tick_ms` its tick: current is sampled
-every 50 ms, so the two can be up to ~50 ms apart today. `flags` bit 0 = balancing quiesced, bit 1 =
-current-sensor fault.
+every 50 ms, so the two can be up to ~50 ms apart; `ELEnnnn.BIN` has the
+current at 10 ms resolution for a closer join. `flags` bit 0 = balancing
+quiesced, bit 1 = current-sensor fault.
+
+**`ELEnnnn.BIN`.** Pack current at 100 Hz. ADC3 free-runs with 64x hardware
+oversampling: each sample is the mean of 64 conversions spaced 1.25 µs apart,
+an 80 µs integration, delivered at ~12.5 kHz by DMA (`DMA1_Stream1`) into one
+of two capture buffers in `.adc_dma` (RAM_D1). Integrating rather than
+snapshotting matters because the inverter switches anywhere in 5–15 kHz: the
+80 µs boxcar has exact nulls at 12.5 kHz and its multiples, the frequencies
+that would alias to DC. Every 50 ms CurrentSensorTask stops the capture, runs
+the single-ended disconnect check (~0.1 ms pause), restarts into the other
+buffer, and splits the finished capture into five windows: one 24-byte
+`EleRecord` each with the window's mean, its lowest and highest sample, the
+sample count `n` (~125), and the ECU's DC-bus voltage with its age. `tick_ms`
+is interpolated over the capture's measured duration. `flags` bit 0 = sensor
+fault, bit 1 = capture overrun (the task was > ~30 ms late).
+
+The safety path is unchanged in contract: `CurrentService::update_from_adc`
+still receives one 12-bit code per 50 ms -- the capture's newest sample, now
+an 80 µs integration instead of a 26 ns snapshot -- so the over-current filter
+and `IStaleMs` keep the timing they were sized for. The charge totals
+(`q_dis_mAs`, `q_chg_mAs`) now integrate the capture mean rather than one
+sample.
 
 **Columns** (`log_record.hpp`). Every column is declared once in an X-macro
 table that both `build_header` and `format_row` expand, so the header and the
-rows cannot drift apart. Order: 19 head scalars, 95 cells `c<m>_<n>` (mV),
+rows cannot drift apart. Order: 18 head scalars, 95 cells `c<m>_<n>` (mV),
 200 temperatures `t<m>_<n>` (whole °C), then the tail. New columns are only
-appended to the tail, so existing positions never move. An **empty field**
+appended to the tail; removing one shifts everything after it, and
+`test_logcsv_existing_columns_keep_positions` pins the positions so that is
+always deliberate. An **empty field**
 means no valid value (never 0, which is a real reading). Every value in a
 row is captured by `MainTask` in the same tick.
 
@@ -1013,7 +1038,8 @@ row is captured by `MainTask` in the same tick.
 | `pec_err`, `spi_err`, `chain_rec` | isoSPI running totals: PEC errors, SPI failures, chain recoveries |
 
 Sign convention: `+` current = discharge. `I_filt_mA` is the IIR-filtered
-pack current; `I_raw_mA` the single sample.
+pack current; `I_raw_mA` the cycle's newest 80 µs sample (for transients, use
+`ELEnnnn.BIN`).
 
 ### The IMU ring
 
@@ -1267,7 +1293,7 @@ IFS08-CE-AMS/
 │   │       ├── safety_task.cpp      # MainTask (safety + FSM + telemetry + log)
 │   │       ├── bms_poll_task.cpp    # LTC6811 isoSPI driver (V + T + ADOW + balance)
 │   │       ├── acu_can_task.cpp     # RX dispatch + ECU TX matrix + pit-diag + LOGFS
-│   │       ├── current_task.cpp     # ADC3 pack + DCDC, SoC EKF
+│   │       ├── current_task.cpp     # ADC3 pack capture, ELE windows, SoC EKF
 │   │       ├── sd_logger_task.cpp   # microSD CSV logger + LOGFS server
 │   │       ├── app_init_task.cpp, app_globals.cpp, can_isr.cpp
 │   │       ├── bms_service.cpp, current_service.cpp, vehicle_service.cpp

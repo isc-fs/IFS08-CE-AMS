@@ -231,12 +231,12 @@
 #define _FS_LOCK    8     /* 0:Disable or >=1:Enable */
 /* Also set in AMS.ioc (FATFS._FS_LOCK), so a CubeMX regen keeps it.
 /  This counts open FILES **and SUB-DIRECTORIES**. SdLoggerTask permanently
-/  holds up to three slots (the active LOGnnnn.TMP, IMUnnnn.TMP and
-/  CELnnnn.TMP), and a LOGFS pull stacks on top of them: the read handle, the
-/  .CRC sidecar it reads first, and a directory if a LIST is still open -- six
-/  at worst. Running out makes f_open fail with FR_TOO_MANY_OPEN_FILES, which
-/  turns the CRC opcode into a multi-second stream of the whole file on the
-/  logger thread. 8 covers the worst case with two spare. Costs one FILESEM
+/  holds up to four slots (the active LOG, IMU, CEL and ELE .TMP files), and a
+/  LOGFS pull stacks on top of them: the read handle, the .CRC sidecar it reads
+/  first, and a directory if a LIST is still open -- seven at worst. Running
+/  out makes f_open fail with FR_TOO_MANY_OPEN_FILES, which turns the CRC
+/  opcode into a multi-second stream of the whole file on the logger thread.
+/  8 covers the worst case with one spare. Costs one FILESEM
 /  entry each (a few bytes). */
 /* The option _FS_LOCK switches file lock function to control duplicated file open
 /  and illegal operation to open objects. This option must be 0 when _FS_READONLY

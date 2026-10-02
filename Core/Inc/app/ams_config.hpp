@@ -147,7 +147,6 @@ inline constexpr bool          TempFaultsTrusted = false;
 inline constexpr std::int32_t  CurrentMaxMa   = 185000; // 6P continuous -- COMMISSION
 
 inline constexpr std::uint32_t IStaleMs       =  200;  // pack current sensor stale (safety-critical)
-inline constexpr std::uint32_t DcdcIStaleMs   =  500;  // DCDC current sensor stale (informational; not safety-gated -- the HW front-end is a separate single-ended sensor on PC1 and DCDC failure is recoverable)
 // Staleness window for a single BMS module. "Stop measuring ANY voltage/
 // temperature" includes a whole module going silent, which must open the SDC in
 // < 500 ms (FS rule). A silent module drops off module_online_mask when its
@@ -384,6 +383,22 @@ inline constexpr char          CelSealedNameFmt[] = "CEL%04lu.BIN";
 inline constexpr char          CelCrcNameFmt[]    = "CEL%04lu.CRC";
 
 // ---------------------------------------------------------------------------
+// Electrical logging. TELEMETRY ONLY. CurrentSensorTask splits each 50 ms
+// capture of oversampled pack-current samples into EleWindowsPerCycle windows
+// (10 ms) and pushes one EleRecord (bin_log.hpp) per window: mean, min and
+// max current, the sample count, and the DC-bus voltage from the ECU. SdLogger
+// writes them to ELEnnnn.BIN alongside LOGnnnn.CSV. 100 Hz x 24 B = 2.4 KB/s.
+//
+// Ring: 512 records = 5.1 s, so a rotation or a slow card never drops one.
+// 12 KB in AXI SRAM (.log_bss). MUST be a power of two.
+inline constexpr std::uint8_t  EleWindowsPerCycle = 5;    // CurrentPeriodMs / 10 ms
+inline constexpr std::uint32_t EleRingCapacity    = 512;
+
+inline constexpr char          EleActiveNameFmt[] = "ELE%04lu.TMP";
+inline constexpr char          EleSealedNameFmt[] = "ELE%04lu.BIN";
+inline constexpr char          EleCrcNameFmt[]    = "ELE%04lu.CRC";
+
+// ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with
 // the encode/decode helpers in can_frame.hpp.
 // ---------------------------------------------------------------------------
@@ -575,12 +590,12 @@ inline constexpr std::uint32_t AcuTxVminModuleAId    = 0x131;  // BE u16 mV x3 (
 inline constexpr std::uint32_t AcuTxVminModuleBId    = 0x132;  // BE u16 mV x2 (modules 3..4)
 inline constexpr std::uint32_t AcuTxVmaxModuleAId    = 0x133;  // BE u16 mV x3 (modules 0..2)
 inline constexpr std::uint32_t AcuTxVmaxModuleBId    = 0x134;  // BE u16 mV x2 (modules 3..4)
-inline constexpr std::uint32_t AcuTxCurrentsId       = 0x135;  // BE i16 deciamps x2 (accu, dcdc)
+inline constexpr std::uint32_t AcuTxCurrentsId       = 0x135;  // BE i16 deciamps x2 (accu, dcdc = 0: no DCDC fitted)
 inline constexpr std::uint32_t AcuTxTempMaxModuleAId = 0x136;  // BE i16 degC x3 (modules 0..2)
 inline constexpr std::uint32_t AcuTxTempMaxModuleBId = 0x137;  // BE i16 degC x3 (mod 3, 4, dcdc-stub)
 
 // Reserved for future use -- not transmitted. Pack current is published on
-// 0x135 (signed deciamps + DCDC in the same frame).
+// 0x135 (signed deciamps; the DCDC slot in the same frame is always 0).
 inline constexpr std::uint32_t AcuTxCurrentWarnId       = 0x500;
 inline constexpr std::uint32_t AcuTxCurrentOverLimitId       = 0x501;
 inline constexpr std::uint32_t AcuTxCurrentNormalId       = 0x502;
@@ -733,22 +748,7 @@ inline constexpr std::uint16_t DcBusDischargedV       = 60;   // COMMISSION (rul
 // sensor's own +/- 2.62 V (~+/- 524 A) clip, so the CurrentMaxMa over-current
 // check is genuinely reachable.
 //
-// DCDC: Allegro ACS758 Hall-effect sensor (a different part from the pack
-// SSA-2) on PC1 = ADC3_INP11, read SINGLE-ENDED through a unity buffer. It is
-// RATIOMETRIC -- zero offset and sensitivity both scale with Vcc -- so its 5 V
-// datasheet ratings (40 mV/A, offset 0.5*Vcc = 2.5 V) scale by 3.3/5 on this
-// 3.3 V rail:
-//
-//   offset      = 0.5 * 3.3 V     = 1.65 V     -> DcdcCurrentZeroMv     = 1650
-//   sensitivity = 40 mV/A * 3.3/5 = 26.4 mV/A  -> DcdcCurrentMvPerAmpe1 = 264
-//   V(PC1) = 1.65 V + 26.4 mV/A * I     (sign per IP+ -> IP- wiring)
-//
-// Converted by adc_to_mA_dcdc. DCDC is informational only -- no safety predicate
-// reads it -- and the sign MUST be confirmed on the bench (the ACS758 IP
-// direction sets it).
-//
-// COMMISSION: CurrentZeroCount and CurrentMvPerAmpe1 (pack), and
-// DcdcCurrentZeroMv / DcdcCurrentMvPerAmpe1 (DCDC), MUST be calibrated per
+// COMMISSION: CurrentZeroCount and CurrentMvPerAmpe1 MUST be calibrated per
 // docs/COMMISSIONING.md §2. The pack values below are HIL-bench commissioned: a
 // DAC injection at exactly 5 mV/A read back a stable 0.924x (7.6 % low) with a
 // +0.6 A zero, so folding that gain into the (COMMISSION) sensitivity gives
@@ -762,10 +762,33 @@ inline constexpr std::uint16_t AdcMaxCount        = 4095;
 // Pack channel (differential ADC3_INP3/INN3 = PF7/PF8). HIL-commissioned.
 inline constexpr std::int32_t  CurrentZeroCount   = 2054;  // diff zero @ 0 A (flight carrier; HIL bench read 2050)  COMMISSION
 inline constexpr std::int32_t  CurrentMvPerAmpe1  = 46;    // COMMISSION (eff 5.4 mV/A x10, HIL gain trim)
-// DCDC channel (single-ended ADC3_INP11 = PC1; Allegro ACS758 @ 3.3 V).
-inline constexpr std::int32_t  DcdcCurrentZeroMv     = 1650; // ACS758 offset = Vcc/2 @ 3.3 V  COMMISSION
-inline constexpr std::int32_t  DcdcCurrentMvPerAmpe1 = 264;  // COMMISSION (26.4 mV/A x10 ratiometric @ 3.3 V)
 inline constexpr std::uint8_t  CurrentFilterShift = 4;     // tau ~ 16 samples
+
+// Pack-current acquisition. ADC3 free-runs (continuous mode) on the pack
+// channel with its hardware oversampler: 64 conversions of 47.5 + 12.5 = 60
+// ADC clocks at 48 MHz (96 MHz kernel clock / 2) are summed and shifted right
+// by 2, so each delivered sample is the mean of 64 conversions spaced 1.25 us
+// apart -- an 80 us integration -- scaled by 16 (4 fractional bits on the
+// 12-bit code; "Q4"). 48 MHz / (60 x 64) = 12.5 kHz of samples, moved by DMA
+// with no CPU work per sample.
+//
+// Why integrate: the inverter switches anywhere in 5-15 kHz, and a 26 ns
+// snapshot (the old 2.5-cycle single conversion) aliases that ripple onto
+// whatever rate it is taken at. An 80 us boxcar has exact nulls at 12.5 kHz
+// and its multiples -- the frequencies that would alias to DC -- and the 10 ms
+// ELE windows below average the rest further. The conversions themselves are
+// spaced 1.25 us (800 kHz), far above the front end's bandwidth, so nothing
+// aliases before the boxcar.
+//
+// Nothing below assumes the 12.5 kHz figure: the task counts the samples each
+// capture holds, and ELE timestamps are interpolated over the capture's
+// measured duration. KEEP the oversampling settings in sync with AMS.ioc ADC3.
+inline constexpr std::uint8_t  CurrentAdcFracBits     = 4;     // Q4: 64x oversampling, >> 2
+inline constexpr std::uint32_t CurrentAdcNominalHz    = 12500; // documentation and sizing only
+// DMA capture buffer, one per ping-pong half. 50 ms is ~625 samples; 1024
+// covers a cycle up to ~80 ms late before the DMA stops (one-shot) and the
+// window is flagged as overrun.
+inline constexpr std::uint16_t CurrentCaptureCapacity = 1024;
 
 // Current-sensor disconnect detection. PF7/PF8 carry a weak internal pull-down
 // (GPIO PUPDR, set in stm32h7xx_hal_msp.c): the SSA-2's low-impedance op-amp

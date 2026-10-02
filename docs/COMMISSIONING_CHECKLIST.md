@@ -79,17 +79,12 @@ over-current trip.**
 > weak internal pull-down on PF7/PF8 in analog mode, which is board/VREF
 > specific. `CurrentDisconnectConfirm` = 3 reads ≈ 150 ms.
 
-### 2b. DCDC current  📡 (`COMMISSIONING.md` §2.4)
+### 2b. Acquisition  📡 (`COMMISSIONING.md` §2.4)
 
-Allegro **ACS758** Hall sensor, single-ended on `PC1` (ADC3_INP11),
-ratiometric @ 3.3 V → 26.4 mV/A at a 1.65 V (Vcc/2) offset. Informational
-only — `DcdcIStaleMs` has no FSM impact.
-
-| Constant | Default | Unit | How to determine | Final | ✓ |
-|---|---|---|---|---|---|
-| `DcdcCurrentZeroMv` | 1650 | mV | Measured 0 A output = Vcc/2. | | ☐ |
-| `DcdcCurrentMvPerAmpe1` | 264 | 0.1·mV/A | Sensitivity ×10, ratiometric at the real rail voltage. | | ☐ |
-| — sign | — | — | **Confirm on the bench**: the IP+→IP− conductor direction sets whether discharge reads positive. | | ☐ |
+| Check | Expected | How | Result | ✓ |
+|---|---|---|---|---|
+| ELE samples per window (`n`) | ~125 (12.5 kHz) | Decode an `ELEnnnn.BIN` from a short run. | | ☐ |
+| `i_mean` steady under inverter switching | no drift with switching frequency | Constant load, inverter enabled; compare `i_mean` with `i_max − i_min`. | | ☐ |
 
 ## 3. Precharge, bus-collapse & re-arm  🔒  (`COMMISSIONING.md` §3)
 

@@ -457,7 +457,6 @@ void SafetyTask::run() noexcept {
             rec.pack_mV             = bms_snap.pack_voltage_mV;
             rec.pack_current_raw_mA = cur_snap.raw_mA;
             rec.pack_current_mA     = cur_snap.filtered_mA;
-            rec.dcdc_current_mA     = cur_snap.dcdc_filtered_mA;
             rec.min_cell_mV         = bms_snap.min_cell_mV;
             rec.max_cell_mV         = bms_snap.max_cell_mV;
             rec.dc_bus_V            = veh_snap.dc_bus_V;

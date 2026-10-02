@@ -264,7 +264,17 @@ SECTIONS
     . = ALIGN(32);
   } >RAM_D1
 
-  /* Large telemetry rings (SD log, IMU and cell-frame rings), kept out of the
+  /* ADC3 pack-current capture buffers (CurrentSensorTask). DMA1 cannot reach
+     DTCM either. */
+  .adc_dma (NOLOAD) :
+  {
+    . = ALIGN(32);
+    *(.adc_dma)
+    *(.adc_dma*)
+    . = ALIGN(32);
+  } >RAM_D1
+
+  /* Large telemetry rings (SD log, IMU, cell-frame and ELE rings), kept out of the
      DTCM .bss. NOLOAD: the startup code does not clear it -- main() zeroes
      __log_bss_start__..__log_bss_end__ in USER CODE BEGIN 1, before the
      scheduler starts. Only objects whose initial state is all-zero belong

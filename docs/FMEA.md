@@ -981,7 +981,8 @@ shown the pack or watched a precharge before touching a car.**
 
 Two acceptance items were raised and never executed: Car-mode TSMS cycle
 re-arming to R2D without a power cycle, and the current-sensor rework
-(differential pack PF7/PF8 + ACS758 DCDC on PC1). Neither has bench evidence.
+(differential pack PF7/PF8, now an oversampled DMA capture). Neither has bench
+evidence.
 The current-sensor constants in particular are per-carrier — §1 and the
 `ams_config.hpp` block both say the zero must be re-measured on each board.
 

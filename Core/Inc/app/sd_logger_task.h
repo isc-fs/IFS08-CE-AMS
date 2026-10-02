@@ -36,6 +36,10 @@ bool sd_imu_push(const ImuSample& s) noexcept;
 // into CELnnnn.BIN. Own ring, same contract: wait-free, best-effort.
 bool sd_cel_push(const bin_log::CelFrame& f) noexcept;
 
+// CurrentSensorTask's producer API: one EleRecord per 10 ms window of pack
+// current, into ELEnnnn.BIN. Own ring, same contract: wait-free, best-effort.
+bool sd_ele_push(const bin_log::EleRecord& r) noexcept;
+
 // Lightweight logger health, for a future diag/health frame. Plain snapshot of
 // the file-local counters.
 struct SdLogStats {
@@ -46,6 +50,8 @@ struct SdLogStats {
     std::uint32_t imu_dropped;  // ImuSamples dropped (ring full)
     std::uint32_t cel_rows;     // CEL records written
     std::uint32_t cel_dropped;  // CelFrames dropped (ring full)
+    std::uint32_t ele_rows;     // ELE records written
+    std::uint32_t ele_dropped;  // EleRecords dropped (ring full)
     std::uint8_t  state;        // 0=boot 1=no_card/not_ready 2=logging 3=io_error
 };
 SdLogStats sd_log_stats() noexcept;

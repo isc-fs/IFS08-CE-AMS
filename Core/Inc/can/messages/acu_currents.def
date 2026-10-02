@@ -2,6 +2,8 @@
 /*
  * 0x135  ACU_currents -- accumulator + DCDC currents in deciamps.
  * Wire convention: + = discharge. Mirrors ams::acu_tx::encode_currents().
+ * No DCDC is fitted: current_dcdc_dA is always 0. The field stays so the
+ * frame layout the ECU decodes does not change.
  *
  * Struct holds RAW deciamps (the wire value). The DBC factor 0.1
  * describes the physical interpretation; it is NOT applied by the C++

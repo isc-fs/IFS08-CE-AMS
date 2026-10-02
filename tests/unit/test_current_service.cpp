@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
-// Pure-logic tests for CurrentService::adc_to_mA() (pack, differential)
-// and adc_to_mA_dcdc() (DCDC, single-ended). The mutex-using public
+// Pure-logic tests for CurrentService::adc_to_mA() and adc_q4_to_mA() (pack,
+// differential, 12-bit and oversampled). The public
 // methods are exercised indirectly via the cmsis_os2 mock from
 // tests/unit/mocks/.
 //
@@ -9,8 +9,7 @@
 // external x4 carrier diff amp is removed. The Bourns SSA-2-250A
 // OUT_P/OUT_N now feed the STM32 ADC in DIFFERENTIAL mode (PF7/PF8 =
 // ADC3_INP3/INN3): zero current at mid-scale code (CurrentZeroCount),
-// sensitivity 5 mV/A, differential LSB = 2*Vref/4095. DCDC current is a
-// separate single-ended sensor on PC1 (ADC3_INP11).
+// sensitivity 5 mV/A, differential LSB = 2*Vref/4095.
 
 #include "ams_config.hpp"
 #include "current_service.hpp"
@@ -19,6 +18,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 
 namespace {
 
@@ -111,26 +111,33 @@ extern "C" void test_current_adc_full_scale_rails(void) {
 }
 
 // ---------------------------------------------------------------------------
-// adc_to_mA_dcdc: single-ended Allegro ACS758 @ 3.3 V (ratiometric,
-// 26.4 mV/A, offset 1.65 V = DcdcCurrentZeroMv). The zero-bias ADC code
-// reads ~0 mA; a +264 mV step (26.4 mV/A x 10 A) reads +10 A.
+// adc_q4_to_mA: the oversampled code (16 x the 12-bit code) must convert a
+// whole-count value to exactly what adc_to_mA gives, so the safety path and
+// the ELE log agree, and resolve steps 16x finer in between.
 // ---------------------------------------------------------------------------
-extern "C" void test_current_dcdc_zero_and_discharge(void) {
-    const std::uint16_t zero_raw = static_cast<std::uint16_t>(
-        (ams::config::DcdcCurrentZeroMv *
-         static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
-        ams::config::AdcVrefMv);
-    TEST_ASSERT_LESS_OR_EQUAL_INT32(
-        200, std::abs(ams::CurrentService::adc_to_mA_dcdc(zero_raw)));
+extern "C" void test_current_q4_matches_12bit(void) {
+    for (std::uint16_t raw : {std::uint16_t{0}, std::uint16_t{1000}, std::uint16_t{2054},
+                              std::uint16_t{2055}, std::uint16_t{3000}, std::uint16_t{4095}}) {
+        TEST_ASSERT_EQUAL_INT32(ams::CurrentService::adc_to_mA(raw),
+                                ams::CurrentService::adc_q4_to_mA(std::uint32_t{raw} << 4));
+    }
+}
 
-    // +10 A -> +264 mV above the 1.65 V offset (26.4 mV/A).
-    const std::int32_t up_mv = ams::config::DcdcCurrentZeroMv + 264;
-    const std::uint16_t up_raw = static_cast<std::uint16_t>(
-        (up_mv * static_cast<std::int32_t>(ams::config::AdcMaxCount)) /
-        ams::config::AdcVrefMv);
-    // 264 mV / 26.4 mV/A = 10 A = 10000 mA. Allow +-200 mA rounding.
-    TEST_ASSERT_INT32_WITHIN(200, 10000,
-                             ams::CurrentService::adc_to_mA_dcdc(up_raw));
+// One Q4 step is 2 * 3300 mV / 4095 / 16 = 0.1 mV of differential, / 4.6 mV/A
+// = ~22 mA (the 12-bit code alone steps ~350 mA).
+extern "C" void test_current_q4_resolution(void) {
+    const std::uint32_t zero = std::uint32_t{ams::config::CurrentZeroCount} << 4;
+    TEST_ASSERT_EQUAL_INT32(0, ams::CurrentService::adc_q4_to_mA(zero));
+    const std::int32_t step = ams::CurrentService::adc_q4_to_mA(zero + 1u);
+    TEST_ASSERT_INT32_WITHIN(4, 22, step);
+    TEST_ASSERT_INT32_WITHIN(4, -22, ams::CurrentService::adc_q4_to_mA(zero - 1u));
+}
+
+extern "C" void test_current_q4_to_raw_rounds(void) {
+    TEST_ASSERT_EQUAL_UINT16(2054u, ams::CurrentService::q4_to_raw(2054u * 16u + 7u));
+    TEST_ASSERT_EQUAL_UINT16(2055u, ams::CurrentService::q4_to_raw(2054u * 16u + 8u));
+    TEST_ASSERT_EQUAL_UINT16(4095u, ams::CurrentService::q4_to_raw(64u * 4095u / 4u));   // ADC3 max
+    TEST_ASSERT_EQUAL_UINT16(0u,    ams::CurrentService::q4_to_raw(0u));
 }
 
 // ---------------------------------------------------------------------------
@@ -169,21 +176,3 @@ extern "C" void test_current_update_sets_sensor_fault(void) {
     TEST_ASSERT_FALSE(cs.snapshot().sensor_fault);
 }
 
-// ---------------------------------------------------------------------------
-// is_dcdc_fresh: false before any DCDC sample, true after a recent one,
-// false again after DcdcIStaleMs elapses. (Pack channel staleness is
-// covered indirectly via the safety-predicate tests; DCDC is purely
-// informational so its own helper gets a focused test here.)
-// ---------------------------------------------------------------------------
-extern "C" void test_current_is_dcdc_fresh_lifecycle(void) {
-    auto& cs = ams::CurrentService::instance();
-    // Pristine state: never updated -> not fresh at any tick.
-    cs.update_dcdc_from_adc(2047, 0);     // seeds last_dcdc_update_tick=0; still "no data"
-    TEST_ASSERT_FALSE(cs.is_dcdc_fresh(0));
-
-    // Real update at tick=1000.
-    cs.update_dcdc_from_adc(2047, 1000);
-    TEST_ASSERT_TRUE(cs.is_dcdc_fresh(1000));
-    TEST_ASSERT_TRUE(cs.is_dcdc_fresh(1000 + ams::config::DcdcIStaleMs));
-    TEST_ASSERT_FALSE(cs.is_dcdc_fresh(1000 + ams::config::DcdcIStaleMs + 1));
-}

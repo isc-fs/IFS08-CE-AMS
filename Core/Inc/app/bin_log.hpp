@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: proprietary
 //
-// Binary companion log files -- IMUnnnn.BIN and CELnnnn.BIN -- written next to
-// LOGnnnn.CSV for the streams that are too fast or too wide for CSV.
+// Binary companion log files -- IMUnnnn.BIN, CELnnnn.BIN and ELEnnnn.BIN --
+// written next to LOGnnnn.CSV for the streams that are too fast or too wide
+// for CSV.
 //
 // A file is a 512-byte self-describing header followed by fixed-size,
 // little-endian records with no separators. The header carries a plain-text
@@ -14,7 +15,7 @@
 //   10  u16      record size in bytes
 //   12  u32      rotation index, shared with LOGnnnn.CSV
 //   16  u32      tick_ms when the file was opened (same clock as tick_ms in LOG)
-//   20  char[8]  stream name, NUL-padded ("IMU", "CEL")
+//   20  char[8]  stream name, NUL-padded ("IMU", "CEL", "ELE")
 //   28  u8[3]    firmware version major, minor, patch
 //   31  u8       reserved, 0
 //   32  u8[4]    firmware git hash, first 4 bytes
@@ -167,7 +168,62 @@ static_assert(offsetof(CelFrame, flags)     == 17, "CEL schema: flags");
 static_assert(offsetof(CelFrame, cell_mV)   == 18, "CEL schema: c");
 static_assert(sizeof(CelFrame)              == 208, "CEL schema: record size");
 
-static_assert(sizeof ImuSchema <= SchemaMax && sizeof CelSchema <= SchemaMax,
+// ---------------------------------------------------------------------------
+// ELEnnnn.BIN -- one record per 10 ms window of pack current (100 Hz).
+//
+// Each window reduces the oversampled ADC samples that fell inside it (each
+// sample already an 80 us integration, see config::CurrentAdcFracBits): the
+// mean, and the lowest and highest single sample, so a sub-millisecond peak
+// survives even though the mean smooths it. n is the number of samples (125
+// nominal at 12.5 kHz); a short window is the one that contained the
+// disconnect check's ~0.1 ms pause, or the edge of a late capture.
+//
+// tick_ms is the end of the window, interpolated over the capture's measured
+// duration (1 ms tick resolution). dcbus_V is the ECU's last 0x100 value and
+// dcbus_age_ms how old it was -- the AMS cannot measure the link itself.
+// ---------------------------------------------------------------------------
+struct EleRecord {
+    std::uint32_t tick_ms;       // end of the window
+    std::uint16_t seq;           // +1 per record; a gap means records were dropped
+    std::uint8_t  n;             // ADC samples in the window
+    std::uint8_t  flags;         // ele_flag bits
+    std::int32_t  i_mean_mA;     // + = discharge
+    std::int32_t  i_min_mA;
+    std::int32_t  i_max_mA;
+    std::uint16_t dcbus_V;
+    std::uint16_t dcbus_age_ms;  // saturating; 65535 = none received or older
+};
+
+namespace ele_flag {
+inline constexpr std::uint8_t SensorFault = 1u << 0;   // debounced disconnect verdict was set
+inline constexpr std::uint8_t Overrun     = 1u << 1;   // capture buffer filled: samples after it lost
+}  // namespace ele_flag
+
+inline constexpr char EleStream[] = "ELE";
+inline constexpr char EleSchema[] =
+    "tick_ms u32 1 1 ms\n"
+    "seq u16 1 1 -\n"
+    "n u8 1 1 -\n"
+    "flags u8 1 1 -\n"
+    "i_mean i32 1 0.001 A\n"
+    "i_min i32 1 0.001 A\n"
+    "i_max i32 1 0.001 A\n"
+    "dcbus_V u16 1 1 V\n"
+    "dcbus_age_ms u16 1 1 ms\n";
+
+static_assert(offsetof(EleRecord, tick_ms)      == 0,  "ELE schema: tick_ms");
+static_assert(offsetof(EleRecord, seq)          == 4,  "ELE schema: seq");
+static_assert(offsetof(EleRecord, n)            == 6,  "ELE schema: n");
+static_assert(offsetof(EleRecord, flags)        == 7,  "ELE schema: flags");
+static_assert(offsetof(EleRecord, i_mean_mA)    == 8,  "ELE schema: i_mean");
+static_assert(offsetof(EleRecord, i_min_mA)     == 12, "ELE schema: i_min");
+static_assert(offsetof(EleRecord, i_max_mA)     == 16, "ELE schema: i_max");
+static_assert(offsetof(EleRecord, dcbus_V)      == 20, "ELE schema: dcbus_V");
+static_assert(offsetof(EleRecord, dcbus_age_ms) == 22, "ELE schema: dcbus_age_ms");
+static_assert(sizeof(EleRecord)                 == 24, "ELE schema: record size");
+
+static_assert(sizeof ImuSchema <= SchemaMax && sizeof CelSchema <= SchemaMax &&
+              sizeof EleSchema <= SchemaMax,
               "schema does not fit the header");
 
 }  // namespace ams::bin_log

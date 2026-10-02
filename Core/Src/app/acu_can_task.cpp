@@ -9,7 +9,7 @@
 //  AMS FDCAN1, so these frames reach real-time telemetry through the ECU.
 //  Byte layouts: docs/CAN_MAP.md and ams_config.hpp.
 //
-//    50 ms: 0x135 currents (i16 deciamps; accu, dcdc)
+//    50 ms: 0x135 currents (i16 deciamps; accu, dcdc = 0: none fitted)
 //   100 ms: 0x020 ok_precharge
 //           0x021 discharge_interlock (fsm_in_start + tsms, for the ECU)
 //           0x12C v_cell_min (pack-wide min cell mV)

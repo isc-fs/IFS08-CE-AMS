@@ -195,30 +195,27 @@ path is currently disarmed (§1.1). Note that gap when you sign off.
 the contactor and fuse ratings. Confirm the inverter peak current and the
 ratings of every element in the shutdown circuit before trusting it.
 
-### 2.4 DCDC current channel
+### 2.4 Acquisition (oversampled DMA capture)
 
-DCDC supply current uses an **Allegro ACS758** Hall-effect sensor (a
-different part from the pack SSA-2) on `PC1 = ADC3_INP11`, read
-**single-ended** through a unity buffer (gain 1). The ACS758 is
-**ratiometric** — both its zero offset and its sensitivity scale with
-`Vcc`. At the 5 V datasheet rating it is 40 mV/A with offset
-`0.5·Vcc = 2.5 V`; powered from **3.3 V** here, both scale by `3.3/5`:
+The pack channel is no longer a single conversion per cycle. ADC3 free-runs
+with its hardware oversampler (64 conversions of 60 ADC clocks at 48 MHz,
+summed and shifted right by 2), so every ~80 µs it delivers the mean of 64
+conversions as a code with 4 fractional bits; DMA moves those into a capture
+buffer. `CurrentService` still receives one value per 50 ms (the newest
+sample, rounded to a 12-bit code), so the zero and sensitivity above apply
+unchanged and are calibrated the same way. Bench checks for a new board:
 
-> offset = `0.5 × 3.3 V` = **1.65 V**
-> sensitivity = `40 mV/A × 3.3/5` = **26.4 mV/A**
-> `V(PC1) = 1.65 V + 26.4 mV/A × I`
+- **Sample rate.** `ELEnnnn.BIN` records carry `n`, the samples per 10 ms
+  window: expect ~125 (12.5 kHz). About half that would mean ADC3 divides
+  its clock internally on this part; nothing breaks, but update
+  `CurrentAdcNominalHz` and the comment in `ams_config.hpp`.
+- **Inverter ripple.** With the inverter switching under load, `i_max − i_min`
+  per window shows the ripple; `i_mean` should sit steady. A mean that drifts
+  with the switching frequency points at aliasing.
 
-Converted by `adc_to_mA_dcdc` using its own constants, both `COMMISSION`:
-- `DcdcCurrentZeroMv` (nominal **1650 mV** — `Vcc/2`, which also equals
-  ADC mid-scale because the ACS758 shares the 3.3 V rail)
-- `DcdcCurrentMvPerAmpe1` (nominal **264**, i.e. 26.4 mV/A × 10)
-
-DCDC is **informational only** — not part of any safety predicate
-(`DcdcIStaleMs` staleness has no FSM impact). Calibrate by the same
-zero-then-sensitivity procedure as §2.1–2.2 but against the PC1
-single-ended reading (`v_mV = raw × 3300 / 4095`). **Confirm the sign on
-the bench** — the ACS758's IP+→IP− conductor direction sets whether
-discharge reads positive or negative.
+There is no DCDC current channel: no DCDC is fitted. `0x135` still carries a
+`current_dcdc_dA` slot, always 0, so the frame layout the ECU decodes is
+unchanged.
 
 ### 2.5 Disconnect detection (pack channel)
 

@@ -38,9 +38,8 @@ namespace ams {
 struct LogRecord {
     std::uint32_t tick_ms;             // osKernelGetTickCount() at capture
     std::uint32_t pack_mV;             // BmsState.pack_voltage_mV
-    std::int32_t  pack_current_raw_mA; // CurrentState.raw_mA       (+ = discharge)
+    std::int32_t  pack_current_raw_mA; // CurrentState.raw_mA: one 80 us sample (+ = discharge)
     std::int32_t  pack_current_mA;     // CurrentState.filtered_mA
-    std::int32_t  dcdc_current_mA;     // CurrentState.dcdc_filtered_mA
     std::uint16_t min_cell_mV;         // BmsState.min_cell_mV (tap-compensated summary)
     std::uint16_t max_cell_mV;         // BmsState.max_cell_mV
     std::uint16_t dc_bus_V;            // VehicleState.dc_bus_V: LAST received 0x100 (see dcbus_age_ms)
@@ -127,7 +126,6 @@ namespace log_csv {
     X(pack_mV,   U, r.pack_mV,             r.bms_valid != 0u)     \
     X(I_raw_mA,  S, r.pack_current_raw_mA, true)                  \
     X(I_filt_mA, S, r.pack_current_mA,     true)                  \
-    X(Idcdc_mA,  S, r.dcdc_current_mA,     true)                  \
     X(dcbus_V,   U, r.dc_bus_V,            true)                  \
     X(vmin_mV,   U, r.min_cell_mV,         r.bms_valid != 0u)     \
     X(vmax_mV,   U, r.max_cell_mV,         r.bms_valid != 0u)     \
