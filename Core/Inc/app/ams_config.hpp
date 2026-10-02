@@ -493,10 +493,11 @@ inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this re
 // ChargerDisplayWario pit tool commands cell balancing on 0x103, magic-gated
 // like 0x101:
 //   "BALO" -> OFF   force balancing off
-//   "BALN" -> ON    force balancing on in ANY FSM state, overriding the
-//                   Charge-only default. Still honours the temp-trust gate and
-//                   thermal lockout in balance::compute_mask -- the operator
-//                   overrides the ENABLE decision, never the safety guards.
+//   "BALN" -> ON    force balancing on in Start or Charge (never in
+//                   Precharge, Transition, Run or Error). Still honours the
+//                   temp-trust gate and thermal lockout in balance::compute_mask
+//                   -- the operator overrides the ENABLE decision, never the
+//                   safety guards.
 //   "BALX" -> AUTO  defer to the autonomous policy (balances in Charge when
 //                   imbalanced).
 // Dead-man: WarioCharger re-sends the active command ~2 Hz. If the frame goes
@@ -506,7 +507,7 @@ inline constexpr std::uint32_t ChargeReqFreshMs     = 1000;   // must be this re
 inline constexpr std::uint32_t BalanceOverrideReqId  = 0x103u;  // standard; operator -> AMS. COMMISSION (confirm vs ECU map)
 inline constexpr std::uint8_t  BalanceOverrideReqDlc = 4u;
 inline constexpr std::uint8_t  BalanceCmdOffMagic [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Fu };  // "BALO" -> OFF
-inline constexpr std::uint8_t  BalanceCmdOnMagic  [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Eu };  // "BALN" -> ON (any state)
+inline constexpr std::uint8_t  BalanceCmdOnMagic  [4] = { 0x42u, 0x41u, 0x4Cu, 0x4Eu };  // "BALN" -> ON (Start/Charge)
 inline constexpr std::uint8_t  BalanceCmdAutoMagic[4] = { 0x42u, 0x41u, 0x4Cu, 0x58u };  // "BALX" -> AUTO
 inline constexpr std::uint32_t BalanceOverrideFreshMs = 5000;   // fall back to OFF if silent this long
 
@@ -632,6 +633,10 @@ inline constexpr std::uint32_t PitDiagCommsHealthId      = 0x6C9u;  // FDCAN1 Bu
 // so a failing quiesce means cell voltages are sampled under bleed -- and the
 // balance selector ranks exactly those numbers.
 inline constexpr std::uint32_t PitDiagBalanceHealthId    = 0x6CBu;
+// What balancing is doing and, when it is not, which gates are stopping it:
+// state, inhibit-reason bits, active cells, spread. Without it "balanced" and
+// "blocked" both show only as an empty DCC mask on 0x6C2/0x6C3.
+inline constexpr std::uint32_t PitDiagBalanceStatusId    = 0x6CCu;
 // UNGATED firmware-health frame: always-on 1 Hz, NEVER gated by the pit-diag arm
 // (0x7F0). The ID sits right after the gated 0x6C0..0x6C9 block but is emitted
 // regardless of arm state -- parity with ECU 0x704 for passive liveness ("is the
@@ -791,6 +796,10 @@ inline constexpr std::uint16_t BalanceStopDeltaMv = 20;
 static_assert(BalanceStopDeltaMv < BalanceDeltaMv,
               "stop threshold must be below start, or a selected cell never releases");
 inline constexpr std::int16_t  BalanceTempMax     = 50;    // degC; abort balancing if max_tempC > this
+// The lockout releases only once max_tempC has fallen to BalanceTempMax minus
+// this, so a pack sitting at the threshold does not toggle the bleed on and off
+// every update. 5 C is several minutes of cooling for a sealed pack.
+inline constexpr std::int16_t  BalanceTempHystC   = 5;
 // Simultaneous dischargers per module. A BOARD DISSIPATION limit, not a policy
 // one -- compute_mask is stateless and re-picks the top-N by excess every
 // second, so every imbalanced cell is bled either way. Raising this makes

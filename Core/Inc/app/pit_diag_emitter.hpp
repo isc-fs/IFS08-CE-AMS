@@ -449,6 +449,28 @@ namespace detail {
 }
 
 // ---------------------------------------------------------------------------
+// 0x6CC PIT_balance_status -- balancing state and every inhibit reason.
+//   byte 0      balance_state    ams::balance::State
+//   byte 1      balance_active   cells discharging, whole pack
+//   bytes 2..3  balance_inhibit  LE u16, ams::balance::inhibit bits
+//   bytes 4..5  balance_spread   LE u16 mV, highest cell - balancing floor
+//   bytes 6..7  reserved (0)
+// ---------------------------------------------------------------------------
+[[nodiscard]] inline Frame encode_balance_status(std::uint8_t  state,
+                                                 std::uint8_t  active,
+                                                 std::uint16_t inhibit,
+                                                 std::uint16_t spread_mV) noexcept {
+    ifs08::PIT_balance_status_t s{};
+    s.balance_state   = state;
+    s.balance_active  = active;
+    s.balance_inhibit = inhibit;
+    s.balance_spread  = spread_mV;
+    std::uint8_t b[8];
+    ifs08::encode_PIT_balance_status(s, b);
+    return detail::to_frame(b);
+}
+
+// ---------------------------------------------------------------------------
 // 0x6CA AMS_fw_health -- UNGATED firmware health, ECU-0x704 parity. Always
 // emitted, NOT part of the pit-diag scan; this adapter only packs the fields.
 // free_heap / min_free_heap are clamped to u16: the 64 KB heap always fits,

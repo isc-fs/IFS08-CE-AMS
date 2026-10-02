@@ -1,0 +1,34 @@
+/* SPDX-License-Identifier: proprietary */
+/*
+ * 0x6CC PIT_balance_status -- mirrors ams::pit_diag::encode_balance_status().
+ *
+ * What balancing is doing and, when it is not, every reason why. Before this
+ * frame "balanced", "blocked by a fault", "too hot" and "no thermal data" all
+ * looked the same on the bus: an empty DCC mask on 0x6C2/0x6C3.
+ *
+ *   balance_state   ams::balance::State
+ *                   0 Off      operator command Off / stale (only reason: OpOff)
+ *                   1 Blocked  at least one gate stops balancing
+ *                   2 Active   cells are discharging
+ *                   3 Holding  last quiesce unproven, previous mask kept
+ *                   4 Done     allowed to run, spread <= BalanceDeltaMv
+ *   balance_active  cells discharging across the whole pack
+ *   balance_inhibit ams::balance::inhibit bits, all that apply:
+ *                   bit 0 OpOff            0x103 Off, stale or never seen
+ *                   bit 1 StateNotAllowed  Auto outside Charge, On outside Start/Charge
+ *                   bit 2 CellDataFault    open wire / OV / UV latched
+ *                   bit 3 TempsUntrusted   BalanceTempsTrusted false
+ *                   bit 4 NoThermalData    too few valid NTC channels
+ *                   bit 5 PackHot          max cell temp over BalanceTempMax (hysteresis)
+ *                   bit 6 ModulesDisabled  the cells needing bleed are all 0x104-disabled
+ *                   bit 7 QuiesceFailHold  mask held because the quiesce was unproven
+ *   balance_spread  highest cell minus the second-lowest (the balancing floor), mV
+ *
+ * Bytes 6..7 reserved (0).
+ */
+CAN_MSG(PIT_balance_status, 0x6CC, 8, "AMS", 1000)
+    FIELD_LE (balance_state,   uint8_t,  0,  8, 1, 0, "enum")
+    FIELD_LE (balance_active,  uint8_t,  1,  8, 1, 0, "count")
+    FIELD_LE (balance_inhibit, uint16_t, 2, 16, 1, 0, "bitmask")
+    FIELD_LE (balance_spread,  uint16_t, 4, 16, 1, 0, "mV")
+CAN_MSG_END(PIT_balance_status)

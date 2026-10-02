@@ -18,10 +18,12 @@
 
 namespace {
 
-// Expected total CSV columns: 19 scalars + per-cell + per-thermistor.
+// Expected total CSV columns: 19 scalars + per-cell + per-thermistor + the
+// 3 balancing columns at the end.
 constexpr int kExpectedCols =
     19 + ams::config::BmsModuleCount * ams::config::CellsPerModule
-       + ams::config::BmsModuleCount * ams::config::TempsPerModule;
+       + ams::config::BmsModuleCount * ams::config::TempsPerModule
+       + 3;
 
 int count_cols(const char* s, std::size_t n) {
     int cols = 1;
@@ -131,7 +133,23 @@ extern "C" void test_logcsv_row_cell_and_temp_values(void) {
     const std::size_t n = ams::log_csv::format_row(rec, buf, sizeof buf);
     TEST_ASSERT_GREATER_THAN(0u, n);
     TEST_ASSERT_NOT_NULL(std::strstr(buf, ",3777,"));   // last cell, mid-row
-    TEST_ASSERT_NOT_NULL(std::strstr(buf, ",-5\n"));     // last temp, end-of-row
+    TEST_ASSERT_NOT_NULL(std::strstr(buf, ",-5,0,0,0\n")); // last temp, then the 3 balancing columns
+}
+
+// The balancing columns are the last three, after every temperature, so all
+// earlier column positions stay where log readers expect them.
+extern "C" void test_logcsv_balance_columns_are_last(void) {
+    char hdr[ams::log_csv::MaxRowBytes];
+    const std::size_t hn = ams::log_csv::build_header(hdr, sizeof hdr);
+    TEST_ASSERT_GREATER_THAN(0u, hn);
+    TEST_ASSERT_NOT_NULL(std::strstr(hdr, ",bal_state,bal_inhibit,bal_active\n"));
+
+    ams::LogRecord rec{};
+    rec.bal_state = 2; rec.bal_inhibit = 0x0122; rec.bal_active = 17;
+    char buf[ams::log_csv::MaxRowBytes];
+    const std::size_t n = ams::log_csv::format_row(rec, buf, sizeof buf);
+    TEST_ASSERT_GREATER_THAN(0u, n);
+    TEST_ASSERT_NOT_NULL(std::strstr(buf, ",2,290,17\n"));   // 0x0122 = 290
 }
 
 extern "C" void test_logcsv_truncation_returns_zero(void) {

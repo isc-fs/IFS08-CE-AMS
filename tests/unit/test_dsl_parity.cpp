@@ -173,7 +173,7 @@ extern "C" void test_dsl_registry_well_formed(void) {
     // including it in all_messages.inc -- or including one without meaning to --
     // fails here instead of silently changing the wire contract. Bump it
     // deliberately when you add a message; `git log` has the history.
-    TEST_ASSERT_EQUAL_UINT(34u, ifs08::ALL_MSGS_COUNT);
+    TEST_ASSERT_EQUAL_UINT(35u, ifs08::ALL_MSGS_COUNT);
     // Spot-check the BE field's DBC start_bit convention (8*byte+7).
     bool checked = false;
     for (unsigned i = 0; i < ifs08::ALL_MSGS_COUNT; ++i) {

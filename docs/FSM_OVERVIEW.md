@@ -979,9 +979,9 @@ Predicate, debounce, AMS_OK and ErrorLatch logic have their own files
 9. **Run and Charge are physically identical in relay configuration.** Only the
    state byte distinguishes them, and `BmsPollTask` casts `g_state_telemetry`
    back into `fsm::State` to gate balancing — so the state byte is the contract.
-   (Balancing is Charge-only under the `Auto` operator command; the `"BALN"`
-   override balances in any state, still subject to the thermal and cell-data
-   guards.)
+   (Balancing runs only in `Start` and `Charge`: `Charge` under the `Auto`
+   operator command, `Start` or `Charge` under the `"BALN"` override, which is
+   still subject to the thermal and cell-data guards.)
 10. **The 0 mV pack guard is load-bearing.** Without it, a zero-data pack
     trivially satisfies `bus·100 ≥ 0·95` and jumps straight to Transition with no
     precharge at all. The same guard protects `bus_below_collapse` from

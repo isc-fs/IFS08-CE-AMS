@@ -626,8 +626,19 @@ cell, split across two 2512 parts at ~0.37 W each — under a fifth of their
 the sealed accumulator box*: at `BalanceMaxActive = 8` per module that is
 6.0 W per module and 30 W across the pack.
 
-The policy lives in `balance::compute_mask` (pure logic, header-only); the
-chain traffic lives in `BmsPollTask`.
+The policy lives in `balance_controller.hpp` (header-only, no HAL), in two
+layers:
+
+- **`balance::compute_mask`** — pure: the gates (`gate_reasons`), then the cell
+  selection. Every rule that decides *which* cells bleed is here.
+- **`balance::Controller`** — the stateful wrapper `BmsPollTask` owns. It feeds
+  the previous mask back (selection hysteresis), adds release hysteresis to the
+  pack-temperature lockout (`BalanceTempHystC`), and reports a state plus every
+  blocking reason on pit-diag `0x6CC` and in the SD log.
+
+**Where balancing can run:** `Auto` only in `Charge`, `On` (operator force)
+only in `Start` or `Charge`; never in `Precharge`, `Transition`, `Run` or
+`Error`. The chain traffic lives in `BmsPollTask`.
 
 ### CFGR register layout
 

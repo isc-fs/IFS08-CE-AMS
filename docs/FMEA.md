@@ -34,7 +34,7 @@ engineering judgement and says so:
 | [LATCH-3](#latch-3--ams_hil_clear_error_latch-has-no-build-system-guard--open) | The bench latch-wipe flag has no build-system guard against reaching flight. |
 | [SEASON-1](#season-1--a-nuisance-trip-in-run-ends-the-session--open) | **A nuisance trip in `Run` ends the session — no documented way to restart the car.** |
 | [SEASON-2](#season-2--maintask-has-no-automated-coverage--open) | `MainTask` is in no test; the SIL harness is a second, divergent copy of it. |
-| [SEASON-3](#season-3--0x1030x104-force-balancing-in-any-state--open) | Balancing can be forced on in `Run`, through resistors rated for transient duty. |
+| [SEASON-3](#season-3--0x1030x104-force-balancing-in-any-state--closed) | *(Closed)* Balancing now runs only in `Start` and `Charge`, whatever `0x103` says. |
 | [SEASON-4](#season-4--stale-comments-claimed-ltc_2s-temps-might-be-unwired--closed) | *(Closed)* All 200 NTC channels are fitted; two comments that said otherwise are corrected. |
 | [SEASON-5](#season-5--no-stack-or-wcet-budget-exists--open) | No stack or WCET budget; `MainTask` is the tightest consumer and unmeasured. |
 | [SEASON-6](#season-6--the-accumulators-safety-topology-is-unlearnable-from-a-clone--open) | The shutdown-circuit topology cannot be learned from this repo. |
@@ -888,7 +888,21 @@ undercuts every other gate in `CONTRIBUTING.md`. Fix by compiling the loop body
 into the host build, or say plainly in `CONTRIBUTING.md` that the SIL harness is
 a parallel implementation that must be updated alongside it.
 
-### SEASON-3 — `0x103`/`0x104` force balancing in any state · **Open**
+### SEASON-3 — `0x103`/`0x104` force balancing in any state · **Closed**
+
+**Resolution.** `balance::command_allowed_in` gates both commands by FSM
+state: `Auto` runs only in `Charge`, and `On` only in `Start` or `Charge`.
+`Precharge`, `Transition`, `Run` and `Error` never balance, whatever `0x103`
+says, and pit-diag `0x6CC` reports `StateNotAllowed` when the command is
+refused for that reason. Pinned by `test_balance_state_gate_matrix` and the
+rewritten operator-`On` tests in `test_balance_controller.cpp`.
+
+The original finding is kept below for the reasoning. Its current-magnitude
+point still stands as a separate improvement: `Start` and `Charge` can carry
+current too, and ranking cells under current is addressed by the balancing
+redesign (`docs/analysis/balancing-redesign.md`).
+
+**Original finding.**
 
 `compute_mask` state-gates `BalanceCmd::Auto` to Charge, but `On` falls straight
 through — the comment says so outright. The only protections are a magic payload
