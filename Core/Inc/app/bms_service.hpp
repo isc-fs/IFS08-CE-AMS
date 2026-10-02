@@ -236,6 +236,23 @@ public:
         return state_.ltc_online_mask;
     }
 
+    // The cells converted by the most recent update_from_ltc_response, module
+    // major (module m cell c at m * CellsPerModule + c). Cells of an IC that
+    // failed PEC on that read are written as 0 rather than their previous
+    // value, so everything non-zero was measured by that one conversion. Same
+    // caller contract as ltc_online_mask(): BmsPollTask, right after the update.
+    void copy_cells_of_last_read(std::uint16_t* out, std::size_t n) const noexcept {
+        if (out == nullptr || n < std::size_t{config::BmsModuleCount} * config::CellsPerModule) return;
+        for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) {
+            const bool upper_ok = (state_.ltc_online_mask >> (m * config::LtcsPerModule)) & 1u;
+            const bool lower_ok = (state_.ltc_online_mask >> (m * config::LtcsPerModule + 1u)) & 1u;
+            for (std::uint8_t c = 0; c < config::CellsPerModule; ++c) {
+                const bool ok = (c < config::CellsPerLtcUpper) ? upper_ok : lower_ok;
+                out[m * config::CellsPerModule + c] = ok ? state_.cell_mV[m][c] : 0u;
+            }
+        }
+    }
+
 private:
     BmsService();
 

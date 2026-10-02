@@ -41,6 +41,7 @@ add_executable(ams_unit_tests
 
     test_acu_tx_encoders.cpp
     test_balance_controller.cpp
+    test_bin_log.cpp
     test_bms_service.cpp
     test_bootloader.cpp
     test_can_busoff_recovery.cpp

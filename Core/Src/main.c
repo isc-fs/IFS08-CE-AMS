@@ -194,6 +194,16 @@ int main(void)
    * paths reading from the correct table.
    * See isc-fs/stm32-can-bootloader Core/Inc/bl_memmap.h. */
   SCB->VTOR = 0x08020000U;
+
+  /* .log_bss (AXI SRAM) is NOLOAD, so the startup code leaves it as garbage.
+   * Clear it before any task can push into the rings that live there. */
+  {
+    extern uint32_t __log_bss_start__;
+    extern uint32_t __log_bss_end__;
+    for (volatile uint32_t *p = &__log_bss_start__; p < &__log_bss_end__; ++p) {
+      *p = 0U;
+    }
+  }
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/

@@ -16,8 +16,11 @@
 #include "ams_config.hpp"
 #include "ams_events.hpp"
 #include "app/app_globals.h"
+#include "app/sd_logger_task.h"
 #include "balance_controller.hpp"
+#include "bin_log.hpp"
 #include "bms_service.hpp"
+#include "current_service.hpp"
 #include "fw_health.hpp"
 #include "ltc6811.hpp"
 #include "ltc6820.hpp"
@@ -236,14 +239,49 @@ struct VoltAttempt {
     std::uint8_t clean_ltcs;        // count of PEC-clean ICs this attempt
 };
 
+// Telemetry: one CelFrame per completed read, pushed to CELnnnn.BIN. Static
+// rather than on the stack -- 208 B, built and pushed on this task only.
+ams::bin_log::CelFrame s_cel     = {};
+std::uint16_t          s_cel_seq = 0;
+
+// Pack-current sample for a CelFrame. CurrentSensorTask (higher priority) can
+// pre-empt this copy, so take two and use the second only if both carry the
+// same sample tick -- otherwise a third read is clean, since that task runs at
+// most once per CurrentPeriodMs.
+ams::CurrentState current_sample() noexcept {
+    const auto& svc = ams::CurrentService::instance();
+    const ams::CurrentState a = svc.snapshot();
+    const ams::CurrentState b = svc.snapshot();
+    return (a.last_update_tick == b.last_update_tick) ? b : svc.snapshot();
+}
+
+void push_cel_frame(std::uint32_t t_adcv, std::uint8_t attempt, bool quiesced) noexcept {
+    using namespace ams;
+    const CurrentState cur = current_sample();
+    s_cel.t_adcv_ms = t_adcv;
+    s_cel.i_tick_ms = cur.last_update_tick;
+    s_cel.i_mA      = cur.raw_mA;
+    s_cel.seq       = s_cel_seq++;
+    s_cel.ltc_ok    = BmsService::instance().ltc_online_mask();
+    s_cel.attempt   = attempt;
+    s_cel.flags     = static_cast<std::uint8_t>(
+        (quiesced ? bin_log::cel_flag::BalanceQuiesced : 0u) |
+        (cur.sensor_fault ? bin_log::cel_flag::CurrentFault : 0u));
+    BmsService::instance().copy_cells_of_last_read(
+        s_cel.cell_mV, sizeof s_cel.cell_mV / sizeof s_cel.cell_mV[0]);
+    (void)sd_cel_push(s_cel);   // best-effort: a full ring drops the frame, never blocks
+}
+
 // One voltage-poll attempt: ADCV -> settle -> warm-up -> RDCVA/B/C/D -> digest.
 // update_from_ltc_response refreshes last_rx_tick for whichever modules came back
 // PEC-clean, so repeating this (the retry loop below) gives each module more
-// chances to report. Returns {false, 0} on any bus-level failure.
-VoltAttempt attempt_voltage_poll() {
+// chances to report. Returns {false, 0} on any bus-level failure. A read that
+// completed on the bus is also logged as a CelFrame, whatever its PEC result.
+VoltAttempt attempt_voltage_poll(std::uint8_t attempt, bool quiesced) {
     using namespace ams;
 
     auto& bus = ltc6820::Bus::default_instance();
+    const std::uint32_t t_adcv = osKernelGetTickCount();
 
     // 1. ADCV broadcast, all cells. Discharge-permit = false during normal data
     //    acquisition; it is flipped only for balancing windows.
@@ -307,6 +345,8 @@ VoltAttempt attempt_voltage_poll() {
     std::uint16_t mask  = BmsService::instance().ltc_online_mask();
     std::uint8_t  clean = 0;
     while (mask != 0u) { clean = static_cast<std::uint8_t>(clean + (mask & 1u)); mask >>= 1; }
+
+    push_cel_frame(t_adcv, attempt, quiesced);
     return { any_fresh, clean };
 }
 
@@ -538,7 +578,7 @@ void run_voltage_poll() {
     //    failed poll, feeding the T_SLEEP recovery and the staleness predicate.
     bool any_fresh = false;
     for (std::uint8_t attempt = 0; attempt <= config::VoltPollRetries; ++attempt) {
-        const VoltAttempt r = attempt_voltage_poll();
+        const VoltAttempt r = attempt_voltage_poll(attempt, quiesced);
         any_fresh = any_fresh || r.any_module_fresh;
         if (r.clean_ltcs >= config::LtcChainLength) break;  // whole chain clean
     }

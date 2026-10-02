@@ -2,9 +2,10 @@
 //
 // ImuSample -- one BMI088 reading as it travels from ImuTask to the SD card,
 // plus everything about the sensor that can be expressed without a bus: the
-// register map, the configuration ImuTask writes, raw-byte decoding, unit
-// scaling and the IMUnnnn.CSV row format. Pure (HAL-free, RTOS-free) so the
-// host tests cover it.
+// register map, the configuration ImuTask writes, raw-byte decoding and unit
+// scaling. The sample is written to IMUnnnn.BIN as-is (bin_log.hpp), and the
+// scales here are the ones its header schema declares. Pure (HAL-free,
+// RTOS-free) so the host tests cover it.
 //
 // TELEMETRY ONLY. Nothing on the safety path reads an ImuSample.
 //
@@ -18,12 +19,12 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 
 namespace ams {
 
-// Raw counts, kept raw across the ring so the 100 Hz producer does no
-// arithmetic; the consumer scales at format time. 16 B, power-of-two friendly.
+// Raw counts, kept raw across the ring and on the card so the 100 Hz producer
+// does no arithmetic; tools/log_decode.py scales them. 16 B, power-of-two
+// friendly.
 struct ImuSample {
     std::uint32_t tick_ms;   // osKernelGetTickCount() when the read started
     std::int16_t  acc[3];    // x, y, z accelerometer counts
@@ -91,8 +92,9 @@ inline std::int32_t scale_counts(std::int16_t v, std::int64_t num, std::int64_t 
     return static_cast<std::int32_t>((p + half) / den);
 }
 
-// Both outputs are fixed-point with 4 decimals (units of 1e-4), which keeps
-// the firmware integer-only and is finer than one sensor count on either die.
+// Reference conversions, fixed-point with 4 decimals (units of 1e-4), which
+// is finer than one sensor count on either die. The scales the IMUnnnn.BIN
+// schema declares must agree with these; test_bin_log.cpp checks that.
 
 // Acceleration in 1e-4 g. Datasheet: accel_g = counts / 32768 * 2^(range+1) * 1.5;
 // range 0x01 -> 6 g full scale -> counts * 60000 / 32768. One count = 1.83e-4 g.
@@ -109,47 +111,4 @@ inline std::int32_t gyr_rad_s_e4(std::int16_t counts) noexcept {
 
 }  // namespace bmi088
 
-namespace imu_csv {
-
-inline constexpr char Header[] =
-    "tick_ms,ax_g,ay_g,az_g,gx_rad_s,gy_rad_s,gz_rad_s\n";
-
-// Widest row: 10-digit tick, three "-6.0000", three "-8.7266", 6 commas, '\n'
-// = 59 bytes.
-inline constexpr std::size_t MaxRowBytes = 72;
-
-// Append ",<v/1e4 with 4 decimals>" -- sign handled by hand so a value in
-// (-1, 0) prints as "-0.0012", not "0.0012". Returns bytes written or -1.
-inline int put_fixed4(char* buf, std::size_t cap, std::int32_t v) noexcept {
-    const bool neg = v < 0;
-    const std::uint32_t a = neg ? static_cast<std::uint32_t>(-static_cast<std::int64_t>(v))
-                                : static_cast<std::uint32_t>(v);
-    const int n = std::snprintf(buf, cap, ",%s%lu.%04lu", neg ? "-" : "",
-                                static_cast<unsigned long>(a / 10000u),
-                                static_cast<unsigned long>(a % 10000u));
-    return (n < 0 || static_cast<std::size_t>(n) >= cap) ? -1 : n;
-}
-
-// Returns bytes written (excl. NUL), or 0 on truncation. tick_ms is the same
-// clock as LOGnnnn.CSV's tick_ms, so the two files of one index line up.
-inline std::size_t format_row(const ImuSample& s, char* buf, std::size_t cap) noexcept {
-    int off = std::snprintf(buf, cap, "%lu", static_cast<unsigned long>(s.tick_ms));
-    if (off < 0 || static_cast<std::size_t>(off) >= cap) return 0;
-    const std::int32_t v[6] = {
-        bmi088::acc_g_e4(s.acc[0]),     bmi088::acc_g_e4(s.acc[1]),
-        bmi088::acc_g_e4(s.acc[2]),     bmi088::gyr_rad_s_e4(s.gyr[0]),
-        bmi088::gyr_rad_s_e4(s.gyr[1]), bmi088::gyr_rad_s_e4(s.gyr[2]),
-    };
-    for (std::int32_t x : v) {
-        const int k = put_fixed4(buf + off, cap - static_cast<std::size_t>(off), x);
-        if (k < 0) return 0;
-        off += k;
-    }
-    if (static_cast<std::size_t>(off) + 2u > cap) return 0;
-    buf[off++] = '\n';
-    buf[off]   = '\0';
-    return static_cast<std::size_t>(off);
-}
-
-}  // namespace imu_csv
 }  // namespace ams
