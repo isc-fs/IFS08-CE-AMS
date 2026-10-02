@@ -185,6 +185,12 @@ BO_ 1739 PIT_balance_health: 8 AMS
  SG_ balance_quiesce_ok : 0|32@1+ (1,0) [0|0] "count" Vector__XXX
  SG_ balance_quiesce_fail : 32|32@1+ (1,0) [0|0] "count" Vector__XXX
 
+BO_ 1740 PIT_balance_status: 8 AMS
+ SG_ balance_state : 0|8@1+ (1,0) [0|0] "enum" Vector__XXX
+ SG_ balance_active : 8|8@1+ (1,0) [0|0] "count" Vector__XXX
+ SG_ balance_inhibit : 16|16@1+ (1,0) [0|0] "bitmask" Vector__XXX
+ SG_ balance_spread : 32|16@1+ (1,0) [0|0] "mV" Vector__XXX
+
 BO_ 2033 PitDiag_ack: 1 AMS
  SG_ enabled : 0|8@1+ (1,0) [0|0] "bool" Vector__XXX
 
@@ -630,6 +636,7 @@ BA_ "GenMsgCycleTime" BO_ 1735 1000;
 BA_ "GenMsgCycleTime" BO_ 1736 1000;
 BA_ "GenMsgCycleTime" BO_ 1737 1000;
 BA_ "GenMsgCycleTime" BO_ 1739 1000;
+BA_ "GenMsgCycleTime" BO_ 1740 1000;
 BA_ "GenMsgCycleTime" BO_ 256 10;
 BA_ "GenMsgCycleTime" BO_ 1664 1000;
 BA_ "GenMsgCycleTime" BO_ 1665 1000;
