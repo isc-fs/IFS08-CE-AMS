@@ -38,10 +38,9 @@ ams::BmsState make_bms() {
     return b;
 }
 
-ams::CurrentState make_cur(std::int32_t pack_mA, std::int32_t dcdc_mA) {
+ams::CurrentState make_cur(std::int32_t pack_mA) {
     ams::CurrentState c{};
-    c.filtered_mA      = pack_mA;
-    c.dcdc_filtered_mA = dcdc_mA;
+    c.filtered_mA = pack_mA;
     return c;
 }
 
@@ -120,15 +119,15 @@ extern "C" void test_acu_tx_vmax_module_b_layout(void) {
 }
 
 // ---------------------------------------------------------------------------
-// 0x135 currents — BE i16 deciamps [accu | dcdc]
+// 0x135 currents — BE i16 deciamps [accu | dcdc = 0]
 // ---------------------------------------------------------------------------
 extern "C" void test_acu_tx_currents_zero(void) {
-    const auto f = encode_currents(make_cur(0, 0));
+    const auto f = encode_currents(make_cur(0));
     TEST_ASSERT_EACH_EQUAL_UINT8(0, f.data(), f.size());
 }
 extern "C" void test_acu_tx_currents_positive_pack(void) {
     // 5000 mA -> 50 dA -> 0x0032
-    const auto f = encode_currents(make_cur(5000, 0));
+    const auto f = encode_currents(make_cur(5000));
     TEST_ASSERT_EQUAL_UINT8(0x00, f[0]);
     TEST_ASSERT_EQUAL_UINT8(0x32, f[1]);
     TEST_ASSERT_EQUAL_UINT8(0x00, f[2]);
@@ -136,7 +135,7 @@ extern "C" void test_acu_tx_currents_positive_pack(void) {
 }
 extern "C" void test_acu_tx_currents_negative_pack_two_complement(void) {
     // -5000 mA -> -50 dA -> 0xFFCE
-    const auto f = encode_currents(make_cur(-5000, 0));
+    const auto f = encode_currents(make_cur(-5000));
     TEST_ASSERT_EQUAL_UINT8(0xFF, f[0]);
     TEST_ASSERT_EQUAL_UINT8(0xCE, f[1]);
 }
@@ -154,13 +153,11 @@ extern "C" void test_acu_tx_currents_saturates_at_int16_extremes(void) {
     TEST_ASSERT_EQUAL_INT16( 32767, mA_to_deciamps_i16( 5'000'000));
     TEST_ASSERT_EQUAL_INT16(-32768, mA_to_deciamps_i16(-5'000'000));
 }
-extern "C" void test_acu_tx_currents_dcdc_in_bytes_2_3(void) {
-    // 12345 mA -> 123 dA -> 0x007B, in bytes 2..3
-    const auto f = encode_currents(make_cur(0, 12345));
-    TEST_ASSERT_EQUAL_UINT8(0x00, f[0]);
-    TEST_ASSERT_EQUAL_UINT8(0x00, f[1]);
+// No DCDC is fitted: bytes 2..3 stay 0 whatever the pack current is.
+extern "C" void test_acu_tx_currents_dcdc_slot_always_zero(void) {
+    const auto f = encode_currents(make_cur(-250000));
     TEST_ASSERT_EQUAL_UINT8(0x00, f[2]);
-    TEST_ASSERT_EQUAL_UINT8(0x7B, f[3]);
+    TEST_ASSERT_EQUAL_UINT8(0x00, f[3]);
 }
 
 // ---------------------------------------------------------------------------

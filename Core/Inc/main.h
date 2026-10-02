@@ -71,8 +71,6 @@ void Error_Handler(void);
 #define TSMS_GPIO_Port GPIOF
 #define DASH_CHG_Pin GPIO_PIN_10
 #define DASH_CHG_GPIO_Port GPIOF
-#define S_CURRENT_DCDC_Pin GPIO_PIN_1
-#define S_CURRENT_DCDC_GPIO_Port GPIOC
 #define AMS_OK_Pin GPIO_PIN_4
 #define AMS_OK_GPIO_Port GPIOB
 #define RELAY_AIR_P_Pin GPIO_PIN_5

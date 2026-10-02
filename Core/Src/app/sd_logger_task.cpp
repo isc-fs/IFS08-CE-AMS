@@ -5,9 +5,9 @@
 // Consumer loop (LogDrainPeriodMs cadence):
 //   1. ensure mounted   -- non-fatal f_mount; no card -> retry next tick
 //   2. ensure file open -- LOGnnnn.TMP + CSV header
-//   3. drain the rings  -- LogRecords -> LOGnnnn.TMP (CSV rows), ImuSamples ->
-//                          IMUnnnn.TMP and CelFrames -> CELnnnn.TMP (binary
-//                          records, bin_log.hpp). A binary file is opened on
+//   3. drain the rings  -- LogRecords -> LOGnnnn.TMP (CSV rows); ImuSamples,
+//                          CelFrames and EleRecords -> IMU/CEL/ELEnnnn.TMP
+//                          (binary records, bin_log.hpp). A binary file is opened on
 //                          its first record, so a board with no IMU writes no
 //                          IMU files.
 //   4. rotate the SET   -- on LogFileMaxBytes OR LogFileMaxMs of any file,
@@ -126,6 +126,8 @@ ams::SpscRing<ams::ImuSample, ams::config::ImuRingCapacity> g_imu_ring
     __attribute__((section(".log_bss")));
 ams::SpscRing<ams::bin_log::CelFrame, ams::config::CelRingCapacity> g_cel_ring
     __attribute__((section(".log_bss")));
+ams::SpscRing<ams::bin_log::EleRecord, ams::config::EleRingCapacity> g_ele_ring
+    __attribute__((section(".log_bss")));
 
 // Records are batched here and written with one f_write per batch. 32-byte
 // aligned in AXI SRAM, so a sector-aligned run can take the SD IDMA fast path.
@@ -178,7 +180,9 @@ BinFile g_imu{Kind::Imu, ams::bin_log::ImuStream, ams::bin_log::ImuSchema,
               static_cast<std::uint16_t>(sizeof(ams::ImuSample))};
 BinFile g_cel{Kind::Cel, ams::bin_log::CelStream, ams::bin_log::CelSchema,
               static_cast<std::uint16_t>(sizeof(ams::bin_log::CelFrame))};
-BinFile* const g_bin_files[] = {&g_imu, &g_cel};
+BinFile g_ele{Kind::Ele, ams::bin_log::EleStream, ams::bin_log::EleSchema,
+              static_cast<std::uint16_t>(sizeof(ams::bin_log::EleRecord))};
+BinFile* const g_bin_files[] = {&g_imu, &g_cel, &g_ele};
 
 // Mirror the AMS.ioc SDMMC1 config onto hsd1. The boot-path MX_SDMMC1_SD_Init()
 // is intentionally NOT auto-called (CubeMX Advanced Settings) so an absent
@@ -279,6 +283,7 @@ bool seal_orphan_file(Kind kind, std::uint32_t idx) noexcept {
 bool seal_orphan(std::uint32_t idx) noexcept {
     (void)seal_orphan_file(Kind::Imu, idx);
     (void)seal_orphan_file(Kind::Cel, idx);
+    (void)seal_orphan_file(Kind::Ele, idx);
     if (!seal_orphan_file(Kind::Log, idx)) return false;
     ++g_log_files;
     return true;
@@ -445,8 +450,8 @@ Drain drain_bin(BinFile& f, ams::SpscRing<T, Cap>& ring) noexcept {
 // LOGFS backend -- the FatFs half of ams::logfs::Server.
 //
 // Every method here runs on THIS thread; see logfs_server.hpp for why the
-// server is not given its own task. Only sealed LOGnnnn.CSV, IMUnnnn.BIN and
-// CELnnnn.BIN files are visible (indices in log_names.hpp): an active
+// server is not given its own task. Only sealed LOGnnnn.CSV and the IMU, CEL
+// and ELE .BIN files are visible (indices in log_names.hpp): an active
 // .TMP is still growing (its length would be a lie by the time the host
 // finished reading it) and .CRC sidecars are an implementation detail.
 // ---------------------------------------------------------------------------
@@ -494,12 +499,12 @@ public:
     // sidecar-less file asks for it explicitly with LOGFS_CRC.
     //
     // The sidecar is read BEFORE rd_ is opened, deliberately. _FS_LOCK counts
-    // files AND directories, and SdLoggerTask permanently holds up to three
-    // slots with the active LOG, IMU and CEL .TMPs. Opening the sidecar
+    // files AND directories, and SdLoggerTask permanently holds up to four
+    // slots with the active LOG, IMU, CEL and ELE .TMPs. Opening the sidecar
     // afterwards would stack two more (rd_ + sidecar, plus the directory if a
     // LIST is still open) -- the FR_TOO_MANY_OPEN_FILES that once made the CRC
     // opcode fall back to streaming every time. _FS_LOCK = 8 leaves room for
-    // the three logging files, the directory, rd_ and the sidecar.
+    // the four logging files, the directory, rd_ and the sidecar.
     bool open(std::uint16_t index, std::uint32_t& size_out,
               std::uint32_t& crc_out) noexcept {
         close_file();
@@ -697,10 +702,15 @@ bool sd_cel_push(const bin_log::CelFrame& f) noexcept {
     return true;
 }
 
+bool sd_ele_push(const bin_log::EleRecord& r) noexcept {
+    if (!g_ele_ring.push(r)) { ++g_ele.dropped; return false; }
+    return true;
+}
+
 SdLogStats sd_log_stats() noexcept {
     return SdLogStats{ g_log_rows, g_log_dropped, g_log_files,
                        g_imu.rows, g_imu.dropped, g_cel.rows, g_cel.dropped,
-                       g_log_state };
+                       g_ele.rows, g_ele.dropped, g_log_state };
 }
 
 }  // namespace ams
@@ -758,6 +768,8 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
                 while (g_imu_ring.pop(imu_scratch)) { /* discard while cardless */ }
                 ams::bin_log::CelFrame cel_scratch;
                 while (g_cel_ring.pop(cel_scratch)) { /* discard while cardless */ }
+                ams::bin_log::EleRecord ele_scratch;
+                while (g_ele_ring.pop(ele_scratch)) { /* discard while cardless */ }
                 continue;
             }
         }
@@ -792,6 +804,7 @@ extern "C" void ams_sd_logger_task_run(void *argument) {
         if (g_mounted && g_file_open) {
             Drain d = drain_bin(g_imu, g_imu_ring);
             if (d == Drain::Ok) d = drain_bin(g_cel, g_cel_ring);
+            if (d == Drain::Ok) d = drain_bin(g_ele, g_ele_ring);
             if (d == Drain::IoError)     teardown(3);
             else if (d == Drain::Rotate) seal_file();   // next set opens next tick
         }

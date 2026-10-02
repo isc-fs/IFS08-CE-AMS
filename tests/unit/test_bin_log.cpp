@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: proprietary
 //
 // Tests for bin_log.hpp -- the binary companion-file header and the schemas of
-// IMUnnnn.BIN and CELnnnn.BIN. The schema text is what tools/log_decode.py
+// IMUnnnn.BIN, CELnnnn.BIN and ELEnnnn.BIN. The schema text is what tools/log_decode.py
 // trusts, so these tests parse it the way the decoder does and hold it to the
 // record structs and the firmware's own unit conversions.
 
@@ -132,6 +132,7 @@ extern "C" void test_binlog_header_rejects_what_does_not_fit(void) {
 extern "C" void test_binlog_schema_sizes_match_records(void) {
     TEST_ASSERT_EQUAL_UINT(sizeof(ImuSample), schema_record_bytes(bin_log::ImuSchema));
     TEST_ASSERT_EQUAL_UINT(sizeof(bin_log::CelFrame), schema_record_bytes(bin_log::CelSchema));
+    TEST_ASSERT_EQUAL_UINT(sizeof(bin_log::EleRecord), schema_record_bytes(bin_log::EleSchema));
 }
 
 // The decoder scales IMU counts by the schema's ratios; they must give the

@@ -48,8 +48,8 @@ the instant anything goes out of bounds.
 - **Watches** — 95 cell voltages + 200 NTC temperatures, read over isoSPI
   from a daisy-chain of 10 LTC6811-1 monitors (5 modules × 2 ICs) driven
   through an LTC6820 bridge on SPI1; plus pack current from a Bourns
-  SSA-2-250A sensor read *differentially* on ADC3 (PF7/PF8), and DCDC
-  current single-ended on PC1.
+  SSA-2-250A sensor read *differentially* on ADC3 (PF7/PF8), oversampled and
+  captured by DMA.
 - **Drives** — three contactors — AIR− (PB6), AIR+ (PB5), precharge (PB7)
   — and the `AMS_OK` leg of the shutdown circuit (SDC) on PB4. All
   active-high; CubeMX writes them LOW *before* configuring them as

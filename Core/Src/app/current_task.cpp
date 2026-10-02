@@ -1,45 +1,49 @@
 // SPDX-License-Identifier: proprietary
 //
-// Periodic ADC poll of TWO current sensors on ADC3:
-//   - PF7/PF8 / ADC3_INP3+INN3 -> pack current (Bourns SSA-2-250A read
-//     in ADC DIFFERENTIAL mode; OUT_P=PF7, OUT_N=PF8)
-//   - PC1 / ADC3_INP11 -> DCDC current (separate single-ended sensor)
+// Pack-current acquisition: the Bourns SSA-2-250A on PF7/PF8 (ADC3_INP3/INN3,
+// read in ADC DIFFERENTIAL mode; OUT_P = PF7, OUT_N = PF8).
 //
-// 50 ms period. Each cycle:
-//   1. Reconfigure ADC3 regular channel for INP3 differential (pack),
-//      start, poll, get
-//   2. Disconnect check: re-read INP3 SINGLE-ENDED (OUT_P leg) and test
-//      it sits in the plausible window; debounce N cycles -> sensor_fault
-//   3. Feed both into CurrentService::update_from_adc
-//   4. Reconfigure ADC3 regular channel for INP11 single-ended (DCDC),
-//      start, poll, get
-//   5. Feed into CurrentService::update_dcdc_from_adc
-//   5b. Advance the SoC filter (predict from current, correct from cell
-//       voltage). Runs here because this task already owns the current
-//       samples and is not realtime-critical. TELEMETRY ONLY.
-//   6. On HAL error at any step: skip that channel's update so the
-//      corresponding last_*_update_tick does not advance -> SafetyTask
-//      trips on staleness for the pack channel (IStaleMs = 200 ms) and
-//      forces ERROR. DCDC staleness is informational only (no FSM impact).
+// ADC3 free-runs with its hardware oversampler (config::CurrentAdcFracBits for
+// the numbers): every ~80 us it delivers the mean of 64 conversions, and DMA
+// writes those samples into one of two capture buffers with no CPU work. Each
+// CurrentPeriodMs (50 ms) cycle:
+//   1. Stop the running capture and note how many samples it holds.
+//   2. Disconnect check: read INP3 SINGLE-ENDED (the OUT_P leg) and test it
+//      sits in the plausible window; debounce N cycles -> sensor_fault.
+//   3. Restart the capture into the other buffer. The pause between captures
+//      is the stop, one single-ended oversampled read and the restart: ~0.1 ms
+//      in 50 ms.
+//   4. Feed the newest sample of the finished capture, as a 12-bit code, into
+//      CurrentService::update_from_adc -- one value per cycle, exactly the
+//      contract the safety predicates (over-current filter, IStaleMs) were
+//      sized for. Only the sample changed: an 80 us integration instead of a
+//      26 ns snapshot.
+//   5. Split the finished capture into EleWindowsPerCycle 10 ms windows and
+//      push one EleRecord per window (mean / min / max) to ELEnnnn.BIN.
+//      TELEMETRY ONLY.
+//   6. Integrate the capture's mean into the charge totals, and advance the
+//      SoC filter. TELEMETRY ONLY.
+//   On any HAL failure, or a capture with no samples, update_from_adc is not
+//   called, so last_update_tick does not advance -> SafetyTask trips on
+//   staleness (IStaleMs = 200 ms) and forces ERROR, as before.
 //
-// The channel-swap costs ~10 us of HAL overhead per swap; total cycle
-// budget at 50 ms is comfortable. If timing ever gets tight we can
-// move to ADC3 scan mode (two ranks via CubeMX) and drop the runtime
-// reconfigure.
-//
-// First-time calibration via HAL_ADCEx_Calibration_Start runs once at
-// task entry -- BOTH single-ended and differential offset/linearity,
-// since this revision mixes a differential channel (pack) and a
-// single-ended one (DCDC). CubeMX configures ADC3 rank 1 = Channel 3
-// differential (PF7/PF8); the rank-1 channel + single/diff selection is
-// re-set on every read so the order and mode are deterministic.
+// First-time calibration via HAL_ADCEx_Calibration_Start runs once at task
+// entry -- BOTH single-ended and differential, since the disconnect check
+// reads the same channel single-ended. CubeMX configures ADC3 (oversampling,
+// continuous mode, DMA on DMA1_Stream1); the channel and its single/diff mode
+// are re-set before every start so the mode is deterministic.
 
 #include "app/current_task.h"
 
 #include "ams_config.hpp"
+#include "app/sd_logger_task.h"
+#include "bin_log.hpp"
 #include "bms_service.hpp"
+#include "current_capture.hpp"
 #include "current_service.hpp"
+#include "log_record.hpp"
 #include "soc_estimator.hpp"
+#include "vehicle_service.hpp"
 
 #include "cmsis_os2.h"
 #include "main.h"
@@ -76,10 +80,22 @@ extern "C" volatile std::uint16_t g_q_gaps    = 0;
 
 namespace {
 
-// Failed-conversion counters for telemetry. Separate for pack vs DCDC
-// so the bench can localise which channel is the problem.
-volatile std::uint32_t g_current_adc_fail      = 0;
-volatile std::uint32_t g_current_adc_dcdc_fail = 0;
+static_assert(ams::config::EleWindowsPerCycle * 10u == ams::config::CurrentPeriodMs,
+              "ELE windows must be 10 ms");
+
+// Failed captures (HAL error, or a cycle that produced no samples).
+volatile std::uint32_t g_current_adc_fail = 0;
+
+// Capture buffers. DMA1 cannot reach DTCM, so they live in AXI SRAM
+// (.adc_dma, RAM_D1); the D-cache is off on this part, so no cache
+// maintenance. The DMA fills s_capture[s_active] while the task reduces the
+// other one.
+alignas(32) std::uint16_t s_capture[2][ams::config::CurrentCaptureCapacity]
+    __attribute__((section(".adc_dma")));
+std::uint8_t  s_active          = 0;
+bool          s_capture_running = false;
+std::uint32_t s_capture_start   = 0;     // tick the running capture started
+std::uint16_t s_ele_seq         = 0;
 
 // Disconnect debounce: consecutive cycles the OUT_P single-ended leg
 // read landed outside the plausible window. Only after
@@ -183,30 +199,96 @@ void update_soc() noexcept {
     publish_soc(flags);
 }
 
-// One-shot single-channel read on ADC3. Reconfigures rank 1 to the
-// requested channel and single/differential mode, starts, polls, gets
-// the value. Returns false on any HAL failure -- caller bumps its own
-// fail counter and skips the CurrentService update so freshness doesn't
-// advance.
-bool read_adc3_channel(std::uint32_t channel, std::uint32_t single_diff,
-                       std::uint16_t& out_raw) noexcept {
+// Select ADC3_INP3 (the only channel) in the given single/differential mode.
+// The ADC must be stopped: the mode bit can only change while it is disabled,
+// which HAL_ADC_Stop / HAL_ADC_Stop_DMA leave it.
+bool configure_channel(std::uint32_t single_diff) noexcept {
     ADC_ChannelConfTypeDef cfg = {};
-    cfg.Channel      = channel;
+    cfg.Channel      = ADC_CHANNEL_3;
     cfg.Rank         = ADC_REGULAR_RANK_1;
-    cfg.SamplingTime = ADC3_SAMPLETIME_2CYCLES_5;
+    cfg.SamplingTime = ADC3_SAMPLETIME_47CYCLES_5;   // KEEP in sync with AMS.ioc
     cfg.SingleDiff   = single_diff;
     cfg.OffsetNumber = ADC_OFFSET_NONE;
     cfg.Offset       = 0;
     cfg.OffsetSign   = ADC3_OFFSET_SIGN_NEGATIVE;
-    if (HAL_ADC_ConfigChannel(&hadc3, &cfg) != HAL_OK)    return false;
-    if (HAL_ADC_Start(&hadc3)              != HAL_OK)    return false;
-    if (HAL_ADC_PollForConversion(&hadc3, 5) != HAL_OK) {
+    return HAL_ADC_ConfigChannel(&hadc3, &cfg) == HAL_OK;
+}
+
+// Start a differential capture into buffer `buf`. One-shot DMA: if the task
+// is late the DMA stops at the end of the buffer and the ADC keeps converting
+// into an overwritten data register, which is harmless.
+bool start_capture(std::uint8_t buf) noexcept {
+    if (!configure_channel(ADC_DIFFERENTIAL_ENDED)) return false;
+    return HAL_ADC_Start_DMA(&hadc3, reinterpret_cast<std::uint32_t*>(s_capture[buf]),
+                             ams::config::CurrentCaptureCapacity) == HAL_OK;
+}
+
+// Stop the running capture; returns how many samples it wrote. The DMA count
+// is read before the stop, so a sample landing during the stop is simply not
+// counted.
+std::uint16_t stop_capture() noexcept {
+    const std::uint32_t left = __HAL_DMA_GET_COUNTER(hadc3.DMA_Handle);
+    (void)HAL_ADC_Stop_DMA(&hadc3);
+    return (left >= ams::config::CurrentCaptureCapacity)
+               ? 0u
+               : static_cast<std::uint16_t>(ams::config::CurrentCaptureCapacity - left);
+}
+
+// One single-ended oversampled read of the OUT_P leg, as a Q4 code. The ADC
+// is in continuous mode, so take the first result and stop.
+bool read_leg_q4(std::uint16_t& out_q4) noexcept {
+    if (!configure_channel(ADC_SINGLE_ENDED))  return false;
+    if (HAL_ADC_Start(&hadc3) != HAL_OK)       return false;
+    if (HAL_ADC_PollForConversion(&hadc3, 2) != HAL_OK) {
         (void)HAL_ADC_Stop(&hadc3);
         return false;
     }
-    out_raw = static_cast<std::uint16_t>(HAL_ADC_GetValue(&hadc3));
+    out_q4 = static_cast<std::uint16_t>(HAL_ADC_GetValue(&hadc3));
     (void)HAL_ADC_Stop(&hadc3);
     return true;
+}
+
+// DC-bus voltage and its age for ELE. AcuCanTask, the writer, runs at this
+// task's priority and can time-slice in mid-copy, so take two copies and, if
+// their 0x100 ticks differ, a third (0x100 arrives every ~10 ms, so the third
+// is clean). TELEMETRY ONLY.
+void dc_bus_sample(std::uint32_t now, std::uint16_t& volts, std::uint16_t& age) noexcept {
+    const auto& svc = ams::VehicleService::instance();
+    const ams::VehicleState a = svc.snapshot();
+    ams::VehicleState       v = svc.snapshot();
+    if (a.last_dc_bus_tick != v.last_dc_bus_tick) v = svc.snapshot();   // a 0x100 landed mid-copy
+    volts = v.dc_bus_V;
+    age   = ams::log_csv::age_ms(now, v.last_dc_bus_tick);
+}
+
+// Split a finished capture into its 10 ms windows and push one ELE record
+// each. Returns the capture's overall window (for the charge integral).
+ams::current_capture::Window publish_ele(const std::uint16_t* buf, std::uint16_t n,
+                                         std::uint32_t t_start, std::uint32_t t_stop,
+                                         bool sensor_fault) noexcept {
+    using namespace ams;
+    std::uint16_t dc_v = 0, dc_age = 0;
+    dc_bus_sample(t_stop, dc_v, dc_age);
+    const std::uint8_t flags = static_cast<std::uint8_t>(
+        (sensor_fault ? bin_log::ele_flag::SensorFault : 0u) |
+        (n >= config::CurrentCaptureCapacity ? bin_log::ele_flag::Overrun : 0u));
+
+    current_capture::Window all;
+    for (std::uint8_t i = 0; i < config::EleWindowsPerCycle; ++i) {
+        const std::uint16_t b = current_capture::window_begin(n, config::EleWindowsPerCycle, i);
+        const std::uint16_t e = current_capture::window_begin(n, config::EleWindowsPerCycle,
+                                                              static_cast<std::uint8_t>(i + 1u));
+        const current_capture::Window w = current_capture::reduce(buf, b, e);
+        if (w.count == 0u) continue;
+        all.sum   += w.sum;
+        all.count  = static_cast<std::uint16_t>(all.count + w.count);
+        if (w.min < all.min) all.min = w.min;
+        if (w.max > all.max) all.max = w.max;
+        (void)sd_ele_push(current_capture::make_record(
+            w, current_capture::tick_at(t_start, t_stop, e, n), s_ele_seq++, flags,
+            dc_v, dc_age));   // best-effort: a full ring drops the record, never blocks
+    }
+    return all;
 }
 
 }  // namespace
@@ -214,10 +296,9 @@ bool read_adc3_channel(std::uint32_t channel, std::uint32_t single_diff,
 extern "C" void ams_current_sensor_task_run(void *argument) {
     (void)argument;
 
-    // Calibrate before first use. Offset + linearity for BOTH the
-    // single-ended (DCDC / INP11) and differential (pack / INP3+INN3)
-    // signal paths -- on STM32H7 the two have independent calibration
-    // factors. Results are applied internally; nothing to consume.
+    // Calibrate before first use, both signal paths: the capture is
+    // differential, the disconnect check single-ended, and on STM32H7 the two
+    // have independent calibration factors.
     HAL_ADCEx_Calibration_Start(&hadc3,
                                 ADC_CALIB_OFFSET_LINEARITY,
                                 ADC_SINGLE_ENDED);
@@ -225,64 +306,77 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
                                 ADC_CALIB_OFFSET_LINEARITY,
                                 ADC_DIFFERENTIAL_ENDED);
 
-    std::uint32_t last_wake = osKernelGetTickCount();
+    s_capture_running = start_capture(s_active);
+    s_capture_start   = osKernelGetTickCount();
+    std::uint32_t last_wake = s_capture_start;
 
     for (;;) {
         last_wake += ams::config::CurrentPeriodMs;
         osDelayUntil(last_wake);
 
-        // --- Pack current (PF7/PF8 / ADC3_INP3+INN3, differential) ---
-        std::uint16_t raw_pack = 0;
-        if (read_adc3_channel(ADC_CHANNEL_3, ADC_DIFFERENTIAL_ENDED, raw_pack)) {
-            // Disconnect check: read OUT_P (PF7 / CH3) SINGLE-ENDED and
-            // test it sits in the plausible window. With the internal
-            // pull-down an open connector collapses OUT_P toward 0 V.
-            // A failed SE read (or an in-window read) clears the streak
-            // so we never fault on a missing sample -- only a sustained
-            // out-of-window leg latches sensor_fault. INN3/PF8 can't be
-            // sampled independently in a differential pair, so we watch
-            // the OUT_P leg; an OUT_N-only break is caught instead by
-            // the over-limit predicate (skewed differential).
-            std::uint16_t raw_legp = 0;
-            const bool se_ok = read_adc3_channel(ADC_CHANNEL_3, ADC_SINGLE_ENDED, raw_legp);
-            if (se_ok && !ams::CurrentService::leg_voltage_plausible(raw_legp)) {
-                if (g_current_disconnect_streak < ams::config::CurrentDisconnectConfirm) {
-                    ++g_current_disconnect_streak;
-                }
-            } else {
-                g_current_disconnect_streak = 0;
+        // --- 1. Stop the capture that ran through the last cycle ---
+        const std::uint8_t  done    = s_active;
+        const std::uint32_t t_start = s_capture_start;
+        const std::uint16_t n       = s_capture_running ? stop_capture() : 0u;
+        const std::uint32_t t_stop  = osKernelGetTickCount();
+
+        // --- 2. Disconnect check: OUT_P (PF7 / CH3) single-ended ---
+        // With the internal pull-down an open connector collapses OUT_P toward
+        // 0 V. A failed read (or an in-window read) clears the streak so we
+        // never fault on a missing sample -- only a sustained out-of-window leg
+        // latches sensor_fault. INN3/PF8 can't be sampled independently in a
+        // differential pair, so we watch the OUT_P leg; an OUT_N-only break is
+        // caught instead by the over-limit predicate (skewed differential).
+        std::uint16_t legp_q4 = 0;
+        const bool se_ok = read_leg_q4(legp_q4);
+
+        // --- 3. Restart into the other buffer straight away ---
+        s_active          = static_cast<std::uint8_t>(s_active ^ 1u);
+        s_capture_running = start_capture(s_active);
+        s_capture_start   = osKernelGetTickCount();
+
+        if (se_ok && !ams::CurrentService::leg_voltage_plausible(
+                         ams::CurrentService::q4_to_raw(legp_q4))) {
+            if (g_current_disconnect_streak < ams::config::CurrentDisconnectConfirm) {
+                ++g_current_disconnect_streak;
             }
-            const bool sensor_fault =
-                g_current_disconnect_streak >= ams::config::CurrentDisconnectConfirm;
+        } else {
+            g_current_disconnect_streak = 0;
+        }
+        const bool sensor_fault =
+            g_current_disconnect_streak >= ams::config::CurrentDisconnectConfirm;
 
-            const std::uint32_t t_pack = osKernelGetTickCount();
-            ams::CurrentService::instance().update_from_adc(raw_pack, t_pack, sensor_fault);
+        if (n == 0u) {
+            // No samples: HAL failure or a capture that never started. Leave
+            // last_update_tick alone so the staleness predicate sees it.
+            ++g_current_adc_fail;
+        } else {
+            const std::uint16_t* buf = s_capture[done];
 
-            // Monotonic charge totals for the SD log: this sample held since the
-            // previous good one. A faulted sensor's reading is not charge.
+            // --- 4. Safety path: one sample per cycle, as a 12-bit code ---
+            ams::CurrentService::instance().update_from_adc(
+                ams::current_capture::newest_raw(buf, n), t_stop, sensor_fault);
+
+            // --- 5. ELE windows (TELEMETRY ONLY) ---
+            const ams::current_capture::Window all =
+                publish_ele(buf, n, t_start, t_stop, sensor_fault);
+
+            // --- 6. Monotonic charge totals: the capture's mean current over
+            // the time since the previous capture ended. A faulted sensor's
+            // reading is not charge.
             if (s_charge_last_tick != 0u) {
                 if (sensor_fault) {
                     s_charge.skip();
                 } else {
-                    s_charge.add(ams::CurrentService::instance().snapshot().raw_mA,
-                                 t_pack - s_charge_last_tick);
+                    s_charge.add(ams::CurrentService::adc_q4_to_mA(
+                                     ams::current_capture::mean_q4(all)),
+                                 t_stop - s_charge_last_tick);
                 }
                 g_q_dis_mAs = s_charge.discharge_mAs();
                 g_q_chg_mAs = s_charge.charge_mAs();
                 g_q_gaps    = s_charge.gaps();
             }
-            s_charge_last_tick = t_pack;
-        } else {
-            ++g_current_adc_fail;
-        }
-
-        // --- DCDC current (PC1 / ADC3_INP11, single-ended) ---
-        std::uint16_t raw_dcdc = 0;
-        if (read_adc3_channel(ADC_CHANNEL_11, ADC_SINGLE_ENDED, raw_dcdc)) {
-            ams::CurrentService::instance().update_dcdc_from_adc(
-                raw_dcdc, osKernelGetTickCount());
-        } else {
-            ++g_current_adc_dcdc_fail;
+            s_charge_last_tick = t_stop;
         }
 
         // --- State of charge (TELEMETRY ONLY) ---

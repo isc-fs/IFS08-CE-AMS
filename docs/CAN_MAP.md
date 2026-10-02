@@ -256,14 +256,14 @@ sentinels are "impossible reading in the direction that would look safe", which
 is the property that matters: an offline module never reports a comfortable
 number.
 
-### `0x135` — pack + DCDC current
+### `0x135` — pack current
 
 DLC 4, 50 ms.
 
 | Bytes | Field |
 |:---:|---|
 | 0–1 | `current_accu_dA` BE **int16**, deciamps (1 LSB = 0.1 A) |
-| 2–3 | `current_dcdc_dA` BE **int16**, deciamps |
+| 2–3 | `current_dcdc_dA` BE **int16**, deciamps — **always 0**: no DCDC is fitted. The slot stays so the layout the ECU decodes does not change. |
 
 **Sign convention: `+` = discharge, `−` = charge.** This convention holds
 across the whole codebase; do not re-derive it per frame.
@@ -1051,10 +1051,10 @@ nobody is driving.
 
 ### Files visible
 
-Only sealed `LOGnnnn.CSV`, `IMUnnnn.BIN` and `CELnnnn.BIN`. The index carries
-the rotation number in its low 14 bits and the kind in the top two: `00` LOG
-(`LOG0003.CSV` → `0x0003`), `10` IMU (`IMU0003.BIN` → `0x8003`), `01` CEL
-(`CEL0003.BIN` → `0x4003`); `11` is reserved. The ranges cannot collide (the
+Only sealed `LOGnnnn.CSV`, `IMUnnnn.BIN`, `CELnnnn.BIN` and `ELEnnnn.BIN`. The
+index carries the rotation number in its low 14 bits and the kind in the top
+two: `00` LOG (`LOG0003.CSV` → `0x0003`), `10` IMU (`IMU0003.BIN` → `0x8003`),
+`01` CEL (`CEL0003.BIN` → `0x4003`), `11` ELE (`ELE0003.BIN` → `0xC003`). The ranges cannot collide (the
 rotation number stops at 9999), and the host needs no change because it treats
 the index as opaque and names the pulled file from the entry's `name`. All
 files of one number cover the same time window; `tools/log_decode.py` turns the
@@ -1102,7 +1102,7 @@ someone spelunking an old trace can find the cross-reference.
 | `0x12C + 0x1E·m`, `0x140 + 0x1E·m` and their response ranges | BMS slave polling over the second CAN bus | LTC6811-1 isoSPI chain — see [`BMS_LTC6811.md`](BMS_LTC6811.md) |
 | `0x401 – 0x406` | accumulator temperature RX | isoSPI temperature sweep |
 | `0x40D – 0x412` | charger-mode temperature passthrough (extended) | nothing; there is no second bus to forward from |
-| `0x450` | unsigned 2-byte current | `0x135` (signed deciamps + DCDC in one frame) |
+| `0x450` | unsigned 2-byte current | `0x135` (signed deciamps; DCDC slot always 0) |
 | `0x600` | start button | TSMS (PF9, level) + DASH_CHG (PF10, momentary edge) |
 | `0x18FF50E7` | charger detect | `0x101` magic-gated charge request + VCU absence |
 

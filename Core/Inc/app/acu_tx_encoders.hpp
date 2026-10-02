@@ -162,12 +162,13 @@ encode_vmax_module_b(const BmsState& bms) noexcept {
     return detail::to_array(buf);
 }
 
-// 0x135 currents — BE i16 deciamps: [accu | dcdc].
+// 0x135 currents — BE i16 deciamps: [accu | dcdc]. No DCDC is fitted, so its
+// slot is always 0; the layout stays because the ECU decodes the frame.
 [[nodiscard]] inline std::array<std::uint8_t, 4>
 encode_currents(const CurrentState& cur) noexcept {
     ifs08::ACU_currents_t in{};
     in.current_accu_dA = mA_to_deciamps_i16(cur.filtered_mA);
-    in.current_dcdc_dA = mA_to_deciamps_i16(cur.dcdc_filtered_mA);
+    in.current_dcdc_dA = 0;
     std::uint8_t buf[4] = {0};
     ifs08::encode_ACU_currents(in, buf);
     return detail::to_array(buf);

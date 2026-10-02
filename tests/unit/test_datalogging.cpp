@@ -20,10 +20,10 @@
 
 namespace {
 
-// Expected total CSV columns: 19 head scalars + 95 cells + 200 temperatures +
+// Expected total CSV columns: 18 head scalars + 95 cells + 200 temperatures +
 // 18 tail scalars. Pinned as a literal so adding a column is a deliberate edit
 // here as well as in the table.
-constexpr int kExpectedCols = 19 + 95 + 200 + 18;
+constexpr int kExpectedCols = 18 + 95 + 200 + 18;
 
 int count_cols(const char* s, std::size_t n) {
     int cols = 1;
@@ -179,18 +179,22 @@ extern "C" void test_logcsv_row_cell_and_temp_values(void) {
     TEST_ASSERT_EQUAL_STRING("-5",   c.get("t4_39").c_str());
 }
 
-// Existing columns never move: new ones are appended to the tail only.
+// New columns are appended to the tail only, so these positions are stable.
+// Removing a column shifts everything after it; pinning the positions makes
+// that a deliberate edit here rather than a silent change for log parsers.
 extern "C" void test_logcsv_existing_columns_keep_positions(void) {
     const Csv c = format(ams::LogRecord{});
     TEST_ASSERT_EQUAL_STRING("tick_ms",    c.names[0].c_str());
-    TEST_ASSERT_EQUAL_STRING("tavg_C",     c.names[18].c_str());
-    TEST_ASSERT_EQUAL_STRING("c0_0",       c.names[19].c_str());
-    TEST_ASSERT_EQUAL_STRING("c4_18",      c.names[113].c_str());
-    TEST_ASSERT_EQUAL_STRING("t0_0",       c.names[114].c_str());
-    TEST_ASSERT_EQUAL_STRING("t4_39",      c.names[313].c_str());
-    TEST_ASSERT_EQUAL_STRING("bal_state",  c.names[314].c_str());
-    TEST_ASSERT_EQUAL_STRING("bal_active", c.names[316].c_str());
-    TEST_ASSERT_EQUAL_STRING("bms_valid",  c.names[317].c_str());
+    TEST_ASSERT_EQUAL_STRING("I_filt_mA",  c.names[11].c_str());
+    TEST_ASSERT_EQUAL_STRING("dcbus_V",    c.names[12].c_str());
+    TEST_ASSERT_EQUAL_STRING("tavg_C",     c.names[17].c_str());
+    TEST_ASSERT_EQUAL_STRING("c0_0",       c.names[18].c_str());
+    TEST_ASSERT_EQUAL_STRING("c4_18",      c.names[112].c_str());
+    TEST_ASSERT_EQUAL_STRING("t0_0",       c.names[113].c_str());
+    TEST_ASSERT_EQUAL_STRING("t4_39",      c.names[312].c_str());
+    TEST_ASSERT_EQUAL_STRING("bal_state",  c.names[313].c_str());
+    TEST_ASSERT_EQUAL_STRING("bal_active", c.names[315].c_str());
+    TEST_ASSERT_EQUAL_STRING("bms_valid",  c.names[316].c_str());
 }
 
 // Every scalar field lands in the column named for it. Each field gets a
@@ -202,7 +206,7 @@ extern "C" void test_logcsv_every_field_maps_to_its_column(void) {
     r.ams_ok = 1;             r.fault_reason = 16;  r.fault_detail = 7;
     r.tsms = 5;               r.dash_chg = 6;       r.module_online_mask = 29;
     r.pack_mV = 352100;       r.pack_current_raw_mA = -12345;
-    r.pack_current_mA = -12000; r.dcdc_current_mA = -345; r.dc_bus_V = 351;
+    r.pack_current_mA = -12000; r.dc_bus_V = 351;
     r.min_cell_mV = 3301;     r.max_cell_mV = 3402;
     r.min_tempC = -12;        r.max_tempC = 45;     r.avg_tempC = 21;
     r.bal_state = 2;          r.bal_inhibit = 0x0122; r.bal_active = 9;
@@ -218,7 +222,7 @@ extern "C" void test_logcsv_every_field_maps_to_its_column(void) {
         {"tick_ms", "4000000001"}, {"fsm", "3"}, {"mode", "2"}, {"ams_ok", "1"},
         {"fault", "16"}, {"detail", "7"}, {"tsms", "5"}, {"dash_chg", "6"},
         {"mod_mask", "29"}, {"pack_mV", "352100"}, {"I_raw_mA", "-12345"},
-        {"I_filt_mA", "-12000"}, {"Idcdc_mA", "-345"}, {"dcbus_V", "351"},
+        {"I_filt_mA", "-12000"}, {"dcbus_V", "351"},
         {"vmin_mV", "3301"}, {"vmax_mV", "3402"}, {"tmin_C", "-12"},
         {"tmax_C", "45"}, {"tavg_C", "21"},
         {"bal_state", "2"}, {"bal_inhibit", "290"}, {"bal_active", "9"},
@@ -276,7 +280,6 @@ extern "C" void test_logcsv_widest_row_fits(void) {
     ams::LogRecord r{};
     r.tick_ms = 0xFFFFFFFFu; r.pack_mV = 0xFFFFFFFFu;
     r.pack_current_raw_mA = INT32_MIN; r.pack_current_mA = INT32_MIN;
-    r.dcdc_current_mA = INT32_MIN;
     r.min_tempC = r.max_tempC = r.avg_tempC = INT16_MIN;
     for (auto& mod : r.cell_mV)    for (auto& v : mod) v = 0xFFFFu;
     for (auto& mod : r.cell_tempC) for (auto& v : mod) v = INT16_MIN;

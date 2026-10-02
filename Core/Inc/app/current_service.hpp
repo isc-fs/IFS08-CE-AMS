@@ -17,47 +17,26 @@ struct CurrentState {
     // Sourced from the differential pair PF7/PF8 (ADC3_INP3/INN3,
     // Bourns SSA-2-250A read in ADC differential mode; see adc_to_mA +
     // ams_config.hpp commentary).
-    std::int32_t  raw_mA;        // single-sample, no filter
+    std::int32_t  raw_mA;        // one sample per CurrentPeriodMs, no filter
     std::int32_t  filtered_mA;   // IIR low-pass, tau ~ 16 samples
     std::uint32_t last_update_tick;
     bool          sensor_fault;      // ADC failed to convert, or out of plausible range
-
-    // DCDC current (fix/53). Sourced from PC1 / ADC3_INP11, a separate
-    // single-ended sensor (own calibration, adc_to_mA_dcdc). The ECU
-    // forwards both via 0x135. last_dcdc_update_tick is independent
-    // from the pack tick so a DCDC ADC failure doesn't stale the
-    // safety predicate that watches the pack channel.
-    std::int32_t  dcdc_raw_mA;
-    std::int32_t  dcdc_filtered_mA;
-    std::uint32_t last_dcdc_update_tick;
-    bool          dcdc_sensor_fault;
 };
 
 class CurrentService {
 public:
     static CurrentService& instance() noexcept;
 
-    // Called by CurrentSensorTask only. Converts raw ADC counts to mA,
-    // updates the filter, refreshes the timestamp. Mirrors for the
-    // DCDC channel are independent (separate filter state, separate
-    // freshness tick).
-    // `sensor_fault` is the debounced disconnect verdict from the task
-    // (OUT_P single-ended out of its plausible window); it sets the
+    // Called by CurrentSensorTask only, once per CurrentPeriodMs. Converts a
+    // 12-bit differential code to mA, updates the filter, refreshes the
+    // timestamp. `sensor_fault` is the debounced disconnect verdict from the
+    // task (OUT_P single-ended out of its plausible window); it sets the
     // CurrentState.sensor_fault flag the safety predicate reads.
     void update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
                          bool sensor_fault = false) noexcept;
-    void update_dcdc_from_adc(std::uint16_t raw, std::uint32_t now_tick) noexcept;
 
     // Atomic read of the full state.
     [[nodiscard]] CurrentState snapshot() const noexcept;
-
-    // DCDC freshness probe. Informational only -- the DCDC channel is
-    // not part of the safety predicate (DCDC failure is recoverable,
-    // unlike pack-current sensor failure which has to latch Error).
-    // Available for future telemetry surfaces / diagnostic frames.
-    // True iff the last DCDC ADC update landed within DcdcIStaleMs
-    // (500 ms) of now_tick.
-    [[nodiscard]] bool is_dcdc_fresh(std::uint32_t now_tick) const noexcept;
 
     // Pure helpers, exposed for unit testing. Static -> no mutex.
     //
@@ -67,11 +46,18 @@ public:
     // LSB), and sensitivity is the bare-sensor CurrentMvPerAmpe1.
     static std::int32_t adc_to_mA(std::uint16_t raw) noexcept;
 
-    // adc_to_mA_dcdc: maps a 12-bit SINGLE-ENDED ADC reading (PC1 /
-    // ADC3_INP11) to a signed DCDC current in mA, using the DcdcCurrent*
-    // constants (zero at DcdcCurrentZeroMv, sensitivity
-    // DcdcCurrentMvPerAmpe1). Informational only.
-    static std::int32_t adc_to_mA_dcdc(std::uint16_t raw) noexcept;
+    // adc_q4_to_mA: the same mapping for an oversampled differential code
+    // carrying CurrentAdcFracBits fractional bits (16 x the 12-bit code), as
+    // ADC3 delivers it. adc_to_mA(raw) == adc_q4_to_mA(raw << 4) exactly; the
+    // extra bits keep the resolution the oversampling bought (~22 mA instead
+    // of ~350 mA per step) for the ELE log.
+    static std::int32_t adc_q4_to_mA(std::uint32_t q4) noexcept;
+
+    // Q4 code -> nearest 12-bit code, for the paths that take one.
+    static constexpr std::uint16_t q4_to_raw(std::uint32_t q4) noexcept {
+        return static_cast<std::uint16_t>((q4 + (1u << (config::CurrentAdcFracBits - 1u)))
+                                          >> config::CurrentAdcFracBits);
+    }
 
     // leg_voltage_plausible: true iff a SINGLE-ENDED reading of the
     // OUT_P leg (PF7 / ADC3_INP3) sits inside [CurrentLegPlausMinMv,

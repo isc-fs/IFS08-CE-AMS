@@ -31,7 +31,7 @@ cmake -B build-tests -S tests/unit && cmake --build build-tests && ctest --test-
 
 `ctest` reports `1/1 Test ... Passed` — that is the single Unity *runner*, not
 the case count. Run `./build-tests/ams_unit_tests` directly for the real
-total: it ends `522 Tests 0 Failures 0 Ignored`.
+total: it ends `528 Tests 0 Failures 0 Ignored`.
 
 ```bash
 # Cross-compile the firmware.
@@ -183,7 +183,7 @@ author to go and ask for one (`CONTRIBUTING.md`):
   AMS behaves as it did before.
 - **Pins:** AIR− PB6, AIR+ PB5, precharge PB7, `AMS_OK` PB4 (active-high,
   HIGH = AMS not blocking the SDC); pack current ADC3 differential PF7/PF8
-  (INP3/INN3), DCDC current ADC3 single-ended PC1 (INP11).
+  (INP3/INN3), 64x hardware oversampling, DMA capture. No DCDC is fitted.
 - **ErrorLatch** is sticky across resets (RTC backup register), so a latched
   fault survives a power-cycle and the board boots straight into Error.
 
