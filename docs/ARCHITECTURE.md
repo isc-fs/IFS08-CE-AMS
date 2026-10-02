@@ -944,6 +944,46 @@ selector ranks are untrustworthy.
 never faults — this is the one place where a *dropped* datum is the
 correct outcome.
 
+The log rings (LOG, IMU, CEL) and the logger's staging buffer live in
+`.log_bss`, a NOLOAD section in AXI SRAM (RAM_D1) that `main()` zeroes in
+`USER CODE BEGIN 1` before the scheduler starts. That keeps ~30 KB out of the
+128 KB DTCM. Only objects whose initial state is all-zero may go there.
+
+**Files of one index.** Each rotation index `nnnn` owns a set of files that
+cover the same time window and share the `tick_ms` clock:
+
+| File | Producer | Content | Rate |
+|---|---|---|---|
+| `LOGnnnn.CSV` | MainTask | state, cells, temps, SoC, health (columns below) | 4 Hz |
+| `IMUnnnn.BIN` | ImuTask | BMI088 raw counts | 100 Hz, 1.6 KB/s |
+| `CELnnnn.BIN` | BmsPollTask | every cell-voltage read with its current sample | 5 Hz, ~1 KB/s |
+
+They are opened against the same index, rotated together when any of them
+reaches `LogFileMaxBytes` or `LogFileMaxMs`, and sealed binary files first,
+LOG last, so an interrupted seal is still found as an orphan. A binary file
+opens on its stream's first record, so a board with no IMU writes no IMU file.
+`_FS_LOCK` = 8 covers the three open logging files plus a LOGFS pull (read
+handle, sidecar, directory) with two spare.
+
+**Binary files** ([`bin_log.hpp`](../Core/Inc/app/bin_log.hpp)) start with a
+512-byte header — magic `AMSBIN1`, record size, rotation index, open tick,
+stream name, firmware version and git hash — and a plain-text schema
+(`name type count scale unit [z]` per field). Fixed-size little-endian records
+follow. [`tools/log_decode.py`](../tools/log_decode.py) reads the schema and
+writes CSV with no per-stream code; a partial last record from a power cut is
+dropped. The schema is held to the record structs by `static_assert`s on every
+offset and by `test_bin_log.cpp`, which parses it the way the decoder does.
+
+**`CELnnnn.BIN`.** One 208-byte `CelFrame` per completed ADCV + RDCVA..D,
+retries included (`attempt` > 0), so no read is skipped or repeated the way
+the 4 Hz LOG row skips one 5 Hz poll in five. Cells of an IC that failed PEC
+on that read are 0 (decoded empty), not the IC's previous value, so every cell
+in a frame was converted at `t_adcv_ms`, which is latched when ADCV is issued;
+`ltc_ok` gives the PEC mask. `i_mA` is the latest pack-current sample when the
+read completes (~7 ms after ADCV) and `i_tick_ms` its tick: current is sampled
+every 50 ms, so the two can be up to ~50 ms apart today. `flags` bit 0 = balancing quiesced, bit 1 =
+current-sensor fault.
+
 **Columns** (`log_record.hpp`). Every column is declared once in an X-macro
 table that both `build_header` and `format_row` expand, so the header and the
 rows cannot drift apart. Order: 19 head scalars, 95 cells `c<m>_<n>` (mV),
@@ -990,13 +1030,11 @@ no rows and the task retries once a second.
   the I2C interrupt and the data by DMA, so the task sleeps through the
   transfer. The DMA buffer lives in `.imu_dma` (RAM_D1), because DMA1 cannot
   reach DTCM.
-- **Files.** `SdLoggerTask` writes the samples to `IMUnnnn.CSV`
-  (`tick_ms,ax_g,ay_g,az_g,gx_rad_s,gy_rad_s,gz_rad_s`, 4 decimals, ~5.3 KB/s). It is
-  paired with `LOGnnnn.CSV`: same index, opened against the same window,
-  rotated and sealed together, with the IMU half sealed first so an
-  interrupted seal is still found as an orphan. `tick_ms` is the same clock
-  in both files. The LOG half has rows from boot (BMS columns empty until the
-  first full poll), so it normally drives rotation.
+- **Files.** `SdLoggerTask` writes the samples unscaled to `IMUnnnn.BIN`
+  (16 B per record, 1.6 KB/s), one of the files of a rotation index (see
+  *The datalogging ring*). The header schema carries the scales (±6 g and
+  ±500 dps over ±32768 counts), and `tools/log_decode.py` writes
+  `tick_ms,a0_g,a1_g,a2_g,g0_rad_s,g1_rad_s,g2_rad_s`.
 
 ---
 

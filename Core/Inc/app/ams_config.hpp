@@ -277,7 +277,8 @@ inline constexpr std::uint32_t RelayStatusPeriodMs = 100;  // 0x4A4 contactor sn
 inline constexpr std::uint32_t LogSamplePeriodMs = 250;
 
 // Lock-free ring depth (LogRecords). Each record carries the FULL 95-cell +
-// 200-temp matrices (~620 B), so the ring is ~10 KB of BSS at depth 16. MUST be
+// 200-temp matrices (~690 B), so the ring is ~11 KB at depth 16, in AXI SRAM
+// (.log_bss) rather than DTCM. MUST be
 // a power of two. 16 @ 4 Hz ~= 4 s of buffer; the shared SD mutex yields, so the
 // logger drains between the extractor's reads and the ring rarely saturates.
 // Bump if RAM allows.
@@ -319,8 +320,9 @@ inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 // closest to the car's CoG, which is the reason to log it here at all.
 //
 // ImuTask samples at ImuSamplePeriodMs and pushes into its own ring; the
-// SdLoggerTask drains it into IMUnnnn.CSV, opened, rotated and sealed together
-// with LOGnnnn.CSV so the two files of one index always cover the same window.
+// SdLoggerTask drains it into IMUnnnn.BIN (bin_log.hpp), opened, rotated and
+// sealed together with LOGnnnn.CSV so the files of one index always cover the
+// same window.
 //
 // Bus speed is 100 kHz (Standard mode), set in AMS.ioc, and must stay there:
 // the MLC has NO external pull-ups on I2C2, only the MCU's internal 30-50 kohm
@@ -330,8 +332,8 @@ inline constexpr char          LogCrcNameFmt[]    = "LOG%04lu.CRC";
 //
 // Rate budget at 100 Hz: two 6-byte DMA reads per sample is ~1.7 ms of bus
 // time out of each 10 ms (the bus carries only the IMU); CPU is the ISR tail
-// plus one task wake, well under 1 %; ~53 B/row CSV (g and rad/s to 4
-// decimals) = ~5.3 KB/s on the card, next to ~5.3 KB/s for the LOG rows.
+// plus one task wake, well under 1 %; 16 B binary records = 1.6 KB/s on the
+// card, next to ~5.4 KB/s for the LOG rows.
 // ---------------------------------------------------------------------------
 
 // 100 Hz. The sensor free-runs at 400 Hz behind a ~40 Hz low-pass (see
@@ -358,8 +360,28 @@ inline constexpr std::uint32_t ImuRetryPeriodMs = 1000;
 inline constexpr std::uint32_t ImuRingCapacity = 256;
 
 inline constexpr char          ImuActiveNameFmt[] = "IMU%04lu.TMP";
-inline constexpr char          ImuSealedNameFmt[] = "IMU%04lu.CSV";
+inline constexpr char          ImuSealedNameFmt[] = "IMU%04lu.BIN";
 inline constexpr char          ImuCrcNameFmt[]    = "IMU%04lu.CRC";
+
+// ---------------------------------------------------------------------------
+// Cell-frame logging. TELEMETRY ONLY. BmsPollTask pushes one CelFrame
+// (bin_log.hpp, 208 B) for every cell-voltage read that completed on the bus
+// -- every ADCV + RDCVA..D, retries included -- with the latest pack-current
+// sample and its tick. SdLoggerTask writes them to CELnnnn.BIN alongside
+// LOGnnnn.CSV. Unlike the 4 Hz LOG row, which carries whichever poll was
+// latest, no read is skipped or repeated.
+//
+// Rate: one frame per BmsPollVoltMs poll when the chain reads clean, up to
+// 1 + VoltPollRetries when it does not. 5 Hz x 208 B = ~1 KB/s.
+//
+// Ring: 64 frames = 12.8 s at one read per poll, 4.3 s at the retry maximum,
+// so a rotation or a slow card never drops one. 13 KB, in AXI SRAM with the
+// other log rings (.log_bss). MUST be a power of two.
+inline constexpr std::uint32_t CelRingCapacity = 64;
+
+inline constexpr char          CelActiveNameFmt[] = "CEL%04lu.TMP";
+inline constexpr char          CelSealedNameFmt[] = "CEL%04lu.BIN";
+inline constexpr char          CelCrcNameFmt[]    = "CEL%04lu.CRC";
 
 // ---------------------------------------------------------------------------
 // CAN map. Source of truth: docs/CAN_MAP.md. Frame-byte layout lives with

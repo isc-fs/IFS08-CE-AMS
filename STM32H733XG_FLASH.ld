@@ -264,6 +264,21 @@ SECTIONS
     . = ALIGN(32);
   } >RAM_D1
 
+  /* Large telemetry rings (SD log, IMU and cell-frame rings), kept out of the
+     DTCM .bss. NOLOAD: the startup code does not clear it -- main() zeroes
+     __log_bss_start__..__log_bss_end__ in USER CODE BEGIN 1, before the
+     scheduler starts. Only objects whose initial state is all-zero belong
+     here: anything set up by a constructor would run before that clear. */
+  .log_bss (NOLOAD) :
+  {
+    . = ALIGN(4);
+    __log_bss_start__ = .;
+    *(.log_bss)
+    *(.log_bss*)
+    . = ALIGN(4);
+    __log_bss_end__ = .;
+  } >RAM_D1
+
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack (NOLOAD) :
   {

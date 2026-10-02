@@ -17,6 +17,7 @@
 
 #ifdef __cplusplus
 
+#include "bin_log.hpp"
 #include "imu_record.hpp"
 #include "log_record.hpp"
 
@@ -31,14 +32,20 @@ bool sd_log_push(const LogRecord& rec) noexcept;
 // never crowd out a LogRecord. Same contract: wait-free, best-effort.
 bool sd_imu_push(const ImuSample& s) noexcept;
 
+// BmsPollTask's producer API: one CelFrame per completed cell-voltage read,
+// into CELnnnn.BIN. Own ring, same contract: wait-free, best-effort.
+bool sd_cel_push(const bin_log::CelFrame& f) noexcept;
+
 // Lightweight logger health, for a future diag/health frame. Plain snapshot of
 // the file-local counters.
 struct SdLogStats {
     std::uint32_t rows;         // LOG CSV rows written to the card
     std::uint32_t dropped;      // LogRecords dropped (ring full -- SD stall/pull)
     std::uint32_t files;        // LOG files sealed (rotated to .CSV)
-    std::uint32_t imu_rows;     // IMU CSV rows written
+    std::uint32_t imu_rows;     // IMU records written
     std::uint32_t imu_dropped;  // ImuSamples dropped (ring full)
+    std::uint32_t cel_rows;     // CEL records written
+    std::uint32_t cel_dropped;  // CelFrames dropped (ring full)
     std::uint8_t  state;        // 0=boot 1=no_card/not_ready 2=logging 3=io_error
 };
 SdLogStats sd_log_stats() noexcept;

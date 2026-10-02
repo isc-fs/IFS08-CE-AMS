@@ -1051,13 +1051,14 @@ nobody is driving.
 
 ### Files visible
 
-Only sealed `LOGnnnn.CSV` and `IMUnnnn.CSV`. They are listed under different
-indices: a LOG file under its rotation number (`LOG0003.CSV` → `0x0003`), an
-IMU file under the same number with bit 15 set (`IMU0003.CSV` → `0x8003`).
-The two ranges cannot collide (the rotation number stops at 9999), and the
-host needs no change because it treats the index as opaque and names the
-pulled file from the entry's `name`. `LOGnnnn` and `IMUnnnn` of one number
-cover the same time window. The active `.TMP` files are excluded because their
+Only sealed `LOGnnnn.CSV`, `IMUnnnn.BIN` and `CELnnnn.BIN`. The index carries
+the rotation number in its low 14 bits and the kind in the top two: `00` LOG
+(`LOG0003.CSV` → `0x0003`), `10` IMU (`IMU0003.BIN` → `0x8003`), `01` CEL
+(`CEL0003.BIN` → `0x4003`); `11` is reserved. The ranges cannot collide (the
+rotation number stops at 9999), and the host needs no change because it treats
+the index as opaque and names the pulled file from the entry's `name`. All
+files of one number cover the same time window; `tools/log_decode.py` turns the
+`.BIN` files into CSV. The active `.TMP` files are excluded because their
 length would be stale before a host finished reading them, and the `.CRC`
 sidecars are an implementation detail. The sidecar holds the CRC-32 accumulated
 as rows were written, so `CRC` answers without re-reading the file; absent one,

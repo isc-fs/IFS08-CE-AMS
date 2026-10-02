@@ -848,3 +848,49 @@ extern "C" void test_temp_disconnect_budget_under_500ms(void) {
     TEST_ASSERT_LESS_THAN_UINT32(500u, debounce_window_ms);
 }
 
+
+// ---------------------------------------------------------------------------
+// copy_cells_of_last_read -- the CELnnnn.BIN cell matrix. An IC that failed
+// PEC on this read contributes zeros, not the value it held from an earlier
+// read, so every non-zero cell in a CelFrame came from the same conversion.
+// ---------------------------------------------------------------------------
+extern "C" void test_bms_cells_of_last_read_zero_failed_ic(void) {
+    std::uint8_t resp[RespBytes];
+    build_clean_chain(resp);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 4000);   // all cells known
+
+    build_clean_chain(resp);
+    resp[2 * GroupBytes + 5 * Seg + 7] ^= 0x01u;   // ic 5 = module 2's lower LTC (cells 9..18)
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 4200);
+
+    constexpr std::size_t N = std::size_t{config::BmsModuleCount} * config::CellsPerModule;
+    std::uint16_t cells[N];
+    std::memset(cells, 0xA5, sizeof cells);
+    BmsService::instance().copy_cells_of_last_read(cells, N);
+
+    auto at = [&](std::uint8_t m, std::uint8_t c) { return cells[m * config::CellsPerModule + c]; };
+    for (std::uint8_t c = 0; c < config::CellsPerLtcUpper; ++c) {
+        TEST_ASSERT_EQUAL_UINT16(static_cast<std::uint16_t>(3200u + c), at(2, c));
+    }
+    for (std::uint8_t c = config::CellsPerLtcUpper; c < config::CellsPerModule; ++c) {
+        TEST_ASSERT_EQUAL_UINT16(0u, at(2, c));
+    }
+    TEST_ASSERT_EQUAL_UINT16(3000u, at(0, 0));
+    TEST_ASSERT_EQUAL_UINT16(3309u, at(3, 9));
+    TEST_ASSERT_EQUAL_UINT16(3418u, at(4, 18));
+
+    // The snapshot itself still carries module 2's previous cells -- only the
+    // per-read copy blanks them.
+    TEST_ASSERT_EQUAL_UINT16(3209u, BmsService::instance().snapshot().cell_mV[2][9]);
+
+    // Leave the singleton with a clean, fully-online chain for later suites.
+    build_clean_chain(resp);
+    BmsService::instance().update_from_ltc_response(resp, sizeof(resp), 4200);
+}
+
+extern "C" void test_bms_cells_of_last_read_short_buffer_untouched(void) {
+    std::uint16_t cells[4] = {1u, 2u, 3u, 4u};
+    BmsService::instance().copy_cells_of_last_read(cells, 4);
+    TEST_ASSERT_EQUAL_UINT16(1u, cells[0]);
+    TEST_ASSERT_EQUAL_UINT16(4u, cells[3]);
+}
