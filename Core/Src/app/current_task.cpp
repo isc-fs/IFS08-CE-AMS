@@ -154,7 +154,8 @@ void update_soc() noexcept {
     // Needs a trustworthy cell voltage, so require the whole chain online and
     // at least one complete poll. Without it we keep predicting, which degrades
     // gracefully to plain Coulomb counting rather than to nothing.
-    const auto bms = BmsService::instance().snapshot();
+    // Four fields, not the whole ~690 B BmsState: this task's stack is small.
+    const auto bms = BmsService::instance().soc_inputs();
     const bool cells_trustworthy =
         bms.module_online_mask == config::AllModulesMask && bms.first_full_poll_done;
 

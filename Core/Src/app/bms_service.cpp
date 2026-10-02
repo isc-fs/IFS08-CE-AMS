@@ -567,6 +567,11 @@ BmsState BmsService::snapshot() const noexcept {
     return published_[active_.load(std::memory_order_acquire)];
 }
 
+BmsService::SocInputs BmsService::soc_inputs() const noexcept {
+    const BmsState& s = published_[active_.load(std::memory_order_acquire)];
+    return SocInputs{s.module_online_mask, s.first_full_poll_done, s.min_cell_mV, s.avg_tempC};
+}
+
 bool BmsService::is_healthy(std::uint32_t now_tick) const noexcept {
     const BmsState& s = published_[active_.load(std::memory_order_acquire)];
 

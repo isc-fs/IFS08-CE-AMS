@@ -104,7 +104,7 @@ const osThreadAttr_t AcuCanTask_attributes = {
 osThreadId_t CurrentSensorTaskHandle;
 const osThreadAttr_t CurrentSensorTask_attributes = {
   .name = "CurrentSensorTask",
-  .stack_size = 256 * 4,
+  .stack_size = 512 * 4,
   .priority = (osPriority_t) osPriorityAboveNormal,
 };
 /* Definitions for SdLoggerTask */
