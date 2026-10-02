@@ -244,12 +244,21 @@ timers (inside `BmsPollTask` itself).
 | `App_InitTask` | High (40) | once, then self-deletes | 512 | [`app_init_task.cpp`](../Core/Src/app/app_init_task.cpp) |
 | `MainTask` *(CubeMX thread name is still "SafetyTask")* | Realtime (48) | 10 ms fixed (`osDelayUntil`) | 512 | [`safety_task.cpp`](../Core/Src/app/safety_task.cpp) |
 | `AcuCanTask` | AboveNormal (32) | RX-queue drain with a deadline-computed timeout; TX matrix at 50 / 100 / 250 ms | 512 | [`acu_can_task.cpp`](../Core/Src/app/acu_can_task.cpp) |
-| `CurrentSensorTask` | AboveNormal (32) | 50 ms fixed (`osDelayUntil`) | 256 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
+| `CurrentSensorTask` | AboveNormal (32) | 50 ms fixed (`osDelayUntil`) | 512 | [`current_task.cpp`](../Core/Src/app/current_task.cpp) |
 | `BmsPollTask` | Normal (24) | event-driven: voltage poll 200 ms, temp sweep 250 ms | 1024 | [`bms_poll_task.cpp`](../Core/Src/app/bms_poll_task.cpp) |
 | `ImuTask` | Low1 (9) | 10 ms fixed (`osDelayUntil`); two I2C2 DMA reads per tick | 512 | [`imu_task.cpp`](../Core/Src/app/imu_task.cpp) |
 | `SdLoggerTask` | Low (8) | 50 ms drain, or on a diag semaphore | 1024 | [`sd_logger_task.cpp`](../Core/Src/app/sd_logger_task.cpp) |
 | `defaultTask` | Low (8) | `osDelay(1)` forever | 128 | CMSIS placeholder, does nothing |
 | Timer service | (FreeRTOS daemon) | callback-driven | — | raises `PollVDue` / `PollTDue` |
+
+Stacks overflow into the FreeRTOS heap below them before
+`configCHECK_FOR_STACK_OVERFLOW` (checked only at a context switch) notices,
+and an interrupt first stacks the interrupted context on the *task's* stack:
+32 B, or 104 B with FPU state live. Budget for both. CurrentSensorTask is the
+tight one: the SoC filter's double-precision maths runs there, so
+`update_soc()` reads the four `BmsState` fields it needs through
+`BmsService::soc_inputs()` instead of copying the ~690 B state; never take a
+full `snapshot()` on that task.
 
 The priority ordering is the safety argument, not a convenience:
 `MainTask` above every producer means a slow LTC sweep, a CAN burst, or an

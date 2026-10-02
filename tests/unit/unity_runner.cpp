@@ -37,6 +37,7 @@ void test_bms_required_channel_open_at_boot_faults(void);
 void test_temp_disconnect_budget_under_500ms(void);
 void test_bms_cells_of_last_read_zero_failed_ic(void);
 void test_bms_cells_of_last_read_short_buffer_untouched(void);
+void test_bms_soc_inputs_match_snapshot(void);
 void test_bms_temp_short_buffer_rejected(void);
 void test_bms_per_module_v_aggregates_after_clean_response(void);
 void test_bms_per_module_tmax_after_temp_sweep(void);
@@ -618,6 +619,7 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_bms_per_module_tmax_after_temp_sweep);
     RUN_TEST(test_bms_cells_of_last_read_zero_failed_ic);
     RUN_TEST(test_bms_cells_of_last_read_short_buffer_untouched);
+    RUN_TEST(test_bms_soc_inputs_match_snapshot);
 
     RUN_TEST(test_acu_tx_ok_precharge_high_in_run);
     RUN_TEST(test_acu_tx_ok_precharge_high_in_charge);

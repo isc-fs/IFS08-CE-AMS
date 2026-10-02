@@ -223,6 +223,18 @@ public:
     // at the top of bms_service.cpp).
     [[nodiscard]] BmsState snapshot() const noexcept;
 
+    // The four fields the SoC filter reads, from the same published update a
+    // snapshot() would return. For callers on small stacks: a full BmsState is
+    // ~690 B, and CurrentSensorTask's 2 KB stack must also hold the filter's
+    // double-precision maths and an FPU exception frame.
+    struct SocInputs {
+        std::uint8_t  module_online_mask;
+        bool          first_full_poll_done;
+        std::uint16_t min_cell_mV;
+        std::int16_t  avg_tempC;
+    };
+    [[nodiscard]] SocInputs soc_inputs() const noexcept;
+
     // True iff all 5 modules have reported within BmsStaleMs and
     // module_online_mask covers them. Used by SafetyTask.
     [[nodiscard]] bool is_healthy(std::uint32_t now_tick) const noexcept;
