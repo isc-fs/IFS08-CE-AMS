@@ -896,7 +896,7 @@ extern "C" void test_bms_cells_of_last_read_short_buffer_untouched(void) {
 }
 
 // ---------------------------------------------------------------------------
-// soc_inputs -- the four fields CurrentSensorTask reads instead of copying the
+// soc_inputs -- the fields CurrentSensorTask reads instead of copying the
 // whole BmsState onto its small stack. Must match the published snapshot.
 // ---------------------------------------------------------------------------
 extern "C" void test_bms_soc_inputs_match_snapshot(void) {
@@ -910,5 +910,6 @@ extern "C" void test_bms_soc_inputs_match_snapshot(void) {
     TEST_ASSERT_EQUAL(s.first_full_poll_done, in.first_full_poll_done);
     TEST_ASSERT_EQUAL_UINT16(s.min_cell_mV, in.min_cell_mV);
     TEST_ASSERT_EQUAL_INT16(s.avg_tempC, in.avg_tempC);
+    TEST_ASSERT_EQUAL_UINT16(s.valid_temp_channels, in.valid_temp_channels);
     TEST_ASSERT_EQUAL_UINT16(3000u, in.min_cell_mV);   // lowest cell of build_clean_chain
 }

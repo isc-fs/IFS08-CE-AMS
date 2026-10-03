@@ -1034,7 +1034,7 @@ row is captured by `MainTask` in the same tick.
 | `bms_valid` | 1 once every module has reported; BMS columns are empty while 0 |
 | `bms_age_ms` | age of the newest module poll in this row's snapshot (rows and polls do not line up), saturating, 65535 = none |
 | `soc_ppm`, `soc_sig_ppm` | SoC and its 1-σ at 1 ppm (0.0648 A·s at 18 Ah); empty while the estimator has none |
-| `soc_flags`, `soc_seeds` | `soc::flags` (valid / corrected / correction skipped / coulomb-only) and a wrapping seed count |
+| `soc_flags`, `soc_seeds` | `soc::flags` (valid / corrected / correction skipped / coulomb-only / no thermal data, R_int at 25 °C) and a wrapping seed count |
 | `q_dis_mAs`, `q_chg_mAs`, `q_gaps` | monotonic charge totals (`soc::ChargeTally`), never clamped; the difference between any two rows is the exact charge moved. `q_gaps` counts intervals not integrated |
 | `dcbus_age_ms`, `veh_flags`, `chg_age_ms` | age of the last `0x100` (`dcbus_V` holds the last value forever), `dc_bus_valid` / `discharge_engaged` / `ecu_discharge_capable`, age of the last `0x101` |
 | `pec_err`, `spi_err`, `chain_rec` | isoSPI running totals: PEC errors, SPI failures, chain recoveries |
