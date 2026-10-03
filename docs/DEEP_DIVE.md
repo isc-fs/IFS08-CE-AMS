@@ -1084,7 +1084,10 @@ deadline, which keeps RX latency low and TX jitter bounded.
 
 The ECU-matrix sends are **non-blocking**: a transient TX-FIFO-full bump
 increments `g_acu_tx_fail` (surfaced on `0x6C9`) rather than stalling the
-cadence. Only the pit-diag burst uses the blocking variant.
+cadence. Only the pit-diag burst uses the flow-controlled variant, and its
+wait is bounded (Bus_Off abandons at once, a full FIFO after
+`PitDiagTxWaitMaxMs`) so AcuCanTask always gets back to RX and Bus_Off
+recovery.
 
 ### FDCAN1 Bus-Off recovery
 
@@ -1255,7 +1258,7 @@ ctest --test-dir build-tests --output-on-failure     # reports 1/1 — that is t
 
 `ctest` shows `1/1 Test ... Passed` because there is a single Unity runner
 target. Run the binary directly for the case count; it currently ends
-**`533 Tests 0 Failures 0 Ignored`**.
+**`537 Tests 0 Failures 0 Ignored`**.
 
 | File | Coverage |
 |---|---|

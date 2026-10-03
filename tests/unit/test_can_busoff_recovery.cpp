@@ -108,3 +108,50 @@ extern "C" void test_busoff_tick_wrap_preserves_spacing(void) {
     TEST_ASSERT_TRUE(should_attempt_recovery(st, true, after_100, kRetryMs));
     TEST_ASSERT_EQUAL_UINT32(after_100, st.last_attempt_ms);
 }
+
+// ---------------------------------------------------------------------------
+// burst_tx_step: the pit-diag burst's flow control must never wait on a FIFO
+// that cannot drain, or AcuCanTask stops polling Bus_Off recovery and RX.
+// ---------------------------------------------------------------------------
+using ams::can_recovery::TxStep;
+using ams::can_recovery::burst_tx_step;
+constexpr std::uint32_t kTxWaitMs = 5;   // matches config::PitDiagTxWaitMaxMs
+
+// Bus_Off abandons at once, even with room in the FIFO: nothing is
+// transmitted until recovery, which needs this task's loop to come round.
+extern "C" void test_burst_tx_abandons_on_busoff(void) {
+    TEST_ASSERT_TRUE(burst_tx_step(true,  true, 0, kTxWaitMs) == TxStep::Abandon);
+    TEST_ASSERT_TRUE(burst_tx_step(false, true, 0, kTxWaitMs) == TxStep::Abandon);
+}
+
+extern "C" void test_burst_tx_sends_when_there_is_room(void) {
+    TEST_ASSERT_TRUE(burst_tx_step(true, false, 0, kTxWaitMs) == TxStep::Send);
+    TEST_ASSERT_TRUE(burst_tx_step(true, false, kTxWaitMs, kTxWaitMs) == TxStep::Send);
+}
+
+// A full FIFO on a live bus gets the bound to drain, then the burst is given
+// up (no node ACKing, saturated bus).
+extern "C" void test_burst_tx_waits_then_gives_up(void) {
+    for (std::uint32_t w = 0; w < kTxWaitMs; ++w) {
+        TEST_ASSERT_TRUE(burst_tx_step(false, false, w, kTxWaitMs) == TxStep::Wait);
+    }
+    TEST_ASSERT_TRUE(burst_tx_step(false, false, kTxWaitMs, kTxWaitMs) == TxStep::Abandon);
+}
+
+// The deadlock scenario: Bus_Off recurring with a full FIFO. Driving the
+// policy the way send_or_fail_blocking does, a whole 60-frame burst finishes
+// in zero waits, so the task gets back to its recovery poll.
+extern "C" void test_burst_tx_full_busoff_burst_never_blocks(void) {
+    std::uint32_t waits = 0;
+    bool burst_ok = true;
+    for (int frame = 0; frame < 60; ++frame) {
+        for (std::uint32_t w = 0; burst_ok; ++w) {
+            const TxStep s = burst_tx_step(false, true, w, kTxWaitMs);
+            if (s == TxStep::Send) break;
+            if (s == TxStep::Wait) { ++waits; continue; }
+            burst_ok = false;
+        }
+    }
+    TEST_ASSERT_FALSE(burst_ok);
+    TEST_ASSERT_EQUAL_UINT32(0u, waits);
+}

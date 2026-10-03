@@ -217,27 +217,52 @@ inline void send_or_fail(std::uint32_t id,
     }
 }
 
-// Blocking send, used by the pit-diag burst only: one scan pushes 60 frames
-// into a 16-deep TX FIFO (main.c TxFifoQueueElmtsNbr) in a single task iteration, and without flow control
-// frames 17+ NACK silently, so only the front of the burst reaches the wire.
-// Yield-while-full lands the whole scan for ~6 ms of task time (60 frames x
-// ~110 us at 500 kbps + osDelay rounding) -- 0.6 % of the budget at the 1 Hz
-// scan cadence.
+// Flow-controlled send, used by the pit-diag burst only: one scan pushes 60
+// frames into a 16-deep TX FIFO (main.c TxFifoQueueElmtsNbr) in a single task
+// iteration, and without flow control frames 17+ would be refused, so only the
+// front of the burst would reach the wire. Yield-while-full lands the whole
+// scan for ~6 ms of task time (60 frames x ~110 us at 500 kbps + osDelay
+// rounding) -- 0.6 % of the budget at the 1 Hz scan cadence.
+//
+// The wait is BOUNDED (can_recovery::burst_tx_step). In Bus_Off nothing
+// drains, and an unbounded wait would park this task for good: no RX
+// dispatch (no 0x100, no 0x002 bootloader trigger) and no Bus_Off recovery
+// poll, which runs in this same loop. On Bus_Off, or PitDiagTxWaitMaxMs with
+// no room, the rest of the scan is dropped -- s_burst_ok goes false until the
+// next scan starts -- and every dropped frame counts in g_acu_tx_fail.
 //
 // The ECU TX matrix (50/100/250 ms) stays non-blocking: a transient FIFO-full
 // there bumps g_acu_tx_fail rather than stalling the cadence.
+bool s_burst_ok = true;
+
 template <std::size_t N>
 inline void send_or_fail_blocking(std::uint32_t id,
                                   const std::array<std::uint8_t, N>& payload) noexcept {
-    // Worst-case wait: 16 frames x ~110 us = ~1.8 ms. osDelay(1) is the
-    // smallest yield FreeRTOS offers on the 1 kHz tick without busy-spinning;
-    // lower-priority tasks (BmsPollTask at Normal) run during it.
-    while (HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0u) {
-        osDelay(1);
+    using ams::can_recovery::TxStep;
+    // osDelay(1) is the smallest yield FreeRTOS offers on the 1 kHz tick
+    // without busy-spinning; lower-priority tasks (BmsPollTask at Normal) run
+    // during it.
+    for (std::uint32_t waited_ms = 0; s_burst_ok; ++waited_ms) {
+        FDCAN_ProtocolStatusTypeDef ps = {};
+        const bool bus_off = HAL_FDCAN_GetProtocolStatus(&hfdcan1, &ps) == HAL_OK &&
+                             ps.BusOff != 0u;
+        const bool room = HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) > 0u;
+        switch (ams::can_recovery::burst_tx_step(room, bus_off, waited_ms,
+                                                 ams::config::PitDiagTxWaitMaxMs)) {
+        case TxStep::Send:
+            if (!send_acu(id, static_cast<std::uint8_t>(N), payload.data())) {
+                ++g_acu_tx_fail;
+            }
+            return;
+        case TxStep::Wait:
+            osDelay(1);
+            break;
+        case TxStep::Abandon:
+            s_burst_ok = false;
+            break;
+        }
     }
-    if (!send_acu(id, static_cast<std::uint8_t>(N), payload.data())) {
-        ++g_acu_tx_fail;
-    }
+    ++g_acu_tx_fail;   // dropped with the rest of an abandoned burst
 }
 
 
@@ -300,8 +325,10 @@ std::uint32_t pec_err_sum() noexcept {
 
 void tx_pit_diag_scan(const ams::BmsState& bms) noexcept {
     // 24 cell + 25 temp + 11 status = 60 frames, ~6 ms at 500 kbps -- well
-    // under the 1 s PitDiagScanPeriodMs. Blocking sends throughout; see
-    // send_or_fail_blocking for why.
+    // under the 1 s PitDiagScanPeriodMs. Flow-controlled sends throughout; see
+    // send_or_fail_blocking for why, and for the bound on how long a stuck
+    // FIFO can hold this scan (one PitDiagTxWaitMaxMs, then the rest drops).
+    s_burst_ok = true;
     for (std::uint8_t i = 0; i < ams::config::PitDiagCellFrames; ++i) {
         send_or_fail_blocking(ams::config::PitDiagCellBaseId + i,
                               ams::pit_diag::encode_cell_frame(bms, i));
