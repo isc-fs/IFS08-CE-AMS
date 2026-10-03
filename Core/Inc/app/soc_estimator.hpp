@@ -407,7 +407,19 @@ inline constexpr std::uint8_t Valid             = 1u << 0;  // an estimate exist
 inline constexpr std::uint8_t Corrected         = 1u << 1;  // this update applied a voltage correction
 inline constexpr std::uint8_t CorrectionSkipped = 1u << 2;  // correction attempted, measurement carried no SoC information
 inline constexpr std::uint8_t CoulombOnly       = 1u << 3;  // cells not trustworthy: predicted from current alone
+inline constexpr std::uint8_t NoThermal         = 1u << 4;  // no valid temperature: R_int taken at RIntTempRefC
 }  // namespace flags
+
+// Temperature for the R_int model. BmsState::avg_tempC is 0 when no channel
+// has produced a reading (valid_temp_channels == 0) -- a "no data" value, not
+// 0 degC. Taken literally it would raise R_int by 1 - ALPHA_R * 25 ~= 1.5x
+// and make the filter misread every loaded voltage drop. With no thermal data
+// the model falls back to its reference temperature, where f_T = 1 and R_int
+// is the nominal fit; the caller flags the update NoThermal.
+[[nodiscard]] inline constexpr std::int16_t model_temp_c(std::uint16_t valid_temp_channels,
+                                                         std::int16_t  avg_tempC) noexcept {
+    return valid_temp_channels > 0u ? avg_tempC : config::RIntTempRefC;
+}
 
 // Monotonic charge totals for the SD log, split by direction.
 //

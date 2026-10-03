@@ -223,7 +223,7 @@ public:
     // at the top of bms_service.cpp).
     [[nodiscard]] BmsState snapshot() const noexcept;
 
-    // The four fields the SoC filter reads, from the same published update a
+    // The fields the SoC filter reads, from the same published update a
     // snapshot() would return. For callers on small stacks: a full BmsState is
     // ~690 B, and CurrentSensorTask's 2 KB stack must also hold the filter's
     // double-precision maths and an FPU exception frame.
@@ -231,7 +231,8 @@ public:
         std::uint8_t  module_online_mask;
         bool          first_full_poll_done;
         std::uint16_t min_cell_mV;
-        std::int16_t  avg_tempC;
+        std::int16_t  avg_tempC;            // meaningful only if valid_temp_channels > 0
+        std::uint16_t valid_temp_channels;  // 0 = no thermal data; avg_tempC is then 0
     };
     [[nodiscard]] SocInputs soc_inputs() const noexcept;
 

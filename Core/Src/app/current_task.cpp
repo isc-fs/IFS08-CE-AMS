@@ -170,7 +170,7 @@ void update_soc() noexcept {
     // Needs a trustworthy cell voltage, so require the whole chain online and
     // at least one complete poll. Without it we keep predicting, which degrades
     // gracefully to plain Coulomb counting rather than to nothing.
-    // Four fields, not the whole ~690 B BmsState: this task's stack is small.
+    // A few fields, not the whole ~690 B BmsState: this task's stack is small.
     const auto bms = BmsService::instance().soc_inputs();
     const bool cells_trustworthy =
         bms.module_online_mask == config::AllModulesMask && bms.first_full_poll_done;
@@ -189,8 +189,14 @@ void update_soc() noexcept {
         // Minimum cell: usable pack charge is set by the weakest element.
         // avg_tempC drives R_int -- we cannot know the min cell's own
         // temperature, and the pack average is the honest representative.
-        flags = s_soc.correct(bms.min_cell_mV, cur.filtered_mA, bms.avg_tempC)
+        // With no temperature reading at all (boot, or no NTC harness) the
+        // model uses its reference temperature instead of a fake 0 degC.
+        const std::int16_t temp_c = soc::model_temp_c(bms.valid_temp_channels, bms.avg_tempC);
+        flags = s_soc.correct(bms.min_cell_mV, cur.filtered_mA, temp_c)
                     ? soc::flags::Corrected : soc::flags::CorrectionSkipped;
+        if (bms.valid_temp_channels == 0u) {
+            flags = static_cast<std::uint8_t>(flags | soc::flags::NoThermal);
+        }
     } else {
         flags = soc::flags::CoulombOnly;
     }

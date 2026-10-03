@@ -8,6 +8,7 @@
 
 #include "unity.h"
 
+#include <cmath>
 #include <cstdint>
 #include <initializer_list>
 
@@ -436,4 +437,17 @@ extern "C" void test_soc_tally_counts_gaps(void) {
     TEST_ASSERT_EQUAL_UINT16(2u, t.gaps());
     t.add(10000, config::SocMaxIntegrationGapMs);   // exactly the limit still counts
     TEST_ASSERT_EQUAL_UINT32(10u * config::SocMaxIntegrationGapMs, t.discharge_mAs());
+}
+
+// With no temperature reading, avg_tempC is a 0 that means "no data". Taken as
+// 0 degC it inflates R_int ~1.5x; the model must use its reference temperature.
+extern "C" void test_soc_model_temp_falls_back_without_thermal(void) {
+    TEST_ASSERT_EQUAL_INT16(config::RIntTempRefC, soc::model_temp_c(0, 0));
+    TEST_ASSERT_EQUAL_INT16(-5, soc::model_temp_c(3, -5));
+    TEST_ASSERT_EQUAL_INT16(0, soc::model_temp_c(40, 0));   // a real 0 degC reading is kept
+
+    const double at_ref  = soc::r_int_element_ohm(0.5, config::RIntTempRefC);
+    const double at_zero = soc::r_int_element_ohm(0.5, 0);
+    TEST_ASSERT_TRUE(std::fabs(at_ref - soc::r_int_element_ohm(0.5, soc::model_temp_c(0, 0))) < 1e-12);
+    TEST_ASSERT_TRUE(std::fabs(at_zero / at_ref - 1.498) < 0.01);   // the error the fallback removes
 }
