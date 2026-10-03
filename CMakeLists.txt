@@ -17,9 +17,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Define the build type
+# Build type. Release (-Os, with debug info) is the default so that every
+# image -- CI, the HIL bench, a hand build and the published release -- is the
+# same optimised code; the bench must test what the car runs. Pass
+# -DCMAKE_BUILD_TYPE=Debug (-O0) only to step through code on a debugger:
+# -O0 frames are several times larger and the timing differs, so stack margins
+# and timings measured on a Debug image do not carry over, and a Debug image
+# must not go on the car.
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE "Debug")
+    set(CMAKE_BUILD_TYPE "Release")
 endif()
 
 # Set the project name

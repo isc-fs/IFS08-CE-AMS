@@ -34,13 +34,18 @@ the case count. Run `./build-tests/ams_unit_tests` directly for the real
 total: it ends `531 Tests 0 Failures 0 Ignored`.
 
 ```bash
-# Cross-compile the firmware.
+# Cross-compile the firmware (Release, -Os + debug info, by default).
 cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake && cmake --build build
 python3 scripts/check_flash_layout.py build/AMS.elf   # expect "PASS: flash layout compatible with stm32-can-bootloader"
 
 # Regenerate the CAN database after any wire-format change (CI's "DBC matches code" check enforces it).
 c++ -std=c++17 -I Core/Inc tools/dbc_dump.cpp -o /tmp/dbc_dump && /tmp/dbc_dump > docs/dbc/ams.dbc
 ```
+
+Every build without an explicit type is **Release** (`-Os -g3`): CI, the HIL
+bench and the published release all run the same optimised code.
+`-DCMAKE_BUILD_TYPE=Debug` (`-O0`) is for stepping on a debugger only; its
+frames are several times larger, so it is not what the car runs.
 
 The image links at **0x08020000**, not at the reset vector: sector 0
 (0x08000000–0x0801FFFF) is the CAN bootloader's and sector 7 is its NVM.
