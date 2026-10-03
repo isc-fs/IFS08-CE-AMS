@@ -13,17 +13,17 @@
 //   3. Restart the capture into the other buffer. The pause between captures
 //      is the stop, one single-ended oversampled read and the restart: ~0.1 ms
 //      in 50 ms.
-//   4. Feed the newest sample of the finished capture, as a 12-bit code, into
-//      CurrentService::update_from_adc -- one value per cycle, exactly the
-//      contract the safety predicates (over-current filter, IStaleMs) were
-//      sized for. Only the sample changed: an 80 us integration instead of a
-//      26 ns snapshot.
+//   4. Feed the mean of the finished capture -- the average pack current over
+//      the cycle -- into CurrentService::update_from_q4. Still one value per
+//      cycle, the cadence the over-current filter and IStaleMs are sized for,
+//      but now every amp-second of the cycle is in it, where a single sample
+//      would catch or miss a pulse by chance.
 //   5. Split the finished capture into EleWindowsPerCycle 10 ms windows and
 //      push one EleRecord per window (mean / min / max) to ELEnnnn.BIN.
 //      TELEMETRY ONLY.
 //   6. Integrate the capture's mean into the charge totals, and advance the
 //      SoC filter. TELEMETRY ONLY.
-//   On any HAL failure, or a capture with no samples, update_from_adc is not
+//   On any HAL failure, or a capture with no samples, update_from_q4 is not
 //   called, so last_update_tick does not advance -> SafetyTask trips on
 //   staleness (IStaleMs = 200 ms) and forces ERROR, as before.
 //
@@ -147,7 +147,7 @@ void update_soc() noexcept {
 
     // Unsigned tick subtraction, wrap-safe -- same form the safety predicate
     // uses for IStaleMs. This task is the writer, so a stale timestamp means an
-    // ADC conversion failed and update_from_adc was never called.
+    // ADC conversion failed and update_from_q4 was never called.
     const std::uint32_t age = now - cur.last_update_tick;
     if (cur.sensor_fault || age > config::IStaleMs) {
         // Charge that moved while we could not measure it is simply unknown,
@@ -262,10 +262,9 @@ void dc_bus_sample(std::uint32_t now, std::uint16_t& volts, std::uint16_t& age) 
 }
 
 // Split a finished capture into its 10 ms windows and push one ELE record
-// each. Returns the capture's overall window (for the charge integral).
-ams::current_capture::Window publish_ele(const std::uint16_t* buf, std::uint16_t n,
-                                         std::uint32_t t_start, std::uint32_t t_stop,
-                                         bool sensor_fault) noexcept {
+// each. TELEMETRY ONLY.
+void publish_ele(const std::uint16_t* buf, std::uint16_t n,
+                 std::uint32_t t_start, std::uint32_t t_stop, bool sensor_fault) noexcept {
     using namespace ams;
     std::uint16_t dc_v = 0, dc_age = 0;
     dc_bus_sample(t_stop, dc_v, dc_age);
@@ -273,22 +272,16 @@ ams::current_capture::Window publish_ele(const std::uint16_t* buf, std::uint16_t
         (sensor_fault ? bin_log::ele_flag::SensorFault : 0u) |
         (n >= config::CurrentCaptureCapacity ? bin_log::ele_flag::Overrun : 0u));
 
-    current_capture::Window all;
     for (std::uint8_t i = 0; i < config::EleWindowsPerCycle; ++i) {
         const std::uint16_t b = current_capture::window_begin(n, config::EleWindowsPerCycle, i);
         const std::uint16_t e = current_capture::window_begin(n, config::EleWindowsPerCycle,
                                                               static_cast<std::uint8_t>(i + 1u));
         const current_capture::Window w = current_capture::reduce(buf, b, e);
         if (w.count == 0u) continue;
-        all.sum   += w.sum;
-        all.count  = static_cast<std::uint16_t>(all.count + w.count);
-        if (w.min < all.min) all.min = w.min;
-        if (w.max > all.max) all.max = w.max;
         (void)sd_ele_push(current_capture::make_record(
             w, current_capture::tick_at(t_start, t_stop, e, n), s_ele_seq++, flags,
             dc_v, dc_age));   // best-effort: a full ring drops the record, never blocks
     }
-    return all;
 }
 
 }  // namespace
@@ -353,13 +346,12 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
         } else {
             const std::uint16_t* buf = s_capture[done];
 
-            // --- 4. Safety path: one sample per cycle, as a 12-bit code ---
-            ams::CurrentService::instance().update_from_adc(
-                ams::current_capture::newest_raw(buf, n), t_stop, sensor_fault);
+            // --- 4. Safety path: the cycle's mean current ---
+            const std::uint32_t mean_q4 = ams::current_capture::capture_mean_q4(buf, n);
+            ams::CurrentService::instance().update_from_q4(mean_q4, t_stop, sensor_fault);
 
             // --- 5. ELE windows (TELEMETRY ONLY) ---
-            const ams::current_capture::Window all =
-                publish_ele(buf, n, t_start, t_stop, sensor_fault);
+            publish_ele(buf, n, t_start, t_stop, sensor_fault);
 
             // --- 6. Monotonic charge totals: the capture's mean current over
             // the time since the previous capture ended. A faulted sensor's
@@ -368,8 +360,7 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
                 if (sensor_fault) {
                     s_charge.skip();
                 } else {
-                    s_charge.add(ams::CurrentService::adc_q4_to_mA(
-                                     ams::current_capture::mean_q4(all)),
+                    s_charge.add(ams::CurrentService::adc_q4_to_mA(mean_q4),
                                  t_stop - s_charge_last_tick);
                 }
                 g_q_dis_mAs = s_charge.discharge_mAs();

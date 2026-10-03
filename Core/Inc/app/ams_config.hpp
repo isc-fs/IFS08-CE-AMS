@@ -131,13 +131,19 @@ inline constexpr bool          TempFaultsTrusted = false;
 // Bourns SSA-2-250A, so the limit sits inside what the front end can measure.
 //
 // NO debounce on this check -- the smoothing comes entirely from the filter
-// feeding it. filtered_mA is a first-order IIR with CurrentFilterShift=4 at
-// CurrentPeriodMs=50, i.e. tau ~ 800 ms, so trip time is tau*ln(I/(I-limit)):
+// feeding it. Its input, once per CurrentPeriodMs, is the MEAN pack current
+// over that 50 ms (the ADC integrates continuously; see CurrentAdcFracBits),
+// so a pulse counts in proportion to its charge rather than being caught or
+// missed by a point sample. filtered_mA is a first-order IIR with
+// CurrentFilterShift=4 at CurrentPeriodMs=50, i.e. tau ~ 800 ms, so for a
+// SUSTAINED current the trip time is tau*ln(I/(I-limit)):
 //
 //     200 A -> 2.1 s     250 A -> 1.1 s     300 A -> 0.8 s     400 A -> 0.5 s
 //
 // A brief inrush therefore rides through while a sustained overload still opens
-// the SDC in about a second. Corollary: currents between the cell rating and
+// the SDC in about a second. A pulse shorter than a cycle enters as its
+// average over the cycle: 600 A for 5 ms is a 60 A input. HIL Block J brackets
+// the trip level (210 A trips, 190 A does not); it does not time the trip. Corollary: currents between the cell rating and
 // this limit never trip at all, by design -- a slow overload is caught by the
 // cell temperature path, not here.
 //

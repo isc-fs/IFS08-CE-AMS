@@ -133,6 +133,18 @@ extern "C" void test_current_q4_resolution(void) {
     TEST_ASSERT_INT32_WITHIN(4, -22, ams::CurrentService::adc_q4_to_mA(zero - 1u));
 }
 
+// update_from_adc is update_from_q4 on a whole code; update_from_q4 keeps the
+// fractional resolution the capture mean carries.
+extern "C" void test_current_update_from_q4(void) {
+    auto& cs = ams::CurrentService::instance();
+    cs.update_from_adc(2100, 6000);
+    TEST_ASSERT_EQUAL_INT32(ams::CurrentService::adc_to_mA(2100), cs.snapshot().raw_mA);
+    cs.update_from_q4(2100u * 16u + 3u, 6050);
+    TEST_ASSERT_EQUAL_INT32(ams::CurrentService::adc_q4_to_mA(2100u * 16u + 3u), cs.snapshot().raw_mA);
+    TEST_ASSERT_TRUE(cs.snapshot().raw_mA > ams::CurrentService::adc_to_mA(2100));
+    TEST_ASSERT_EQUAL_UINT32(6050u, cs.snapshot().last_update_tick);
+}
+
 extern "C" void test_current_q4_to_raw_rounds(void) {
     TEST_ASSERT_EQUAL_UINT16(2054u, ams::CurrentService::q4_to_raw(2054u * 16u + 7u));
     TEST_ASSERT_EQUAL_UINT16(2055u, ams::CurrentService::q4_to_raw(2054u * 16u + 8u));

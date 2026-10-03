@@ -75,11 +75,13 @@ void test_current_leg_voltage_window(void);
 void test_current_update_sets_sensor_fault(void);
 void test_current_q4_matches_12bit(void);
 void test_current_q4_resolution(void);
+void test_current_update_from_q4(void);
 void test_current_q4_to_raw_rounds(void);
 void test_capture_windows_tile_the_capture(void);
 void test_capture_reduce_stats(void);
 void test_capture_tick_interpolation(void);
-void test_capture_newest_raw(void);
+void test_capture_mean_steady(void);
+void test_capture_mean_counts_a_short_pulse(void);
 void test_capture_make_record(void);
 
 // test_vehicle_service.cpp
@@ -658,11 +660,13 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_current_update_sets_sensor_fault);
     RUN_TEST(test_current_q4_matches_12bit);
     RUN_TEST(test_current_q4_resolution);
+    RUN_TEST(test_current_update_from_q4);
     RUN_TEST(test_current_q4_to_raw_rounds);
     RUN_TEST(test_capture_windows_tile_the_capture);
     RUN_TEST(test_capture_reduce_stats);
     RUN_TEST(test_capture_tick_interpolation);
-    RUN_TEST(test_capture_newest_raw);
+    RUN_TEST(test_capture_mean_steady);
+    RUN_TEST(test_capture_mean_counts_a_short_pulse);
     RUN_TEST(test_capture_make_record);
 
     RUN_TEST(test_decode_dc_bus_little_endian);

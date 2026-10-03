@@ -124,10 +124,10 @@ static_assert(sizeof(ImuSample)            == 16, "IMU schema: record size");
 // so every non-empty cell in a record was converted at t_adcv_ms. The LTC6811
 // converts all cells of the chain within ~1 ms of the ADCV broadcast.
 //
-// i_mA is the latest pack-current sample when the read completed (~7 ms after
-// ADCV) and i_tick_ms when it was taken; t_adcv_ms - i_tick_ms says how far
-// apart the two are. Current is sampled every CurrentPeriodMs (50 ms), so they
-// can be up to ~50 ms apart.
+// i_mA is CurrentService's latest value when the read completed (~7 ms after
+// ADCV): the mean pack current over the 50 ms capture that ended at i_tick_ms.
+// That window can end up to ~50 ms before t_adcv_ms; ELEnnnn.BIN has the
+// current in 10 ms windows for a closer join.
 // ---------------------------------------------------------------------------
 struct CelFrame {
     std::uint32_t t_adcv_ms;   // tick when ADCV was issued

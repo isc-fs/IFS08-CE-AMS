@@ -9,8 +9,8 @@
 // sample rate: windows split the capture by sample count, and their end times
 // are interpolated over the capture's measured start and stop ticks.
 //
-// TELEMETRY ONLY, except newest_raw(), which picks the one sample per cycle
-// that CurrentService (and through it the safety predicates) receives.
+// TELEMETRY ONLY, except capture_mean_q4(), the one value per cycle that
+// CurrentService (and through it the safety predicates) receives.
 // Pure (HAL-free, RTOS-free) so the host tests cover it.
 
 #pragma once
@@ -66,11 +66,13 @@ struct Window {
                                    (static_cast<std::uint64_t>(t_stop - t_start) * idx) / n);
 }
 
-// The newest sample of a capture as a 12-bit code -- the one value per cycle
-// CurrentService receives, as it did when the task took a single conversion.
-[[nodiscard]] inline constexpr std::uint16_t newest_raw(const std::uint16_t* s,
-                                                        std::uint16_t n) noexcept {
-    return CurrentService::q4_to_raw(s[n - 1u]);
+// Mean of a whole capture, in Q4 -- the one value per cycle CurrentService
+// receives. The ADC integrates continuously, so this is the average current
+// over the cycle: every amp-second counts, where a single sample would catch
+// or miss a pulse by chance. 0 for an empty capture (callers skip those).
+[[nodiscard]] inline std::uint32_t capture_mean_q4(const std::uint16_t* s,
+                                                   std::uint16_t n) noexcept {
+    return mean_q4(reduce(s, 0, n));
 }
 
 [[nodiscard]] inline bin_log::EleRecord make_record(const Window& w, std::uint32_t tick_ms,
