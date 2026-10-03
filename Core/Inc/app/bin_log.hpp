@@ -124,15 +124,20 @@ static_assert(sizeof(ImuSample)            == 16, "IMU schema: record size");
 // so every non-empty cell in a record was converted at t_adcv_ms. The LTC6811
 // converts all cells of the chain within ~1 ms of the ADCV broadcast.
 //
-// i_mA is CurrentService's latest value when the read completed (~7 ms after
-// ADCV): the mean pack current over the 50 ms capture that ended at i_tick_ms.
-// That window can end up to ~50 ms before t_adcv_ms; ELEnnnn.BIN has the
-// current in 10 ms windows for a closer join.
+// i_mA is the mean pack current over the conversion itself: the oversampled
+// ADC samples from the moment ADCV was issued through config::CelCurrentSyncUs
+// (~2.3 ms), so voltage and current describe the same instant and
+// dV/dI between frames gives each cell's resistance. i_n is how many samples
+// that mean covers and i_span_us the time they span; a short window means the
+// capture ended inside the conversion. i_n = 0 means no sync was available
+// (no capture running, or the samples already reused) and i_mA is then
+// CurrentService's latest 50 ms mean instead.
 // ---------------------------------------------------------------------------
 struct CelFrame {
     std::uint32_t t_adcv_ms;   // tick when ADCV was issued
-    std::uint32_t i_tick_ms;   // tick of the current sample in i_mA
-    std::int32_t  i_mA;        // raw pack current, + = discharge
+    std::uint16_t i_n;         // ADC samples in i_mA; 0 = no sync (50 ms mean instead)
+    std::uint16_t i_span_us;   // time those samples span
+    std::int32_t  i_mA;        // pack current during the conversion, + = discharge
     std::uint16_t seq;         // +1 per frame; a gap means frames were dropped
     std::uint16_t ltc_ok;      // bit k = chain IC k PEC-clean on this read
     std::uint8_t  attempt;     // 0 = first read of a poll, >0 = retry
@@ -148,7 +153,8 @@ inline constexpr std::uint8_t CurrentFault    = 1u << 1;   // i_mA came from a f
 inline constexpr char CelStream[] = "CEL";
 inline constexpr char CelSchema[] =
     "t_adcv_ms u32 1 1 ms\n"
-    "i_tick_ms u32 1 1 ms\n"
+    "i_n u16 1 1 -\n"
+    "i_span_us u16 1 1 us\n"
     "i i32 1 0.001 A\n"
     "seq u16 1 1 -\n"
     "ltc_ok u16 1 1 -\n"
@@ -159,7 +165,8 @@ inline constexpr char CelSchema[] =
 static_assert(config::BmsModuleCount == 5 && config::CellsPerModule == 19,
               "CEL schema hard-codes the 5x19 cell matrix");
 static_assert(offsetof(CelFrame, t_adcv_ms) == 0,  "CEL schema: t_adcv_ms");
-static_assert(offsetof(CelFrame, i_tick_ms) == 4,  "CEL schema: i_tick_ms");
+static_assert(offsetof(CelFrame, i_n)       == 4,  "CEL schema: i_n");
+static_assert(offsetof(CelFrame, i_span_us) == 6,  "CEL schema: i_span_us");
 static_assert(offsetof(CelFrame, i_mA)      == 8,  "CEL schema: i");
 static_assert(offsetof(CelFrame, seq)       == 12, "CEL schema: seq");
 static_assert(offsetof(CelFrame, ltc_ok)    == 14, "CEL schema: ltc_ok");

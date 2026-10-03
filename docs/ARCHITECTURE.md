@@ -989,10 +989,17 @@ retries included (`attempt` > 0), so no read is skipped or repeated the way
 the 4 Hz LOG row skips one 5 Hz poll in five. Cells of an IC that failed PEC
 on that read are 0 (decoded empty), not the IC's previous value, so every cell
 in a frame was converted at `t_adcv_ms`, which is latched when ADCV is issued;
-`ltc_ok` gives the PEC mask. `i_mA` is `CurrentService`'s latest value when the
-read completes (~7 ms after ADCV): the mean current over the 50 ms capture that
-ended at `i_tick_ms`, which can be up to ~50 ms before the conversion;
-`ELEnnnn.BIN` has the current at 10 ms resolution for a closer join. `flags` bit 0 = balancing
+`ltc_ok` gives the PEC mask. `i_mA` is the mean pack current over the
+conversion itself: when ADCV goes out, BmsPollTask marks the position in the
+current capture (`current_mark()`), and after the read it averages the
+oversampled samples from that mark through `CelCurrentSyncUs` (2.3 ms, the
+Norm7kHz conversion time) with `current_window_mean()`. Voltage and current
+therefore describe the same ~2.3 ms, to one 80 µs sample, and dV/dI between
+frames gives each cell's resistance directly. `i_n` is the sample count (~29)
+and `i_span_us` the span; `i_n` = 0 means no sync was available and `i_mA`
+falls back to `CurrentService`'s 50 ms mean. The capture bookkeeping is a
+seqlock written by CurrentSensorTask (32) and read by BmsPollTask (24): the
+writer must outrank every reader. `flags` bit 0 = balancing
 quiesced, bit 1 = current-sensor fault.
 
 **`ELEnnnn.BIN`.** Pack current at 100 Hz. ADC3 free-runs with 64x hardware

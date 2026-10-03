@@ -48,6 +48,7 @@
 #include "cmsis_os2.h"
 #include "main.h"
 
+#include <atomic>
 #include <cmath>
 
 extern "C" {
@@ -96,6 +97,19 @@ std::uint8_t  s_active          = 0;
 bool          s_capture_running = false;
 std::uint32_t s_capture_start   = 0;     // tick the running capture started
 std::uint16_t s_ele_seq         = 0;
+
+// Which capture each buffer holds, for current_window_mean (BmsPollTask, CEL
+// current sync). Written only by this task, inside an odd/even sequence;
+// readers run at a LOWER priority, so this task can interrupt a reader but
+// never the reverse, and a reader that sees the sequence move retries. A
+// buffer is reused two captures (100 ms) after it was filled, far longer than
+// the ~7 ms between an ADCV and the read that consumes its window.
+ams::current_capture::Buffers s_bufs;
+std::atomic<std::uint32_t>    s_buf_seq{0};
+std::uint32_t                 s_next_capture_id = 1;
+// Samples per second, measured on the last full capture (nominally
+// CurrentAdcNominalHz). Sizes the CEL sync window in samples.
+std::atomic<std::uint32_t>    s_rate_hz{ams::config::CurrentAdcNominalHz};
 
 // Disconnect debounce: consecutive cycles the OUT_P single-ended leg
 // read landed outside the plausible window. Only after
@@ -267,6 +281,18 @@ void dc_bus_sample(std::uint32_t now, std::uint16_t& volts, std::uint16_t& age) 
     age   = ams::log_csv::age_ms(now, v.last_dc_bus_tick);
 }
 
+// Restart the capture into buffer `buf` and record which capture it holds.
+// Call inside the s_buf_seq odd/even section.
+void restart_into(std::uint8_t buf) noexcept {
+    s_active            = buf;
+    s_capture_running   = start_capture(buf);
+    s_capture_start     = osKernelGetTickCount();
+    s_bufs.active       = buf;
+    s_bufs.capture[buf] = s_next_capture_id++;
+    s_bufs.final_n[buf] = 0;
+    s_bufs.running      = s_capture_running;
+}
+
 // Split a finished capture into its 10 ms windows and push one ELE record
 // each. TELEMETRY ONLY.
 void publish_ele(const std::uint16_t* buf, std::uint16_t n,
@@ -292,6 +318,54 @@ void publish_ele(const std::uint16_t* buf, std::uint16_t n,
 
 }  // namespace
 
+namespace ams {
+
+bool current_mark(CurrentMark& out) noexcept {
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const std::uint32_t s1 = s_buf_seq.load(std::memory_order_acquire);
+        if ((s1 & 1u) != 0u) continue;
+        const current_capture::Buffers b = s_bufs;
+        const std::uint32_t left = __HAL_DMA_GET_COUNTER(hadc3.DMA_Handle);
+        if (s_buf_seq.load(std::memory_order_acquire) != s1) continue;
+        if (!b.running || left > config::CurrentCaptureCapacity) return false;
+        out.capture = b.capture[b.active];
+        out.index   = static_cast<std::uint16_t>(config::CurrentCaptureCapacity - left);
+        return true;
+    }
+    return false;
+}
+
+CurrentWindow current_window_mean(const CurrentMark& from, std::uint32_t window_us) noexcept {
+    const std::uint32_t rate = s_rate_hz.load(std::memory_order_relaxed);
+    const std::uint16_t want = current_capture::samples_for(window_us, rate);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const std::uint32_t s1 = s_buf_seq.load(std::memory_order_acquire);
+        if ((s1 & 1u) != 0u) continue;
+        const current_capture::Buffers b = s_bufs;
+        const std::uint32_t left = __HAL_DMA_GET_COUNTER(hadc3.DMA_Handle);
+        const auto running_n = static_cast<std::uint16_t>(
+            left > config::CurrentCaptureCapacity ? 0u : config::CurrentCaptureCapacity - left);
+        std::uint8_t  buf   = 0;
+        std::uint16_t avail = 0;
+        if (!current_capture::locate(b, from.capture, running_n, buf, avail)) return {};
+        const std::uint32_t end32 = std::uint32_t{from.index} + want;
+        const auto end = static_cast<std::uint16_t>(end32 < avail ? end32 : avail);
+        if (end <= from.index) return {};
+        const current_capture::Window w = current_capture::reduce(s_capture[buf], from.index, end);
+        // A restart while summing could have handed this buffer back to the DMA.
+        if (s_buf_seq.load(std::memory_order_acquire) != s1) continue;
+        CurrentWindow r{};
+        r.n       = w.count;
+        r.span_us = static_cast<std::uint16_t>(
+            rate == 0u ? 0u : (static_cast<std::uint32_t>(w.count) * 1000000u) / rate);
+        r.mA      = CurrentService::adc_q4_to_mA(current_capture::mean_q4(w));
+        return r;
+    }
+    return {};
+}
+
+}  // namespace ams
+
 extern "C" void ams_current_sensor_task_run(void *argument) {
     (void)argument;
 
@@ -305,8 +379,9 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
                                 ADC_CALIB_OFFSET_LINEARITY,
                                 ADC_DIFFERENTIAL_ENDED);
 
-    s_capture_running = start_capture(s_active);
-    s_capture_start   = osKernelGetTickCount();
+    s_buf_seq.fetch_add(1u, std::memory_order_acq_rel);
+    restart_into(s_active);
+    s_buf_seq.fetch_add(1u, std::memory_order_acq_rel);
     std::uint32_t last_wake = s_capture_start;
 
     for (;;) {
@@ -314,10 +389,15 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
         osDelayUntil(last_wake);
 
         // --- 1. Stop the capture that ran through the last cycle ---
+        // Steps 1-3 change which buffer holds what: bracket them in the odd/
+        // even sequence current_window_mean readers check.
+        s_buf_seq.fetch_add(1u, std::memory_order_acq_rel);
         const std::uint8_t  done    = s_active;
         const std::uint32_t t_start = s_capture_start;
         const std::uint16_t n       = s_capture_running ? stop_capture() : 0u;
         const std::uint32_t t_stop  = osKernelGetTickCount();
+        s_bufs.final_n[done] = n;
+        s_bufs.running       = false;
 
         // --- 2. Disconnect check: OUT_P (PF7 / CH3) single-ended ---
         // With the internal pull-down an open connector collapses OUT_P toward
@@ -330,9 +410,14 @@ extern "C" void ams_current_sensor_task_run(void *argument) {
         const bool se_ok = read_leg_q4(legp_q4);
 
         // --- 3. Restart into the other buffer straight away ---
-        s_active          = static_cast<std::uint8_t>(s_active ^ 1u);
-        s_capture_running = start_capture(s_active);
-        s_capture_start   = osKernelGetTickCount();
+        restart_into(static_cast<std::uint8_t>(done ^ 1u));
+        s_buf_seq.fetch_add(1u, std::memory_order_acq_rel);
+
+        // Sample rate of the capture that just ended, for the CEL sync window.
+        if (n > 100u && t_stop > t_start) {
+            s_rate_hz.store(static_cast<std::uint32_t>(n) * 1000u / (t_stop - t_start),
+                            std::memory_order_relaxed);
+        }
 
         if (se_ok && !ams::CurrentService::leg_voltage_plausible(
                          ams::CurrentService::q4_to_raw(legp_q4))) {

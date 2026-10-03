@@ -75,6 +75,39 @@ struct Window {
     return mean_q4(reduce(s, 0, n));
 }
 
+// Number of samples spanning `window_us` at `rate_hz`, rounded, at least 1.
+[[nodiscard]] inline constexpr std::uint16_t samples_for(std::uint32_t window_us,
+                                                         std::uint32_t rate_hz) noexcept {
+    const std::uint64_t n = (static_cast<std::uint64_t>(window_us) * rate_hz + 500000u) / 1000000u;
+    return n == 0u ? std::uint16_t{1} : (n > 0xFFFFu ? std::uint16_t{0xFFFFu}
+                                                     : static_cast<std::uint16_t>(n));
+}
+
+// Bookkeeping for the two ping-pong capture buffers, so a reader holding a
+// capture id can find the samples it left behind. Capture ids start at 1 and
+// increase by one per restart; 0 means the buffer holds nothing yet.
+struct Buffers {
+    std::uint32_t capture[2] = {0u, 0u};   // capture id each buffer holds
+    std::uint16_t final_n[2] = {0u, 0u};   // samples, once that capture stopped
+    std::uint8_t  active     = 0;          // buffer the DMA is filling
+    bool          running    = false;      // a capture is in progress in `active`
+};
+
+// Which buffer holds capture `id`, and how many of its samples can be read
+// now: the DMA's running count for the active capture, the final count for a
+// finished one. False once the buffer has been reused for a newer capture.
+[[nodiscard]] inline bool locate(const Buffers& b, std::uint32_t id, std::uint16_t running_n,
+                                 std::uint8_t& buf, std::uint16_t& avail) noexcept {
+    if (id == 0u) return false;
+    for (std::uint8_t i = 0; i < 2u; ++i) {
+        if (b.capture[i] != id) continue;
+        buf   = i;
+        avail = (i == b.active && b.running) ? running_n : b.final_n[i];
+        return true;
+    }
+    return false;
+}
+
 [[nodiscard]] inline bin_log::EleRecord make_record(const Window& w, std::uint32_t tick_ms,
                                                     std::uint16_t seq, std::uint8_t flags,
                                                     std::uint16_t dcbus_V,
