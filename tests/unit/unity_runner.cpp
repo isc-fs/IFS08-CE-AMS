@@ -83,6 +83,8 @@ void test_capture_tick_interpolation(void);
 void test_capture_mean_steady(void);
 void test_capture_mean_counts_a_short_pulse(void);
 void test_capture_make_record(void);
+void test_capture_sync_window_samples(void);
+void test_capture_locate_buffers(void);
 
 // test_vehicle_service.cpp
 void test_decode_dc_bus_little_endian(void);
@@ -669,6 +671,8 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_capture_mean_steady);
     RUN_TEST(test_capture_mean_counts_a_short_pulse);
     RUN_TEST(test_capture_make_record);
+    RUN_TEST(test_capture_sync_window_samples);
+    RUN_TEST(test_capture_locate_buffers);
 
     RUN_TEST(test_decode_dc_bus_little_endian);
     RUN_TEST(test_update_dc_bus_frame);

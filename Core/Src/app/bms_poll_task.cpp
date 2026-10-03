@@ -16,6 +16,7 @@
 #include "ams_config.hpp"
 #include "ams_events.hpp"
 #include "app/app_globals.h"
+#include "app/current_task.h"
 #include "app/sd_logger_task.h"
 #include "balance_controller.hpp"
 #include "bin_log.hpp"
@@ -244,7 +245,8 @@ struct VoltAttempt {
 ams::bin_log::CelFrame s_cel     = {};
 std::uint16_t          s_cel_seq = 0;
 
-// Pack-current sample for a CelFrame. CurrentSensorTask (higher priority) can
+// CurrentService state, for a CelFrame's sensor-fault flag and for its current
+// when no sync window is available. CurrentSensorTask (higher priority) can
 // pre-empt this copy, so take two and use the second only if both carry the
 // same sample tick -- otherwise a third read is clean, since that task runs at
 // most once per CurrentPeriodMs.
@@ -255,12 +257,19 @@ ams::CurrentState current_sample() noexcept {
     return (a.last_update_tick == b.last_update_tick) ? b : svc.snapshot();
 }
 
-void push_cel_frame(std::uint32_t t_adcv, std::uint8_t attempt, bool quiesced) noexcept {
+// `mark` is where the current capture stood when the conversion started, or
+// null if there was no running capture to mark.
+void push_cel_frame(std::uint32_t t_adcv, const ams::CurrentMark* mark,
+                    std::uint8_t attempt, bool quiesced) noexcept {
     using namespace ams;
-    const CurrentState cur = current_sample();
+    const CurrentState  cur  = current_sample();
+    const CurrentWindow sync = (mark != nullptr)
+                                   ? current_window_mean(*mark, config::CelCurrentSyncUs)
+                                   : CurrentWindow{};
     s_cel.t_adcv_ms = t_adcv;
-    s_cel.i_tick_ms = cur.last_update_tick;
-    s_cel.i_mA      = cur.raw_mA;
+    s_cel.i_n       = sync.n;
+    s_cel.i_span_us = sync.span_us;
+    s_cel.i_mA      = (sync.n > 0u) ? sync.mA : cur.raw_mA;
     s_cel.seq       = s_cel_seq++;
     s_cel.ltc_ok    = BmsService::instance().ltc_online_mask();
     s_cel.attempt   = attempt;
@@ -293,6 +302,10 @@ VoltAttempt attempt_voltage_poll(std::uint8_t attempt, bool quiesced) {
         ++g_ltc_spi_err_count;
         return { false, 0 };
     }
+    // The conversion starts as the command completes: mark the current capture
+    // here, so the CelFrame can average the current over exactly this window.
+    CurrentMark       mark{};
+    const bool        have_mark = current_mark(mark);
 
     // 2. ADC settling. Norm-7kHz converts all 12 channels in ~2.3 ms, rounded up
     //    to 3 ms (config::AdcvSettleMs).
@@ -346,7 +359,7 @@ VoltAttempt attempt_voltage_poll(std::uint8_t attempt, bool quiesced) {
     std::uint8_t  clean = 0;
     while (mask != 0u) { clean = static_cast<std::uint8_t>(clean + (mask & 1u)); mask >>= 1; }
 
-    push_cel_frame(t_adcv, attempt, quiesced);
+    push_cel_frame(t_adcv, have_mark ? &mark : nullptr, attempt, quiesced);
     return { any_fresh, clean };
 }
 

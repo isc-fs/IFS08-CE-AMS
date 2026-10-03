@@ -384,6 +384,14 @@ inline constexpr char          ImuCrcNameFmt[]    = "IMU%04lu.CRC";
 // other log rings (.log_bss). MUST be a power of two.
 inline constexpr std::uint32_t CelRingCapacity = 64;
 
+// Current sync window. Each CelFrame carries the mean pack current over the
+// conversion itself: the samples from the moment ADCV is issued through
+// CelCurrentSyncUs. In Norm7kHz mode the LTC6811 converts its 12 channels as
+// six pairs back to back in ~2.3 ms (datasheet ADCV conversion time), and
+// every IC in the chain converts at the same time, so this window covers when
+// every cell in the frame was measured. ~29 samples at 12.5 kHz.
+inline constexpr std::uint32_t CelCurrentSyncUs = 2300;
+
 inline constexpr char          CelActiveNameFmt[] = "CEL%04lu.TMP";
 inline constexpr char          CelSealedNameFmt[] = "CEL%04lu.BIN";
 inline constexpr char          CelCrcNameFmt[]    = "CEL%04lu.CRC";
@@ -985,6 +993,7 @@ inline constexpr std::uint32_t AdcvSettleMs     = 3;
 inline constexpr std::uint32_t AdcXCheckPollBodyBudgetMs = 40;
 static_assert(AdcXCheckSettleMs + AdcXCheckPollBodyBudgetMs < BmsStaleMs,
               "ADC cross-check sweep would push a module past BmsStaleMs");
+static_assert(AdcMode == 2u, "CelCurrentSyncUs is the Norm7kHz ADCV conversion time");
 static_assert(AdcXCheckAdcMode != AdcMode,
               "cross-check must use a different mode than the live poll");
 

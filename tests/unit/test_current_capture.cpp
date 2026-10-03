@@ -109,3 +109,36 @@ extern "C" void test_capture_make_record(void) {
     TEST_ASSERT_EQUAL_UINT16(351u, r.dcbus_V);
     TEST_ASSERT_EQUAL_UINT16(12u, r.dcbus_age_ms);
 }
+
+// The CEL sync window in samples: the 2.3 ms Norm7kHz conversion at the
+// nominal 12.5 kHz is ~29 samples, and it scales with the measured rate.
+extern "C" void test_capture_sync_window_samples(void) {
+    TEST_ASSERT_EQUAL_UINT16(29u, cc::samples_for(config::CelCurrentSyncUs, 12500u));
+    TEST_ASSERT_EQUAL_UINT16(14u, cc::samples_for(config::CelCurrentSyncUs, 6250u));
+    TEST_ASSERT_EQUAL_UINT16(1u,  cc::samples_for(0u, 12500u));        // never an empty window
+    TEST_ASSERT_EQUAL_UINT16(1u,  cc::samples_for(10u, 12500u));
+}
+
+// A reader holding a capture id finds its samples while that capture runs,
+// after it stops, and loses them once the buffer is reused.
+extern "C" void test_capture_locate_buffers(void) {
+    cc::Buffers b;
+    std::uint8_t  buf   = 9;
+    std::uint16_t avail = 0;
+    TEST_ASSERT_FALSE(cc::locate(b, 0u, 0u, buf, avail));              // id 0 never matches
+
+    b.capture[0] = 7; b.active = 0; b.running = true;                   // capture 7 running in buf 0
+    TEST_ASSERT_TRUE(cc::locate(b, 7u, 300u, buf, avail));
+    TEST_ASSERT_EQUAL_UINT8(0u, buf);
+    TEST_ASSERT_EQUAL_UINT16(300u, avail);                              // the DMA's running count
+
+    b.final_n[0] = 624; b.capture[1] = 8; b.active = 1;                // 7 stopped, 8 running in buf 1
+    TEST_ASSERT_TRUE(cc::locate(b, 7u, 40u, buf, avail));
+    TEST_ASSERT_EQUAL_UINT8(0u, buf);
+    TEST_ASSERT_EQUAL_UINT16(624u, avail);                              // final count, not the running one
+    TEST_ASSERT_TRUE(cc::locate(b, 8u, 40u, buf, avail));
+    TEST_ASSERT_EQUAL_UINT16(40u, avail);
+
+    b.capture[0] = 9; b.final_n[0] = 0; b.active = 0;                  // buf 0 reused for capture 9
+    TEST_ASSERT_FALSE(cc::locate(b, 7u, 10u, buf, avail));
+}
