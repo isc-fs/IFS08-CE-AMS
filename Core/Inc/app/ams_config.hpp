@@ -631,6 +631,14 @@ inline constexpr std::uint32_t EcuSlowTxMs           = 250;
 // acu_can_task.cpp.
 inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
 
+// Longest a pit-diag burst frame waits for TX FIFO space. The 16-deep FIFO
+// drains in ~1.8 ms at 500 kbps (16 x ~110 us), so 5 ms of no room means the
+// frames are not leaving -- Bus_Off, no node ACKing, or a saturated bus -- and
+// the rest of that scan is dropped (each dropped frame counts in
+// g_acu_tx_fail). Waiting longer would stall AcuCanTask, and with it RX
+// dispatch and the Bus_Off recovery poll that would clear the condition.
+inline constexpr std::uint32_t PitDiagTxWaitMaxMs    = 5;
+
 // ---------------------------------------------------------------------------
 // Pit-side diagnostic stream. Runtime-toggleable full-grid telemetry for
 // pit-stop debugging with the accumulator plugged into can0 (car stationary in

@@ -461,8 +461,13 @@ the wire before stuffing, so a scan is ≈6.8 kbit ≈ 14 ms of bus time — abo
 silently NACKed and only the front of the burst reaches the wire. So the
 pit-diag burst — and *only* the pit-diag burst — uses a yield-while-full send
 (`osDelay(1)` on a full FIFO), costing ~6 ms of AcuCanTask time per scan. The
-flight TX matrix stays non-blocking on purpose: a FIFO bump there must bump a
-counter, never stall a safety-adjacent cadence.
+wait is bounded: in Bus_Off nothing drains, so the burst gives up at once, and
+on a live bus it gives up after `PitDiagTxWaitMaxMs` (5 ms) with no room. The
+rest of that scan is dropped and counted in `g_acu_tx_fail` (`0x6C9`). An
+unbounded wait would park AcuCanTask, and with it RX dispatch and the Bus_Off
+recovery poll that runs in the same loop. The flight TX matrix stays
+non-blocking on purpose: a FIFO bump there must bump a counter, never stall a
+safety-adjacent cadence.
 
 ### Cell + temperature grids
 

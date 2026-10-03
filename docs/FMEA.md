@@ -812,9 +812,11 @@ Two mitigations already exist. `DiagTxReservedSlots` = 6 keeps six of the
 sixteen FIFO slots free for the flight telemetry matrix while a multi-minute
 log pull is running — without it, the diag stream filled the FIFO and the
 flight matrix was dropped for the whole transfer with no evidence but a
-best-effort counter. And only the pit-diag burst uses the blocking send
-variant; the flight matrix stays non-blocking so a transient FIFO bump never
-stalls the 50/100/250 ms cadences.
+best-effort counter. And only the pit-diag burst uses the flow-controlled
+send, bounded so that a Bus_Off or an unACKed bus drops the rest of the scan
+within `PitDiagTxWaitMaxMs` instead of parking AcuCanTask (which also runs RX
+dispatch and the Bus_Off recovery poll); the flight matrix stays non-blocking
+so a transient FIFO bump never stalls the 50/100/250 ms cadences.
 
 ### CAN-2 — RX queue drops are counted but not acted on · **Latent**
 

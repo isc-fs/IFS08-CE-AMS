@@ -69,4 +69,28 @@ struct BusOffState {
     return true;
 }
 
+// What a blocking (burst) send does on one look at the TX FIFO.
+enum class TxStep : std::uint8_t {
+    Send,      // there is room: enqueue the frame
+    Wait,      // full but draining is plausible: yield and look again
+    Abandon,   // frames are not leaving: drop this frame and the rest of the burst
+};
+
+// Decide the next step of a burst send that has waited `waited_ms` so far.
+//
+// Bus_Off comes first: in Bus_Off the controller transmits nothing, so a
+// frame enqueued into a FIFO with room would only sit there, and a full FIFO
+// will never drain. Waiting for either would block the caller's loop, which
+// is also where the Bus_Off recovery poll runs -- the deadlock this exists to
+// prevent. Otherwise a full FIFO gets `limit_ms` to drain before the burst is
+// given up as well (no node ACKing, or a saturated bus).
+[[nodiscard]] inline constexpr TxStep burst_tx_step(bool          fifo_has_room,
+                                                     bool          bus_off,
+                                                     std::uint32_t waited_ms,
+                                                     std::uint32_t limit_ms) noexcept {
+    if (bus_off)       return TxStep::Abandon;
+    if (fifo_has_room) return TxStep::Send;
+    return (waited_ms >= limit_ms) ? TxStep::Abandon : TxStep::Wait;
+}
+
 }  // namespace ams::can_recovery
