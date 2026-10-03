@@ -17,7 +17,7 @@ struct CurrentState {
     // Sourced from the differential pair PF7/PF8 (ADC3_INP3/INN3,
     // Bourns SSA-2-250A read in ADC differential mode; see adc_to_mA +
     // ams_config.hpp commentary).
-    std::int32_t  raw_mA;        // one sample per CurrentPeriodMs, no filter
+    std::int32_t  raw_mA;        // mean over the last CurrentPeriodMs capture, no filter
     std::int32_t  filtered_mA;   // IIR low-pass, tau ~ 16 samples
     std::uint32_t last_update_tick;
     bool          sensor_fault;      // ADC failed to convert, or out of plausible range
@@ -27,11 +27,16 @@ class CurrentService {
 public:
     static CurrentService& instance() noexcept;
 
-    // Called by CurrentSensorTask only, once per CurrentPeriodMs. Converts a
-    // 12-bit differential code to mA, updates the filter, refreshes the
-    // timestamp. `sensor_fault` is the debounced disconnect verdict from the
-    // task (OUT_P single-ended out of its plausible window); it sets the
+    // Called by CurrentSensorTask only, once per CurrentPeriodMs, with the
+    // mean of that cycle's capture as a Q4 code (16 x the 12-bit code).
+    // Converts it to mA, updates the filter, refreshes the timestamp.
+    // `sensor_fault` is the debounced disconnect verdict from the task (OUT_P
+    // single-ended out of its plausible window); it sets the
     // CurrentState.sensor_fault flag the safety predicate reads.
+    void update_from_q4(std::uint32_t q4, std::uint32_t now_tick,
+                        bool sensor_fault = false) noexcept;
+
+    // The same for a plain 12-bit code: update_from_q4(raw << 4).
     void update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
                          bool sensor_fault = false) noexcept;
 

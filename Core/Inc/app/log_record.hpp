@@ -38,7 +38,7 @@ namespace ams {
 struct LogRecord {
     std::uint32_t tick_ms;             // osKernelGetTickCount() at capture
     std::uint32_t pack_mV;             // BmsState.pack_voltage_mV
-    std::int32_t  pack_current_raw_mA; // CurrentState.raw_mA: one 80 us sample (+ = discharge)
+    std::int32_t  pack_current_raw_mA; // CurrentState.raw_mA: mean of the last 50 ms (+ = discharge)
     std::int32_t  pack_current_mA;     // CurrentState.filtered_mA
     std::uint16_t min_cell_mV;         // BmsState.min_cell_mV (tap-compensated summary)
     std::uint16_t max_cell_mV;         // BmsState.max_cell_mV

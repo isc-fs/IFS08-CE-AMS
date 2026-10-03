@@ -201,9 +201,9 @@ The pack channel is no longer a single conversion per cycle. ADC3 free-runs
 with its hardware oversampler (64 conversions of 60 ADC clocks at 48 MHz,
 summed and shifted right by 2), so every ~80 µs it delivers the mean of 64
 conversions as a code with 4 fractional bits; DMA moves those into a capture
-buffer. `CurrentService` still receives one value per 50 ms (the newest
-sample, rounded to a 12-bit code), so the zero and sensitivity above apply
-unchanged and are calibrated the same way. Bench checks for a new board:
+buffer. `CurrentService` receives one value per 50 ms, the mean of that
+cycle's capture; the zero and sensitivity above apply unchanged and are
+calibrated the same way. Bench checks for a new board:
 
 - **Sample rate.** `ELEnnnn.BIN` records carry `n`, the samples per 10 ms
   window: expect ~125 (12.5 kHz). About half that would mean ADC3 divides

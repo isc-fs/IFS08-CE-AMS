@@ -2,7 +2,7 @@
 //
 // Tests for current_capture.hpp -- splitting one oversampled pack-current
 // capture into ELE windows, the window statistics, timestamp interpolation and
-// the single sample per cycle that reaches CurrentService.
+// the per-cycle mean that reaches CurrentService.
 
 #include "ams_config.hpp"
 #include "bin_log.hpp"
@@ -67,11 +67,27 @@ extern "C" void test_capture_tick_interpolation(void) {
     TEST_ASSERT_EQUAL_UINT32(stop, cc::tick_at(start, stop, 0, 0));
 }
 
-// CurrentService gets the newest sample, rounded to a 12-bit code.
-extern "C" void test_capture_newest_raw(void) {
-    const std::uint16_t s[] = {16u * 2000u, 16u * 2054u + 9u};
-    TEST_ASSERT_EQUAL_UINT16(2055u, cc::newest_raw(s, 2));
-    TEST_ASSERT_EQUAL_UINT16(2000u, cc::newest_raw(s, 1));
+// A steady current: the capture mean is that current, exactly.
+extern "C" void test_capture_mean_steady(void) {
+    std::uint16_t s[625];
+    for (auto& v : s) v = static_cast<std::uint16_t>(16u * 2100u + 5u);
+    TEST_ASSERT_EQUAL_UINT32(16u * 2100u + 5u, cc::capture_mean_q4(s, 625));
+}
+
+// A pulse shorter than the cycle enters the safety path as its charge spread
+// over the cycle: ~600 A for 62 of 625 samples (~5 ms of 50 ms) is ~60 A, not
+// 600 A or 0 A depending on where a single sample happened to land.
+extern "C" void test_capture_mean_counts_a_short_pulse(void) {
+    const std::uint32_t zero = std::uint32_t{config::CurrentZeroCount} << config::CurrentAdcFracBits;
+    std::uint32_t pulse = zero;
+    while (CurrentService::adc_q4_to_mA(pulse) < 600000) ++pulse;    // first Q4 code >= 600 A
+    std::uint16_t s[625];
+    for (std::uint16_t i = 0; i < 625; ++i) {
+        s[i] = static_cast<std::uint16_t>((i >= 300 && i < 362) ? pulse : zero);
+    }
+    const std::int32_t mA = CurrentService::adc_q4_to_mA(cc::capture_mean_q4(s, 625));
+    TEST_ASSERT_INT32_WITHIN(500, 600000 * 62 / 625, mA);
+    TEST_ASSERT_EQUAL_UINT32(0u, cc::capture_mean_q4(s, 0));
 }
 
 extern "C" void test_capture_make_record(void) {

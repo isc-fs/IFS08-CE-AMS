@@ -989,10 +989,10 @@ retries included (`attempt` > 0), so no read is skipped or repeated the way
 the 4 Hz LOG row skips one 5 Hz poll in five. Cells of an IC that failed PEC
 on that read are 0 (decoded empty), not the IC's previous value, so every cell
 in a frame was converted at `t_adcv_ms`, which is latched when ADCV is issued;
-`ltc_ok` gives the PEC mask. `i_mA` is the latest pack-current sample when the
-read completes (~7 ms after ADCV) and `i_tick_ms` its tick: current is sampled
-every 50 ms, so the two can be up to ~50 ms apart; `ELEnnnn.BIN` has the
-current at 10 ms resolution for a closer join. `flags` bit 0 = balancing
+`ltc_ok` gives the PEC mask. `i_mA` is `CurrentService`'s latest value when the
+read completes (~7 ms after ADCV): the mean current over the 50 ms capture that
+ended at `i_tick_ms`, which can be up to ~50 ms before the conversion;
+`ELEnnnn.BIN` has the current at 10 ms resolution for a closer join. `flags` bit 0 = balancing
 quiesced, bit 1 = current-sensor fault.
 
 **`ELEnnnn.BIN`.** Pack current at 100 Hz. ADC3 free-runs with 64x hardware
@@ -1009,12 +1009,14 @@ sample count `n` (~125), and the ECU's DC-bus voltage with its age. `tick_ms`
 is interpolated over the capture's measured duration. `flags` bit 0 = sensor
 fault, bit 1 = capture overrun (the task was > ~30 ms late).
 
-The safety path is unchanged in contract: `CurrentService::update_from_adc`
-still receives one 12-bit code per 50 ms -- the capture's newest sample, now
-an 80 µs integration instead of a 26 ns snapshot -- so the over-current filter
-and `IStaleMs` keep the timing they were sized for. The charge totals
-(`q_dis_mAs`, `q_chg_mAs`) now integrate the capture mean rather than one
-sample.
+The safety path takes the capture's **mean**: `CurrentService::update_from_q4`
+receives, once per 50 ms, the average pack current over that cycle at full Q4
+resolution. The cadence the over-current filter and `IStaleMs` were sized for
+is unchanged, and so is the trip time for a sustained current; what changes is
+that every amp-second of the cycle is in the input. A pulse shorter than a
+cycle counts in proportion to its charge (600 A for 5 ms enters as 60 A)
+instead of being caught or missed by wherever a single sample landed. The
+charge totals (`q_dis_mAs`, `q_chg_mAs`) integrate the same mean.
 
 **Columns** (`log_record.hpp`). Every column is declared once in an X-macro
 table that both `build_header` and `format_row` expand, so the header and the
@@ -1038,8 +1040,8 @@ row is captured by `MainTask` in the same tick.
 | `pec_err`, `spi_err`, `chain_rec` | isoSPI running totals: PEC errors, SPI failures, chain recoveries |
 
 Sign convention: `+` current = discharge. `I_filt_mA` is the IIR-filtered
-pack current; `I_raw_mA` the cycle's newest 80 µs sample (for transients, use
-`ELEnnnn.BIN`).
+pack current; `I_raw_mA` the unfiltered mean of the last 50 ms (for
+transients, use `ELEnnnn.BIN`).
 
 ### The IMU ring
 

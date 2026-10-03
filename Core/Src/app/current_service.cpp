@@ -54,8 +54,13 @@ bool CurrentService::leg_voltage_plausible(std::uint16_t raw) noexcept {
 
 void CurrentService::update_from_adc(std::uint16_t raw, std::uint32_t now_tick,
                                      bool sensor_fault) noexcept {
-    const std::int32_t mA = adc_to_mA(raw);
+    update_from_q4(static_cast<std::uint32_t>(raw) << config::CurrentAdcFracBits,
+                   now_tick, sensor_fault);
+}
 
+void CurrentService::update_from_q4(std::uint32_t q4, std::uint32_t now_tick,
+                                    bool sensor_fault) noexcept {
+    const std::int32_t mA = adc_q4_to_mA(q4);
 
     state_.raw_mA           = mA;
     state_.last_update_tick = now_tick;
