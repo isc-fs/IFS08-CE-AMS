@@ -19,11 +19,20 @@
 #include "ltc6820.hpp"
 #include "relay_driver.hpp"
 
+#include "FreeRTOS.h"
 #include "cmsis_os2.h"
 #include "main.h"
 
 #include <cstddef>
 #include <cstdint>
+
+// The idle task sleeps the core in vApplicationIdleHook (freertos.c). The hook
+// body lives in a CubeMX USER CODE block, so it survives a regen even if the
+// .ioc loses FREERTOS.configUSE_IDLE_HOOK -- and would then silently never be
+// called, putting the idle task back to spinning. Fail the build instead.
+static_assert(configUSE_IDLE_HOOK == 1,
+              "configUSE_IDLE_HOOK must be 1 (AMS.ioc FREERTOS.configUSE_IDLE_HOOK): "
+              "vApplicationIdleHook sleeps the core with WFI");
 
 extern "C" {
 
