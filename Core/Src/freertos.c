@@ -53,8 +53,26 @@
 /* USER CODE END FunctionPrototypes */
 
 /* Hook prototypes */
+void vApplicationIdleHook(void);
 void vApplicationStackOverflowHook(xTaskHandle xTask, char *pcTaskName);
 void vApplicationMallocFailedHook(void);
+
+/* USER CODE BEGIN 2 */
+void vApplicationIdleHook( void )
+{
+  /* Sleep until the next interrupt instead of spinning. The idle task only
+   * runs when no task is ready, and every source that can ready one -- the
+   * 1 kHz FreeRTOS tick, the TIM6 HAL timebase, FDCAN, the SDMMC, I2C and ADC
+   * DMA completions -- is an interrupt that wakes the core within a few cycles,
+   * so task timing is unchanged. Sleep (SLEEPDEEP clear) gates only the CPU
+   * clock: peripherals, DMA, buses and the IWDG keep running. The DSB lets
+   * outstanding memory accesses complete before the core stops. This hook must
+   * return and must never block: the idle task also frees deleted tasks
+   * (App_InitTask deletes itself). */
+  __DSB();
+  __WFI();
+}
+/* USER CODE END 2 */
 
 /* USER CODE BEGIN 4 */
 /* Captured globals for post-mortem readout over CAN (pit-diag

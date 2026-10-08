@@ -213,7 +213,10 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+  /* The idle hook sleeps the core with WFI (freertos.c). Keep the debug
+   * clocks running in Sleep so an attached debugger does not drop the
+   * connection; it costs nothing without one. */
+  HAL_DBGMCU_EnableDBGSleepMode();
   /* USER CODE END Init */
 
   /* Configure the system clock */
