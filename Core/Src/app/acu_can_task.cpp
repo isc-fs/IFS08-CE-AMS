@@ -134,6 +134,12 @@ volatile std::uint32_t g_boot_trigger_refused    = 0;
 // the bootloader's bl_health fdcan_recovery_count.
 volatile std::uint32_t g_fdcan1_busoff_recovery_count = 0;
 
+// One count per TX-FIFO flush made by poll_fdcan1_tx_stall() (the frames it
+// cancels are counted individually in g_acu_tx_fail). Non-zero means the AMS
+// spent time transmitting with nobody ACKing -- normal on a lone bench node,
+// a wiring or termination fault on the car.
+volatile std::uint32_t g_fdcan1_tx_flush_count = 0;
+
 // ---- FDCAN1 Bus-Off poll + recovery -------------------------------------
 //
 // The STM32H7 M_CAN latches Bus_Off after sustained TX errors (classic-CAN
@@ -177,6 +183,28 @@ void poll_fdcan1_busoff_recovery(ams::can_recovery::BusOffState& st,
     }
 
     ++g_fdcan1_busoff_recovery_count;
+}
+
+// ---- FDCAN1 TX-FIFO stall flush -----------------------------------------
+//
+// Automatic retransmission is ON (enforced in app init), so a frame that loses
+// arbitration is retried instead of silently dropped. With nobody ACKing, the
+// head frame is retried forever and the FIFO fills: the node is error-passive,
+// not Bus_Off, so poll_fdcan1_busoff_recovery() never acts. After
+// FdcanTxStallFlushMs with the FIFO full, cancel everything pending so a node
+// that joins later sees current frames, not a stale backlog. TXBRP is the
+// pending-request bitmap (one bit per TX buffer element).
+void poll_fdcan1_tx_stall(ams::can_recovery::TxStallState& st, std::uint32_t now) noexcept {
+    const bool full = HAL_FDCAN_GetTxFifoFreeLevel(&hfdcan1) == 0u;
+    if (!ams::can_recovery::should_flush_tx(st, full, now, ams::config::FdcanTxStallFlushMs)) {
+        return;
+    }
+    const std::uint32_t pending = hfdcan1.Instance->TXBRP;
+    if (pending == 0u) return;
+    if (HAL_FDCAN_AbortTxRequest(&hfdcan1, pending) == HAL_OK) {
+        g_acu_tx_fail += static_cast<std::uint32_t>(__builtin_popcount(pending));
+        ++g_fdcan1_tx_flush_count;
+    }
 }
 
 // Pit-diag runtime flag. Toggled by RX dispatch on the PitDiagCmdRxId frame,
@@ -555,6 +583,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
 
     // FDCAN1 Bus-Off recovery latch (single bus, single owner: this task).
     ams::can_recovery::BusOffState busoff_state{};
+    ams::can_recovery::TxStallState tx_stall_state{};
 
     for (;;) {
         const auto now           = osKernelGetTickCount();
@@ -644,6 +673,7 @@ extern "C" void ams_acu_can_task_run(void *argument) {
         // deadline, and the loop keeps spinning at <= EcuFastTxMs. The
         // recovery is rate-limited internally.
         poll_fdcan1_busoff_recovery(busoff_state, now2);
+        poll_fdcan1_tx_stall(tx_stall_state, now2);
 
         // ---- TX scheduler ----
         if (now2 - last_fast_tx >= ams::config::EcuFastTxMs) {

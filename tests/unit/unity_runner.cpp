@@ -239,6 +239,10 @@ void test_burst_tx_abandons_on_busoff(void);
 void test_burst_tx_sends_when_there_is_room(void);
 void test_burst_tx_waits_then_gives_up(void);
 void test_burst_tx_full_busoff_burst_never_blocks(void);
+void test_tx_stall_draining_fifo_never_flushes(void);
+void test_tx_stall_flushes_after_window(void);
+void test_tx_stall_room_resets_the_window(void);
+void test_tx_stall_tick_wrap(void);
 
 // test_safety_predicates.cpp
 void test_predicates_nominal_no_fault(void);
@@ -822,6 +826,10 @@ RUN_TEST(test_bms_ltc_clean_response_decodes_all_cells);
     RUN_TEST(test_burst_tx_sends_when_there_is_room);
     RUN_TEST(test_burst_tx_waits_then_gives_up);
     RUN_TEST(test_burst_tx_full_busoff_burst_never_blocks);
+    RUN_TEST(test_tx_stall_draining_fifo_never_flushes);
+    RUN_TEST(test_tx_stall_flushes_after_window);
+    RUN_TEST(test_tx_stall_room_resets_the_window);
+    RUN_TEST(test_tx_stall_tick_wrap);
 
     RUN_TEST(test_predicates_nominal_no_fault);
     RUN_TEST(test_predicates_force_error);

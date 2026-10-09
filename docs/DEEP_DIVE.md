@@ -118,7 +118,8 @@ not the MCU. `main.c` makes **no** `HAL_RCCEx_PeriphCLKConfig` call, so FDCAN
 stays on its reset-default kernel clock (`hse_ck`, 24 MHz); with
 `NominalPrescaler = 3` and 16 time quanta per bit (`1 + TSeg1 10 + TSeg2 5`)
 that is **500 kbit/s** on FDCAN1, classic-CAN frame format,
-`AutoRetransmission` disabled.
+`AutoRetransmission` enabled (a frame that loses arbitration is retried, not
+dropped; see `CAN_MAP.md` for the lone-node flush).
 
 ### Memory regions (`STM32H733XG_FLASH.ld`)
 
@@ -1258,7 +1259,7 @@ ctest --test-dir build-tests --output-on-failure     # reports 1/1 — that is t
 
 `ctest` shows `1/1 Test ... Passed` because there is a single Unity runner
 target. Run the binary directly for the case count; it currently ends
-**`537 Tests 0 Failures 0 Ignored`**.
+**`541 Tests 0 Failures 0 Ignored`**.
 
 | File | Coverage |
 |---|---|
