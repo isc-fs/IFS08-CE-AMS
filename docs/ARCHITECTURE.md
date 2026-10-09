@@ -250,6 +250,7 @@ timers (inside `BmsPollTask` itself).
 | `SdLoggerTask` | Low (8) | 50 ms drain, or on a diag semaphore | 1024 | [`sd_logger_task.cpp`](../Core/Src/app/sd_logger_task.cpp) |
 | `defaultTask` | Low (8) | `osDelay(1)` forever | 128 | CMSIS placeholder, does nothing |
 | Timer service | (FreeRTOS daemon) | callback-driven | — | raises `PollVDue` / `PollTDue` |
+| Idle task | (FreeRTOS, lowest) | whenever nothing is ready | — | `vApplicationIdleHook` (`freertos.c`) sleeps the core with `__WFI()` until the next interrupt; `DBG_SLEEPD1` keeps a debugger attached |
 
 Stacks overflow into the FreeRTOS heap below them before
 `configCHECK_FOR_STACK_OVERFLOW` (checked only at a context switch) notices,
