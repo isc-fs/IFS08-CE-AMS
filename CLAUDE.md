@@ -177,7 +177,11 @@ author to go and ask for one (`CONTRIBUTING.md`):
   owns both a DC-link measurement and a normally-closed relay in series with
   the bleed relay's coil, decides. The AMS consumes `0x100` byte 2 bit 0
   (`discharge_engaged`) and refuses to leave Start while it is set
-  (`fsm::rearm_permitted`), holding in Start rather than latching.
+  (`fsm::rearm_permitted`), holding in Start rather than latching. If a fresh
+  `0x100` reports it only after the FSM has left Start — the ECU's view of the
+  FSM trails it by up to a `0x021` period — Precharge and Transition open the
+  contactors and fall back to Start, also without latching
+  (`fsm::bleed_connected_while_energising`).
   **The ECU half is implemented** on `IFS08-CE-ECU` `dev` (`discharge.hpp`):
   it consumes `0x021`, adds its own `dc_bus` term, latches the hold and
   releases on its own measurement, and sends `0x100` at DLC 3 — so
