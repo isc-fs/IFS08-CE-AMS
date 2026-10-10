@@ -25,24 +25,54 @@ namespace {
 // task responsive.
 constexpr std::uint32_t SpiTimeoutMs = 10;
 
-// LTC6811 wakeup pulse width. Datasheet § "Core LTC6811 State
-// Transitions" specifies t_WAKE >= 10 µs. We use a 20 µs pulse + 30
-// µs gap per IC so the chain is solidly out of IDLE; the whole
-// LtcChainLength sweep is still under 1 ms.
-constexpr std::uint32_t WakePulseUs = 20;
-constexpr std::uint32_t WakeGapUs   = 30;
+// Daisy-chain wake-up, LTC6811 datasheet "Waking a Daisy Chain -- Method 2":
+// one long isoSPI pulse pair per device (a CSB low-then-high toggle on the
+// LTC6820 sends the -1/+1 pair), consecutive pairs spaced by MORE than tWAKE
+// and LESS than tIDLE, so each IC wakes and forwards the next pulse while the
+// ICs already awake stay out of IDLE. From the Electrical Characteristics:
+//   tWAKE  regulator start-up, SLEEP -> STANDBY   200 typ, 400 us max
+//   tIDLE  isoSPI idle timeout                    4.3 ms min
+//   tDWELL wake detection                         240 ns
+// 20 us low + 500 us high = 520 us per device: 30 % over tWAKE max and ~8x
+// under tIDLE min. Ten ICs take ~5.2 ms, and this runs only at boot and on
+// chain recovery, never on the poll path.
+constexpr std::uint32_t WakePulseUs = 20;    // CSB low: any width >> tDWELL
+constexpr std::uint32_t WakeGapUs   = 500;   // CSB high until the next device's pulse
+static_assert(WakePulseUs + WakeGapUs > 400u && WakePulseUs + WakeGapUs < 4300u,
+              "wake pulse spacing must sit between tWAKE max and tIDLE min");
 
-// Busy-wait microsecond delay. AMS firmware has no DWT cycle counter
-// enabled (yet) so we approximate with a calibrated NOP loop. Coarse
-// is fine -- the LTC6811 only cares about the MINIMUM pulse width.
-// SYSCLK is 528 MHz so each loop iteration (~4 cycles) is ~7.6 ns;
-// for 1 µs we need ~132 iterations. Use 150 to be safe.
-__attribute__((always_inline))
-inline void delay_us(std::uint32_t us) noexcept {
-    for (std::uint32_t i = 0; i < us; ++i) {
-        for (volatile std::uint32_t k = 0; k < 150; ++k) {
-            __asm__ volatile("nop");
-        }
+// Start the Cortex-M7 DWT cycle counter if it is not running, and report
+// whether it is actually counting. On Cortex-M7 the DWT registers are behind a
+// lock (LAR) that must be unlocked before CTRL can be written.
+bool cycle_counter_ready() noexcept {
+    if ((DWT->CTRL & DWT_CTRL_CYCCNTENA_Msk) == 0u) {
+        CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+        DWT->LAR    = 0xC5ACCE55u;
+        DWT->CYCCNT = 0u;
+        DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+    }
+    const std::uint32_t before = DWT->CYCCNT;
+    for (volatile int i = 0; i < 16; ++i) {}
+    return DWT->CYCCNT != before;
+}
+
+// Microsecond busy-wait timed on the DWT cycle counter, so a delay lasts the
+// same whatever the I-cache, the flash wait states or the optimisation level
+// do to the speed of the loop around it. Wrap-safe up to ~8 s at 528 MHz.
+//
+// Fallback for a core with no running cycle counter: a pass-counting loop
+// sized for 2 cycles per pass. A real pass costs at least that, so the delay
+// only ever comes out longer than asked -- and at the 2-4 cycles a cached pass
+// costs, the wake spacing stays well inside the tWAKE..tIDLE window.
+void delay_us(std::uint32_t us) noexcept {
+    const std::uint32_t cycles = us * (SystemCoreClock / 1000000u);
+    if (cycle_counter_ready()) {
+        const std::uint32_t start = DWT->CYCCNT;
+        while ((DWT->CYCCNT - start) < cycles) {}
+        return;
+    }
+    for (std::uint32_t i = 0; i < cycles / 2u; ++i) {
+        __asm__ volatile("nop");
     }
 }
 
@@ -98,10 +128,9 @@ void Bus::cs_high() noexcept {
 }
 
 void Bus::wakeup() noexcept {
-    // One CS pulse per IC in the chain. The pulse train propagates
-    // along the isoSPI links: each IC consumes one pulse to wake up,
-    // and only when it's awake does it forward the next pulse to the
-    // next IC. See LTC6811 datasheet § "Waking Up the Daisy Chain".
+    // One CS pulse pair per IC in the chain, spaced per WakeGapUs above. The
+    // train propagates along the isoSPI links: each IC wakes on its pulse and
+    // only once awake forwards the next one to the IC above it.
     for (std::size_t i = 0; i < config::LtcChainLength; ++i) {
         cs_low();
         delay_us(WakePulseUs);

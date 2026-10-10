@@ -954,6 +954,21 @@ selector ranks are untrustworthy.
 never faults — this is the one place where a *dropped* datum is the
 correct outcome.
 
+**Caches.** The Cortex-M7 **I-cache is on** (`AMS.ioc`
+`CORTEX_M7.CPU_ICache`, `SCB_EnableICache()` in `main()`). Code runs from
+flash at 528 MHz behind 3 wait states and a single 256-bit read buffer, so
+without it every new 32-byte line costs ~8 cycles. It caches instruction
+fetches only; the app never executes what it writes (the bootloader does all
+flash writing, and a reset clears the cache). The **D-cache is off**, on
+purpose. Data, `.bss` and stacks are in DTCM, which is never cached, so it
+would gain little. It would also make AXI SRAM cacheable while bus masters
+write there: `.adc_dma` (ADC3 capture, DMA1), `.imu_dma` (I2C2 RX, DMA1),
+`.sd_dma` (SDMMC bounce buffer) and `g_stage` in `.log_bss` (aligned SD writes
+go straight to the SDMMC IDMA). Turning it on needs those in a non-cacheable
+MPU region first. Busy-waits that must last a real time (`ltc6820.cpp`
+`delay_us`) are timed on the DWT cycle counter, not by counting loop passes,
+so their length does not depend on the cache.
+
 The log rings (LOG, IMU, CEL, ELE) and the logger's staging buffer live in
 `.log_bss`, a NOLOAD section in AXI SRAM (RAM_D1) that `main()` zeroes in
 `USER CODE BEGIN 1` before the scheduler starts. That keeps ~42 KB out of the

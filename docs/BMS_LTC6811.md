@@ -331,8 +331,10 @@ disconnect deterministic for scrutineering.
 | MCU SPI1 | Mode | 0 (CPOL=LOW, CPHA=1EDGE) | `AMS.ioc` (`SPI_POLARITY_LOW` / `SPI_PHASE_1EDGE`) |
 | MCU SPI1 | Baud | 515.625 kHz (prescaler 256 on the 132 MHz SPI123 kernel clock) | `AMS.ioc` (`CalculateBaudRate`, `RCC.SPI123Freq_Value`) |
 | MCU SPI1 | NSS | software, on **PB9** (`LTC6820_CS`) | `AMS.ioc`, `main.h` |
-| CS line | Wakeup pulse | 20 µs LOW, 30 µs HIGH | `ltc6820.cpp` `WakePulseUs` / `WakeGapUs` |
-| Chain | t_WAKE (per IC) | ≥ 10 µs LOW | LTC6811 datasheet §"Core LTC6811 State Transitions" |
+| CS line | Wakeup pulse | 20 µs LOW, 500 µs HIGH per IC (520 µs spacing), timed on the DWT cycle counter | `ltc6820.cpp` `WakePulseUs` / `WakeGapUs` |
+| Chain | t_WAKE (SLEEP → STANDBY, per IC) | 200 µs typ, **400 µs max** | LTC6811 Electrical Characteristics |
+| Chain | t_IDLE (isoSPI idle timeout) | **4.3 ms min**, 5.5 typ | LTC6811 Electrical Characteristics |
+| Chain | Wake method | one CSB pulse pair per IC, spaced > t_WAKE and < t_IDLE | LTC6811 datasheet, "Waking a Daisy Chain — Method 2" |
 | Chain | Idle drain (T_SLEEP) | ~2 s | LTC6811 datasheet, same section |
 | Bus | Length | 10 ICs | `config::LtcChainLength` |
 | Bus | HAL transfer timeout | 10 ms | `ltc6820.cpp` `SpiTimeoutMs` |
