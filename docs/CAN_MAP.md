@@ -768,8 +768,12 @@ either because the shutdown circuit is open or because the ECU is securing an
 interrupted discharge (see `0x021`). While it is set the AMS refuses to leave
 `Start`, so no contactor closes: with the SDC closed and the bleed connected,
 closing an AIR would put pack current through a resistor rated for transient
-duty. (The gate is on the *re-arm* only — `fsm::rearm_permitted` is evaluated
-on the `Start → Precharge` edge, not continuously in `Run`.)
+duty. It is read in two places: `fsm::rearm_permitted` refuses the
+`Start → Precharge` edge while it is set, and
+`fsm::bleed_connected_while_energising` drops `Precharge` or `Transition` back
+to `Start` — contactors open, non-latching — if a **fresh** `0x100` reports it
+after the FSM has left `Start`, since the ECU's view of the FSM trails it by up
+to a `0x021` period. It is not read in `Run` or `Charge`.
 
 **Byte 2 is optional on the wire, and the compatibility rule is not
 symmetric.** A VCU that predates it sends DLC 2, the bit reads 0, and the AMS

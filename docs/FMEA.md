@@ -355,6 +355,21 @@ and **consumes the DASH_CHG press** deliberately, so a press made while the
 link was live cannot arm the car by itself seconds later when the discharge
 finishes.
 
+**A report that arrives after the gate.** The gate reads `discharge_engaged`
+once, on `Start → Precharge`, but the ECU decides on a `0x021` that trails this
+FSM by up to `EcuMidTxMs`. In that window it can engage the bleed onto the link
+the AMS has just started charging: bleed and precharge resistor form a divider,
+the link never reaches 95 % of pack, and the `PrechargeMaxMs` deadline latches
+Error — sticky across a reset, and on the dash indistinguishable from a dead
+precharge circuit. Charger mode, exempt from the gate, can close AIR+ straight
+into a bleed the ECU still holds. One mitigation per board: the ECU does not
+latch on a link rising out of drained, and releases when a fresh `0x021`
+reports the AMS out of `Start`; and `fsm::bleed_connected_while_energising`
+drops `Precharge` / `Transition` back to `Start`, non-latching, on a fresh
+`0x100` reporting the bleed connected. Either alone closes the precharge-timeout
+path. The AMS half is the one that still holds against an ECU image without the
+first, and the one that protects the Charger path.
+
 **The ECU producer side is implemented too**, on `IFS08-CE-ECU` `dev`: it
 mirrors `0x021` field for field, supplies the third term from its own DC-link
 measurement, latches the hold and releases at its `DischargeReleaseV` = 10 V —
