@@ -69,6 +69,35 @@ struct BusOffState {
     return true;
 }
 
+// TX-FIFO stall latch, for the lone-node case under automatic retransmission
+// (config::FdcanTxStallFlushMs): with nobody to ACK, the head frame is retried
+// forever and the FIFO stays full.
+struct TxStallState {
+    bool          full     = false;   // was the FIFO full on the last poll?
+    std::uint32_t since_ms = 0;       // start of the current full window
+};
+
+// True when the TX FIFO has been full for `stall_ms`: the caller cancels every
+// pending frame. Re-arms for another full window after each flush, and resets
+// whenever the FIFO has room -- a FIFO that drains, however slowly, is never
+// flushed. Wrap-safe (unsigned modular subtraction).
+[[nodiscard]] inline bool should_flush_tx(TxStallState& st, bool fifo_full,
+                                          std::uint32_t now_ms,
+                                          std::uint32_t stall_ms) noexcept {
+    if (!fifo_full) {
+        st.full = false;
+        return false;
+    }
+    if (!st.full) {
+        st.full     = true;
+        st.since_ms = now_ms;
+        return false;
+    }
+    if ((now_ms - st.since_ms) < stall_ms) return false;
+    st.since_ms = now_ms;
+    return true;
+}
+
 // What a blocking (burst) send does on one look at the TX FIFO.
 enum class TxStep : std::uint8_t {
     Send,      // there is room: enqueue the frame

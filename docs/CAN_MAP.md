@@ -63,14 +63,33 @@ TX. **No CAN-FD, no bit-rate switching, ever.**
 | Peripheral | FDCAN1 — accumulator / vehicle / telemetry / diag / boot-trigger |
 | Frame format | **Standard 11-bit only.** Extended frames are rejected at the hardware global filter |
 | Filter | `HAL_FDCAN_ConfigGlobalFilter(ACCEPT_IN_RX_FIFO0, REJECT, REJECT_REMOTE, REJECT_REMOTE)` — accept all unmatched standard into FIFO0, reject extended, reject remote (`app_init_task.cpp`) |
-| TX FIFO depth | 16 (`TxFifoQueueElmtsNbr`), `AutoRetransmission` **DISABLE** |
+| TX FIFO depth | 16 (`TxFifoQueueElmtsNbr`), `AutoRetransmission` **ENABLE** (enforced in app init) |
 | RX FIFO depth | 32 |
 
-Consequence of `AutoRetransmission = DISABLE`: a frame that loses arbitration
-and then errors is **dropped, not retried**. Every signal on this bus is
-periodic and self-refreshing, which is what makes that acceptable — nothing
-here is a one-shot command whose loss matters. If you ever add one, it must
-carry its own repeat/ack.
+**Automatic retransmission is on, and must stay on.** With it off (CCCR.DAR)
+the M_CAN abandons a frame after *any* unsuccessful attempt, and that includes
+a plain **lost arbitration** with no error at all (RM0468 FDCAN, "disabled
+automatic retransmission"). On this bus the ECU sends `0x100` every 10 ms
+plus `0x504`–`0x506` and `0x511`, so every AMS frame that became pending at
+the same instant as one of those was cancelled after the HAL had already
+accepted it, with nothing counting the loss. IFS_vHIL measured this: pit-diag
+`0x685`–`0x689` were lost on every scan, and the `0x4A2` heartbeat skipped
+~0.5 % of frames beside a 20 Hz `0x100`. One-shot traffic (the LOGFS/diag
+ISO-TP replies, the `0x7F1` pit-diag ACK) cannot afford that. `AMS.ioc` sets
+`FDCAN1.AutoRetransmission=ENABLE`, and `app_init_task.cpp` clears CCCR.DAR
+before `HAL_FDCAN_Start` if a regen ever loses it (`g_fdcan1_dar_forced`
+records that it had to). The CAN bootloader runs the same way on all three
+FDCANs.
+
+**The lone-node case.** With nobody to ACK (a bench MainLite with no peer),
+the head frame is retried forever: an unACKed node goes error-passive, never
+Bus_Off, so the Bus_Off recovery does not act, and nothing queued behind it
+goes out. That no longer blocks anything — the flight matrix sends are
+non-blocking and the pit-diag burst gives up after `PitDiagTxWaitMaxMs` — and
+once the FIFO has been full for `FdcanTxStallFlushMs` (100 ms) AcuCanTask
+cancels every pending frame (`poll_fdcan1_tx_stall`), counting each in
+`g_acu_tx_fail` (`0x6C9`) and each flush in `g_fdcan1_tx_flush_count`. A node
+that joins later then gets current frames, not a stale backlog.
 
 **The app is FDCAN1-only.** There is no `MX_FDCAN2_Init` and no `hfdcan2`
 handle in `main.c`; the only residue is pin PB13 still muxed to

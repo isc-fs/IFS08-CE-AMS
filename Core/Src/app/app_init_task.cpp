@@ -57,6 +57,11 @@ extern SPI_HandleTypeDef   hspi1;
 extern "C" volatile std::uint8_t  g_app_init_progress   = 0;
 extern "C" volatile std::uint32_t g_fdcan1_start_result = 0xFFFFFFFFu;
 
+// 1 if FDCAN1 came out of MX_FDCAN1_Init with automatic retransmission off
+// (CCCR.DAR set) and app init had to turn it back on -- the .ioc lost
+// FDCAN1.AutoRetransmission=ENABLE. Inspection only; the guard below fixes it.
+extern "C" volatile std::uint8_t  g_fdcan1_dar_forced   = 0;
+
 void ams_app_init_task_run(void *argument)
 {
     (void)argument;
@@ -119,6 +124,20 @@ void ams_app_init_task_run(void *argument)
     HAL_FDCAN_ActivateNotification(&hfdcan1,
                                    FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
     g_app_init_progress = 4u;   // post-ActivateNotification
+
+    // Automatic retransmission must be ON. With it off (CCCR.DAR) the M_CAN
+    // abandons a frame after ANY unsuccessful attempt -- a plain lost
+    // arbitration included, no error needed (RM0468 FDCAN, "disabled automatic
+    // retransmission") -- so every AMS frame that starts at the same instant as
+    // a lower-ID ECU frame vanishes after HAL_OK, uncounted. AMS.ioc sets it;
+    // this enforces it so a regen that loses the setting cannot silently bring
+    // the drops back. MX_FDCAN1_Init leaves the core in INIT with CCE set until
+    // HAL_FDCAN_Start, so CCCR is writable here.
+    if (READ_BIT(hfdcan1.Instance->CCCR, FDCAN_CCCR_DAR) != 0u) {
+        CLEAR_BIT(hfdcan1.Instance->CCCR, FDCAN_CCCR_DAR);
+        hfdcan1.Init.AutoRetransmission = ENABLE;
+        g_fdcan1_dar_forced = 1u;
+    }
 
     g_fdcan1_start_result = static_cast<std::uint32_t>(HAL_FDCAN_Start(&hfdcan1));
     g_app_init_progress   = (g_fdcan1_start_result == HAL_OK) ? 6u : 5u;

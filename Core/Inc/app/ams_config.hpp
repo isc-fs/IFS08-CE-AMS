@@ -639,6 +639,17 @@ inline constexpr std::uint32_t FdcanBusOffRetryMs    = 100;
 // dispatch and the Bus_Off recovery poll that would clear the condition.
 inline constexpr std::uint32_t PitDiagTxWaitMaxMs    = 5;
 
+// FDCAN1 runs with automatic retransmission ON, so a frame that loses
+// arbitration is retried rather than dropped. The cost is the lone-node case:
+// with no other node to ACK, the frame at the head of the TX FIFO is retried
+// forever (an unACKed node goes error-passive, never Bus_Off, so the Bus_Off
+// recovery never sees it) and nothing behind it goes out. If the FIFO stays
+// FULL this long -- it drains in ~1.8 ms on a working bus -- every pending
+// frame is cancelled and counted in g_acu_tx_fail, so a node that joins later
+// gets fresh frames instead of a stale backlog. Repeats each window while the
+// FIFO keeps filling.
+inline constexpr std::uint32_t FdcanTxStallFlushMs   = 100;
+
 // ---------------------------------------------------------------------------
 // Pit-side diagnostic stream. Runtime-toggleable full-grid telemetry for
 // pit-stop debugging with the accumulator plugged into can0 (car stationary in
