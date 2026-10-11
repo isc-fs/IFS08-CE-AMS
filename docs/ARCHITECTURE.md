@@ -620,6 +620,21 @@ it is deliberate: carrying the press would let an attempt made while the
 link was live arm the car by itself seconds later, when the discharge
 finally completes and nobody is expecting it.
 
+**After the gate.** The gate reads a report that trails the ECU's decision,
+and the ECU's view of this FSM trails the FSM: `0x021` goes out every
+`EcuMidTxMs`, so for up to a period after `Start → Precharge` the ECU can still
+believe the AMS is in `Start` and engage the bleed onto the link being charged.
+Bleed and precharge resistor then form a divider, the link settles well short
+of 95 % of pack, and the `PrechargeMaxMs` deadline would latch Error — sticky
+across a reset, on a car with nothing wrong with it. Charger mode does not
+consult the bleed at the gate at all, so with the charger already connected the
+first `Precharge` step could close AIR+ straight into it. So `Precharge` and
+`Transition` check `fsm::bleed_connected_while_energising` first and land in
+`Start` — contactors open, **non-latching**, like a TSMS drop — on a **fresh**
+`0x100` reporting the bleed connected. A stale report is ignored: an absent ECU,
+the normal case during a charge, must not abort every charge on the last bit it
+sent.
+
 > **HONEST GAP: the firmware on both sides exists; nothing else about this
 > is proven.** The AMS side — publish `0x021`, decode `0x100` byte 2 bit 0,
 > gate the `Start → Precharge` edge on `rearm_permitted` — is implemented
@@ -713,6 +728,8 @@ stateDiagram-v2
     Run    --> Start : debounced bus collapse (AIRs opened externally)
     Precharge  --> Start : TSMS drop (Car, non-latching)
     Transition --> Start : TSMS drop (Car, non-latching)
+    Precharge  --> Start : bleed reported connected, fresh 0x100 (non-latching)
+    Transition --> Start : bleed reported connected, fresh 0x100 (non-latching)
 
     Precharge  --> Error : TSMS drop (Charger, LATCHES)
     Transition --> Error : TSMS drop (Charger, LATCHES)

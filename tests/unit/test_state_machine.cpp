@@ -518,6 +518,105 @@ extern "C" void test_fsm_start_blocks_on_unmeasured_link(void) {
     TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
 }
 
+// ---------------------------------------------------------------------------
+// The bleed reported connected AFTER the car has left Start. The Start gate
+// reads a report that trails the ECU, and the ECU's view of this FSM trails
+// the FSM (0x021 every EcuMidTxMs), so for up to a period after Start ->
+// Precharge the ECU can engage onto the link being charged. Precharge and
+// Transition fall back to Start, non-latching, instead of the precharge
+// timeout latching a sticky Error on a car with nothing wrong with it.
+// ---------------------------------------------------------------------------
+namespace {
+constexpr std::uint32_t kOpenAll = ams::events::safety::OpenAirN |
+                                   ams::events::safety::OpenAirP |
+                                   ams::events::safety::OpenPrecharge;
+}  // namespace
+
+extern "C" void test_fsm_precharge_falls_back_when_bleed_connected(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 150;                    // held short of 95 % by the divider
+    veh.discharge_engaged = true;
+
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_EQUAL_UINT32(kOpenAll, out.safety_flags);   // opens all, no ForceError
+
+    // Even past the precharge deadline: the bleed is why the link is not
+    // rising, so it is no reason to latch Error.
+    in.now_tick = in.state_entry_tick + ams::config::PrechargeMaxMs + 1u;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+
+    // Without the bleed, that same timeout still latches Error.
+    veh.discharge_engaged = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, ams::fsm::step(in).next);
+}
+
+extern "C" void test_fsm_precharge_ignores_a_stale_bleed_report(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 100;
+    veh.discharge_engaged = true;          // the last thing an ECU said...
+    in.dc_bus_fresh = false;               // ...before it went quiet
+
+    // A stale report is a remembered one, not the backstop. Car cannot
+    // complete on a stale 0x100 either, so it holds toward the timeout.
+    TEST_ASSERT_EQUAL(ams::fsm::State::Precharge, ams::fsm::step(in).next);
+}
+
+// Charger mode does not consult the bleed at the Start gate, and with the
+// charger already connected its 0x101 is fresh on the first Precharge step --
+// so without the backstop, AIR+ closes straight into a bleed the ECU holds.
+extern "C" void test_fsm_charger_precharge_does_not_close_airp_into_bleed(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Charger;
+    veh.dc_bus_V = 0;                        // no VCU measurement during a charge
+    veh.last_charge_req_tick = in.now_tick;  // charger connected, 0x101 fresh
+    veh.discharge_engaged = true;            // ECU present and still holding
+
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::CloseAirP);
+    TEST_ASSERT_FALSE(out.safety_flags & ams::events::safety::ForceError);
+
+    // ECU absent -- the usual charge. Its last report is stale and must not
+    // block the charge.
+    in.dc_bus_fresh = false;
+    out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Transition, out.next);
+    TEST_ASSERT_TRUE(out.safety_flags & ams::events::safety::CloseAirP);
+}
+
+extern "C" void test_fsm_transition_falls_back_when_bleed_connected(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Transition, bms, cur, veh);
+    in.tsms = true; in.mode_locked = ams::fsm::Mode::Car;
+    veh.dc_bus_V = 350;                    // both AIRs closed: the pack holds the link up,
+    veh.discharge_engaged = true;          // so the bus-up guard alone would commit to Run
+
+    auto out = ams::fsm::step(in);
+    TEST_ASSERT_EQUAL(ams::fsm::State::Start, out.next);
+    TEST_ASSERT_EQUAL_UINT32(kOpenAll, out.safety_flags);
+
+    veh.discharge_engaged = false;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Run, ams::fsm::step(in).next);
+}
+
+// The global guards still come first: a TSMS drop in Charger mode latches
+// Error, as the scrutineering rule requires, whatever the bleed reports.
+extern "C" void test_fsm_tsms_drop_outranks_the_bleed_backstop(void) {
+    ams::BmsState bms; ams::CurrentState cur; ams::VehicleState veh;
+    auto in = make_inputs(ams::fsm::State::Precharge, bms, cur, veh);
+    in.tsms = false; in.mode_locked = ams::fsm::Mode::Charger;
+    veh.discharge_engaged = true;
+    TEST_ASSERT_EQUAL(ams::fsm::State::Error, ams::fsm::step(in).next);
+}
+
 // An unmeasured link must not complete a precharge either. The ECU substitutes
 // 0 V, which already fails the 95 % test, so this asserts the property rather
 // than the arithmetic: were the substitution ever to change to a held value,

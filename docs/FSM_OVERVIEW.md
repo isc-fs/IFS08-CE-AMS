@@ -501,6 +501,33 @@ Both percentages are `COMMISSION`: 50 % must sit below the worst-case loaded sag
 of `dc_bus_V` against the cell sum (false-trip immunity) yet high enough to trip
 before the link discharges enough to make an unprecharged reclose damaging.
 
+### `bleed_connected_while_energising(veh, dc_bus_fresh)`
+
+```cpp
+return dc_bus_fresh && veh.discharge_engaged;
+```
+
+The backstop behind `rearm_permitted`. The gate reads a report that trails the
+ECU's decision, and the ECU's view of this FSM trails the FSM: `0x021` goes out
+every `EcuMidTxMs` (100 ms), so for up to a period after `Start → Precharge` the
+ECU can still believe the AMS is in `Start` and engage the bleed onto the link
+being charged. Bleed and precharge resistor then form a divider, the link
+settles well short of 95 % of pack, and the deadline would latch Error — sticky
+across a reset, on a car with nothing wrong with it. Charger mode skips the
+bleed at the gate entirely, so with the charger already connected the first
+`Precharge` step could close AIR+ straight into a bleed the ECU still holds.
+
+`Precharge` and `Transition` check it first and land in `Start` — contactors
+open, **non-latching**, the same landing as a TSMS drop. `rearm_permitted` then
+holds the car in `Start` until the ECU has drained the link and released, and
+the operator presses again.
+
+Only a **fresh** `0x100` counts. A stale report is a remembered one, and an
+absent ECU — the normal case during a charge — must not abort every charge on
+the last bit it sent. In Car mode a stale `0x100` already fails
+`precharge_target_reached`, so the car cannot complete a precharge on it anyway.
+It is not read in `Run` or `Charge`.
+
 ---
 
 ## 9. Per-state transition logic
@@ -542,6 +569,9 @@ return { State::Start, 0u };
 ### Precharge — charging the DC link
 
 ```cpp
+if (bleed_connected_while_energising(in.vehicle, in.dc_bus_fresh)) {
+    return { State::Start, OpenAirN | OpenAirP | OpenPrecharge };     // non-latching
+}
 if (in.now_tick - in.state_entry_tick > config::PrechargeMaxMs) {   // 5000 ms
     return { State::Error, ForceError | OpenAirN | OpenAirP | OpenPrecharge };
 }
@@ -555,10 +585,15 @@ if (precharge_done) {
 return { State::Precharge, 0u };
 ```
 
-Three exits (the third is Guard 3, above the switch): TSMS drop → `Start` in Car
+Four exits (the fourth is Guard 3, above the switch): TSMS drop → `Start` in Car
 / `Error` in Charger.
 
-1. **Deadline → Error.** If the proceed criterion is not met within
+1. **Bleed reported connected → Start, non-latching.** A fresh `0x100` with
+   `discharge_engaged` set means the ECU's bleed is across the link being
+   charged — see `bleed_connected_while_energising`. Checked before the
+   deadline, because the bleed is *why* the link is not rising, so it must not
+   become a latched Error.
+2. **Deadline → Error.** If the proceed criterion is not met within
    `PrechargeMaxMs = 5000`, latch Error and open every contactor. This bounds how
    long the precharge contactor + resistor are held closed for *any* stuck cause
    — stuck contactor, no charger, bus fault, or a dead-VCU car that locked
@@ -566,7 +601,7 @@ Three exits (the third is Guard 3, above the switch): TSMS drop → `Start` in C
    the VCU's `0x100`). A normal precharge completes well under 1 s; 5 s is the
    failsafe ceiling and is `COMMISSION`-tagged against the resistor's thermal
    limit.
-2. **Proceed → Transition** (AIR+ closes, precharge relay opens), via a
+3. **Proceed → Transition** (AIR+ closes, precharge relay opens), via a
    **mode-specific** criterion:
    - **Car:** `precharge_target_reached` — VCU-measured DC bus ≥ 95 % of pack,
      on a *fresh* `0x100`.
@@ -582,6 +617,9 @@ Three exits (the third is Guard 3, above the switch): TSMS drop → `Start` in C
 ### Transition — single-step passthrough
 
 ```cpp
+if (bleed_connected_while_energising(in.vehicle, in.dc_bus_fresh)) {
+    return { State::Start, OpenAirN | OpenAirP | OpenPrecharge };     // non-latching
+}
 if (in.mode_locked == Mode::Car &&
     !precharge_target_reached(in.bms, in.vehicle, in.dc_bus_fresh)) {
     return { State::Error, ForceError | OpenAirN | OpenAirP | OpenPrecharge };
@@ -591,6 +629,11 @@ if (in.mode_locked == Mode::Charger) return { State::Charge, 0u };
 return { State::Error, ForceError | OpenAirN | OpenAirP | OpenPrecharge };
 ```
 
+- **Bleed reported connected → Start, non-latching.** AIR+ is already closed
+  here, so a bleed is across the pack itself. Checked first because the
+  bus-still-up guard below cannot see it: with both AIRs closed the pack holds
+  the link at pack voltage whatever the bleed draws, so that guard alone would
+  commit to Run/Charge with the bleed connected.
 - **Bus-still-up guard (Car only):** the bus must *still* be ≥ 95 % of pack on
   this exact step. A failed contactor swap — the bus slumps the moment the
   precharge contactor opens and AIR+ takes over — lands in Error instead of

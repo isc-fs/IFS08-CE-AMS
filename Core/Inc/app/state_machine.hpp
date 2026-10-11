@@ -170,6 +170,35 @@ struct Output {
            veh.dc_bus_V <= config::DcBusDischargedV;
 }
 
+// The ECU reports the discharge bleed connected while a contactor is closed.
+//
+// rearm_permitted keeps the car in Start while the bleed is connected, but the
+// report it reads trails the ECU's decision, and the ECU's view of this FSM
+// trails the FSM: 0x021 goes out every EcuMidTxMs, so for up to a period after
+// Start -> Precharge the ECU can still believe we are in Start and engage the
+// bleed onto the link we are charging. The bleed and the precharge resistor
+// then form a divider, the link settles well short of 95 % of pack, and the
+// PrechargeMaxMs timeout would latch Error -- sticky across a reset, on a car
+// with nothing wrong with it. Charger mode does not consult the bleed at the
+// Start gate at all (see rearm_permitted), so with the charger already
+// connected the first Precharge step can close AIR+ straight into a bleed the
+// ECU is still holding. In Transition AIR+ is already closed, so a bleed there
+// is across the pack itself, with only its own resistance to limit the current.
+//
+// Response: open every contactor and fall back to Start WITHOUT latching -- the
+// same landing as a TSMS drop. Nothing about the pack is wrong; in Start,
+// rearm_permitted then holds the car until the ECU has drained the link and
+// released the bleed, and the operator presses again.
+//
+// A FRESH 0x100 only. A stale report is a remembered one: an absent ECU -- the
+// normal case during a charge -- must not abort every charge on the last bit it
+// sent. In Car mode a stale 0x100 already fails precharge_target_reached, so
+// the car cannot complete a precharge on it anyway.
+[[nodiscard]] inline bool bleed_connected_while_energising(const VehicleState& veh,
+                                                          bool dc_bus_fresh) noexcept {
+    return dc_bus_fresh && veh.discharge_engaged;
+}
+
 // DC-bus collapse detector. True when the VCU-measured bus has
 // fallen well below the pack voltage -- i.e. the AIRs opened externally
 // (a cockpit SDC shutdown the AMS can't sense) while the FSM still thinks
@@ -264,7 +293,9 @@ struct Output {
         // discharge stops part-way -- so what is left on the link is not
         // something the AMS can predict from how long ago the SDC was cycled.
         // The ECU secures an interrupted discharge and reports the bleed state;
-        // this waits for it. See rearm_permitted.
+        // this waits for it. See rearm_permitted. If the report only arrives
+        // after we have left Start, bleed_connected_while_energising brings the
+        // FSM back here from Precharge or Transition.
         //
         // Holding in Start rather than latching: the driver waits out the
         // discharge and presses again, no reset. The press IS consumed on a
@@ -286,6 +317,14 @@ struct Output {
     }
 
     case State::Precharge: {
+        // The ECU's bleed is across the link we are charging. Checked BEFORE
+        // the timeout: the bleed is the reason the link is not rising, so this
+        // lands in Start instead of latching Error for it.
+        if (bleed_connected_while_energising(in.vehicle, in.dc_bus_fresh)) {
+            return { State::Start,
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
+        }
         // Bounded precharge. If the bus doesn't reach
         // the target within PrechargeMaxMs, latch Error and open every
         // contactor. This caps how long the precharge contactor +
@@ -331,6 +370,15 @@ struct Output {
     }
 
     case State::Transition: {
+        // AIR+ is closed, so a bleed here is across the pack. Checked BEFORE the
+        // bus-still-up guard below, which the bleed cannot trip: with both AIRs
+        // closed the pack holds the link at pack voltage whatever the bleed
+        // draws, so that guard would commit to Run/Charge with it connected.
+        if (bleed_connected_while_energising(in.vehicle, in.dc_bus_fresh)) {
+            return { State::Start,
+                     events::safety::OpenAirN | events::safety::OpenAirP |
+                     events::safety::OpenPrecharge };
+        }
         // No hold timer. Transition is a one-FSM-step passthrough:
         // we entered with the contactor swap (CloseAirP|OpenPrecharge)
         // already emitted on the Precharge->Transition edge; commit to
