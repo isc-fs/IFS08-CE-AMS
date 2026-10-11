@@ -5,8 +5,10 @@
     // per-dev setup. Your CAN adapter (iscFs.interface / iscFs.channel) is
     // PER-MACHINE — keep it in your USER settings, NOT here.
     "iscFs.nodeId": "0x2",
-    "iscFs.buildCommand": "cmake -B build -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake && cmake --build build",
-    "iscFs.firmwareArtifact": "build/AMS.elf",
+    // MAINTENANCE BRANCH ONLY: builds the AMS_MAINT_BALANCE image (docs/MAINT_BALANCE.md)
+    // into its own build-maint/ directory, so the flight build/ cache is never reused.
+    "iscFs.buildCommand": "cmake -B build-maint -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DAMS_MAINT_BALANCE=ON && cmake --build build-maint",
+    "iscFs.firmwareArtifact": "build-maint/AMS.elf",
 
     // ── STM32CubeCLT editor tooling. ──
     "cmake.cmakePath": "cube-cmake",
