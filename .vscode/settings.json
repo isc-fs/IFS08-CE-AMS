@@ -6,9 +6,10 @@
     // PER-MACHINE — keep it in your USER settings, NOT here.
     "iscFs.nodeId": "0x2",
     // MAINTENANCE BRANCH ONLY: builds the AMS_MAINT_BALANCE image (docs/MAINT_BALANCE.md)
-    // into its own build-maint/ directory, so the flight build/ cache is never reused.
-    "iscFs.buildCommand": "cmake -B build-maint -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DAMS_MAINT_BALANCE=ON && cmake --build build-maint",
-    "iscFs.firmwareArtifact": "build-maint/AMS.elf",
+    // into its own directory, so no other build's cache is ever reused. Release
+    // build type, as release.yml builds the flight image (-Os, not the -O0 Debug default).
+    "iscFs.buildCommand": "cmake -B build-maint-release -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DAMS_MAINT_BALANCE=ON && cmake --build build-maint-release",
+    "iscFs.firmwareArtifact": "build-maint-release/AMS.elf",
 
     // ── STM32CubeCLT editor tooling. ──
     "cmake.cmakePath": "cube-cmake",

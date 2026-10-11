@@ -50,9 +50,9 @@ Balancing runs only when **all** of these hold:
 ## Build
 
 ```bash
-cmake -B build-maint -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DAMS_MAINT_BALANCE=ON
-cmake --build build-maint
-python3 scripts/check_flash_layout.py build-maint/AMS.elf
+cmake -B build-maint-release -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/gcc-arm-none-eabi.cmake -DCMAKE_BUILD_TYPE=Release -DAMS_MAINT_BALANCE=ON
+cmake --build build-maint-release
+python3 scripts/check_flash_layout.py build-maint-release/AMS.elf
 ```
 
 To step back to the flight discharge limits (8 per module, no two neighbours)
