@@ -21,6 +21,7 @@
 #include "fw_health.hpp"
 #include "ltc6811.hpp"
 #include "ltc6820.hpp"
+#include "maint_config.hpp"
 #include "state_machine.hpp"
 #include "vehicle_service.hpp"
 
@@ -137,6 +138,17 @@ ams::balance::Mask s_prev_balance_mask = {};
 // the pack on displaced readings. Single-writer, same thread, so a plain bool
 // suffices.
 bool         g_balance_quiesce_fail = false;
+
+#if defined(AMS_MAINT_BALANCE)
+// Maintenance build only (maint_config.hpp). Sticky for the boot: set when a
+// configuration readback showed a DCC bit on an IC it was not written for.
+bool                   s_maint_cfga_mismatch       = false;
+volatile std::uint32_t g_maint_cfga_mismatch_count = 0;
+// Readbacks that could not prove the write (an IC meant to discharge did not
+// answer PEC-clean, or the read itself failed). Discharge is turned off for that
+// window and re-attempted on the next.
+volatile std::uint32_t g_maint_cfga_unproven_count = 0;
+#endif
 
 // ---------------------------------------------------------------------------
 // Chain-sleep recovery.
@@ -549,6 +561,56 @@ void run_voltage_poll() {
     }
 }
 
+#if defined(AMS_MAINT_BALANCE)
+// Read the configuration registers back after a balancing WRCFGA and check each
+// discharge bit sits on the IC it was written for (balance::maint::
+// check_cfga_readback). The first RDCFGA is the same stale-MOSI warm-up the
+// voltage poll uses; the second is the one judged.
+bool maint_readback_ok(const std::uint8_t (&written)[ams::config::LtcChainLength][6]) noexcept {
+    using namespace ams;
+    auto&        bus = ltc6820::Bus::default_instance();
+    const auto   cmd = ltc6811::pack_command(ltc6811::CmdRDCFGA);
+    std::uint8_t reply[8 * config::LtcChainLength];
+    for (std::uint8_t n = 0; n < 2; ++n) {
+        if (!bus.read_register_group(cmd.data(), reply, sizeof reply)) {
+            ++g_ltc_spi_err_count;
+            ++g_maint_cfga_unproven_count;
+            return false;
+        }
+    }
+    switch (balance::maint::check_cfga_readback(written, reply, sizeof reply)) {
+        case balance::maint::Readback::Ok:
+            return true;
+        case balance::maint::Readback::Mismatch:
+            s_maint_cfga_mismatch = true;
+            ++g_maint_cfga_mismatch_count;
+            return false;
+        case balance::maint::Readback::Unproven:
+            ++g_maint_cfga_unproven_count;
+            return false;
+    }
+    return false;
+}
+
+// Turn every discharge FET off after a readback failed. If even this write
+// fails, leave s_balance_active set over an all-zero s_last_cfga so the next
+// voltage poll's quiesce writes zeros again; failing that, the LTC6811
+// watchdog clears the configuration register once commands stop reaching the IC.
+void maint_discharge_off() noexcept {
+    using namespace ams;
+    const auto off = ltc6811::pack_cfga_payload(0u);
+    for (std::uint8_t i = 0; i < config::LtcChainLength; ++i) {
+        for (std::size_t k = 0; k < 6; ++k) s_last_cfga[i][k] = off[k];
+    }
+    for (std::uint8_t m = 0; m < config::BmsModuleCount; ++m) g_balance_dcc_bits[m] = 0u;
+    s_prev_balance_mask = {};
+    const bool ok = ltc6820::Bus::default_instance().write_chain_command(
+        ltc6811::CmdWRCFGA, s_last_cfga);
+    if (!ok) ++g_ltc_spi_err_count;
+    s_balance_active = !ok;
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // Cell balancing. Once every BalanceUpdatePolls voltage cycles (800 ms):
 // snapshot BmsState, ask BalanceController what to discharge, pack the DCC bits
@@ -596,9 +658,21 @@ void maybe_run_balance_update() {
     // Auto and the operator On override: once one has fired, the voltages
     // compute_mask ranks are not trustworthy.
     const auto       fault    = static_cast<safety::FaultReason>(g_fault_reason_telemetry);
+#if defined(AMS_MAINT_BALANCE)
+    // Maintenance build: balance in Start or a latched Error on the modules that
+    // are answering, ignoring maint_config::IgnoredTempModules' sensors. Once a
+    // readback has shown a discharge bit on the wrong IC, never balance again
+    // this boot -- a wrong IC mapping does not fix itself.
+    const auto       mask   = s_maint_cfga_mismatch
+        ? balance::Mask{}
+        : balance::maint::compute_mask(
+              state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
+              fault, mod_enable, maint_config::IgnoredTempModules, &s_prev_balance_mask);
+#else
     const auto       mask   = balance::compute_mask(
         state, fsm_curr, /*temps_trusted=*/config::BalanceTempsTrusted, op_cmd,
         fault, mod_enable, &s_prev_balance_mask);
+#endif
     s_prev_balance_mask = mask;
 
     std::uint8_t per_ic[config::LtcChainLength][6];
@@ -643,6 +717,13 @@ void maybe_run_balance_update() {
         ++g_ltc_spi_err_count;
         return;
     }
+
+#if defined(AMS_MAINT_BALANCE)
+    if (any_dcc && !maint_readback_ok(per_ic)) {
+        maint_discharge_off();
+        return;
+    }
+#endif
 
     // Cache what is now on the chain so the next voltage poll can quiesce and
     // restore it. s_balance_active gates that work away entirely when nothing is

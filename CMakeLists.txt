@@ -136,6 +136,18 @@ message(STATUS "AMS build timestamp: ${AMS_BUILD_TIMESTAMP}")
 option(AMS_HIL_CLEAR_ERROR_LATCH  "HIL: wipe RTC->BKP_DR1 ErrorLatch on every boot" OFF)
 message(STATUS "AMS_HIL_CLEAR_ERROR_LATCH = ${AMS_HIL_CLEAR_ERROR_LATCH}")
 
+# Maintenance-balancing build: lets the operator bleed cells while the AMS is
+# latched in Error (a BMS module unplugged, module 0's NTCs ignored). Safety
+# predicates, FSM and relays are unchanged. Never a flight image -- see
+# Core/Inc/app/maint_config.hpp.
+option(AMS_MAINT_BALANCE "MAINTENANCE: balance on a partial BMS in Error. NOT FOR FLIGHT" OFF)
+option(AMS_MAINT_BALANCE_CAPPED "MAINTENANCE: keep the flight discharge limits (8/module, no neighbours)" OFF)
+if(AMS_MAINT_BALANCE)
+    message(WARNING "AMS_MAINT_BALANCE=ON: maintenance-balancing image, NOT a flight build. "
+                    "Flash the release image back when maintenance is done.")
+    message(STATUS "AMS_MAINT_BALANCE_CAPPED = ${AMS_MAINT_BALANCE_CAPPED}")
+endif()
+
 # Add project symbols (macros)
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     AMS_FW_VERSION_MAJOR=${AMS_FW_VERSION_MAJOR}
@@ -147,6 +159,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     AMS_GIT_HASH_3=0x${AMS_GIT_HASH_3_HEX}
     AMS_BUILD_TIMESTAMP=${AMS_BUILD_TIMESTAMP}
     $<$<BOOL:${AMS_HIL_CLEAR_ERROR_LATCH}>:AMS_HIL_CLEAR_ERROR_LATCH=1>
+    $<$<BOOL:${AMS_MAINT_BALANCE}>:AMS_MAINT_BALANCE=1>
+    $<$<BOOL:${AMS_MAINT_BALANCE_CAPPED}>:AMS_MAINT_BALANCE_CAPPED=1>
 )
 
 # C++ build rules (per docs/ARCHITECTURE.md §11).
